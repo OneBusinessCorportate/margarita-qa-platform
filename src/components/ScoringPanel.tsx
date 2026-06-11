@@ -289,6 +289,15 @@ function ChatScoreRow({
       ? Number(override)
       : computeOverall(criteria, monthly);
 
+  // A row only shows a score once it's been scored (saved, a criterion entered,
+  // a mailing status chosen, or an override typed). Otherwise it shows "—" so
+  // an un-reviewed chat doesn't look like it already scored 100/Отлично.
+  const touched =
+    Boolean(savedId) ||
+    DAILY_CRITERIA.some((c) => typeof criteria[c.id] === "number") ||
+    MONTHLY_CATEGORIES.some((c) => Boolean(monthly[c.id]?.status)) ||
+    override.trim() !== "";
+
   const setCrit = (id: CriterionId, v: string) =>
     setCriteria((c) => ({ ...c, [id]: v === "" ? undefined : Number(v) }));
   const setMon = (id: string, status: string) =>
@@ -422,13 +431,14 @@ function ChatScoreRow({
       <td>
         <input
           className="input w-[60px] tabular-nums text-center"
-          value={override === "" ? total : override}
+          value={override !== "" ? override : touched ? total : ""}
+          placeholder="—"
           onChange={(e) => setOverride(e.target.value)}
           title="Авто из критериев; можно переопределить"
         />
       </td>
       <td>
-        <BandChip total={total} />
+        {touched ? <BandChip total={total} /> : <span className="text-gray-300">—</span>}
       </td>
       <td>
         <input
