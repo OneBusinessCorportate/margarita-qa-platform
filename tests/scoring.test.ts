@@ -4,47 +4,60 @@ import {
   BANDS,
   CRITERIA,
   DAILY_CRITERIA,
-  DEBT_STATUSES,
+  FAIL_SCORE,
   MONTHLY_CATEGORIES,
   bandFor,
   computeOverall,
   computeWeightedTotal,
+  isMailingFail,
 } from "../src/lib/scoring";
 
-test("criteria weights sum to 100", () => {
-  assert.equal(CRITERIA.reduce((s, c) => s + c.weight, 0), 100);
-});
-
-test("daily criteria are accuracy + sla", () => {
+test("two criteria, weights 50/50 summing to 100", () => {
+  assert.equal(CRITERIA.length, 2);
+  assert.deepEqual(CRITERIA.map((c) => c.weight), [50, 50]);
   assert.deepEqual(DAILY_CRITERIA.map((c) => c.id), ["accuracy", "sla"]);
 });
 
-test("computeWeightedTotal: perfect = 100, zero = 0", () => {
-  assert.equal(computeWeightedTotal({ accuracy: 5, sla: 5, fcr: 5, clarity: 5 }), 100);
-  assert.equal(computeWeightedTotal({ accuracy: 0, sla: 0, fcr: 0, clarity: 0 }), 0);
+test("computeWeightedTotal = score × 50 ÷ 5 per criterion", () => {
+  assert.equal(computeWeightedTotal({ accuracy: 5, sla: 5 }), 100);
+  assert.equal(computeWeightedTotal({ accuracy: 0, sla: 0 }), 0);
+  // 4*50/5 + 3*50/5 = 40 + 30 = 70
+  assert.equal(computeWeightedTotal({ accuracy: 4, sla: 3 }), 70);
 });
 
-test("computeWeightedTotal matches Σ(score × weight ÷ 5)", () => {
-  // 4*40/5 + 3*25/5 + 2*20/5 + 5*15/5 = 32+15+8+15 = 70
-  assert.equal(computeWeightedTotal({ accuracy: 4, sla: 3, fcr: 2, clarity: 5 }), 70);
-});
-
-test("computeWeightedTotal skips missing criteria (treats as 0 contribution)", () => {
-  assert.equal(computeWeightedTotal({ accuracy: 5 }), 40);
-});
-
-test("computeOverall treats un-entered criteria as FULL marks", () => {
-  // accuracy 5 + sla 5 + fcr(full 20) + clarity(full 15) = 100
+test("computeOverall: un-entered criteria count as full marks", () => {
   assert.equal(computeOverall({ accuracy: 5, sla: 5 }), 100);
-  // accuracy 4 -> 32 + 25 + 20 + 15 = 92
-  assert.equal(computeOverall({ accuracy: 4, sla: 5 }), 92);
-  // nothing entered -> all full -> 100
   assert.equal(computeOverall({}), 100);
-  // both zero -> 0 + 0 + 20 + 15 = 35
-  assert.equal(computeOverall({ accuracy: 0, sla: 0 }), 35);
+  assert.equal(computeOverall({ accuracy: 4, sla: 5 }), 90);
+  assert.equal(computeOverall({ accuracy: 0, sla: 0 }), 0);
 });
 
-test("bandFor maps boundaries correctly", () => {
+test("HARD GATE: a failing mailing forces the score to 1", () => {
+  const perfect = { accuracy: 5, sla: 5 };
+  assert.equal(computeOverall(perfect, { main_taxes: { status: "Не отправил" } }), FAIL_SCORE);
+  assert.equal(computeOverall(perfect, { salary: { status: "Не запросил 1" } }), 1);
+  assert.equal(computeOverall(perfect, { salary: { status: "Не запросил 2" } }), 1);
+  assert.equal(computeOverall(perfect, { primary_docs: { status: "Не запросил 1" } }), 1);
+  assert.equal(computeOverall(perfect, { debts: { status: "Не написал 1" } }), 1);
+  assert.equal(computeOverall(perfect, { debts: { status: "Не написал 2" } }), 1);
+});
+
+test("non-failing statuses do NOT gate the score", () => {
+  const perfect = { accuracy: 5, sla: 5 };
+  assert.equal(computeOverall(perfect, { salary: { status: "Запросил 1, не получил" } }), 100);
+  assert.equal(computeOverall(perfect, { main_taxes: { status: "Отправил" } }), 100);
+  assert.equal(computeOverall(perfect, { main_taxes: { status: "Предстоящая" } }), 100);
+  assert.equal(computeOverall(perfect, { main_taxes: { status: "Inactive" } }), 100);
+  assert.equal(computeOverall(perfect, { debts: { status: "Нет долга" } }), 100);
+});
+
+test("isMailingFail detects any failing mailing", () => {
+  assert.equal(isMailingFail({ debts: { status: "1-й написал" } }), false);
+  assert.equal(isMailingFail({ debts: { status: "Не написал 2" } }), true);
+  assert.equal(isMailingFail(undefined), false);
+});
+
+test("bandFor maps boundaries; a gated 1 is Критично", () => {
   assert.equal(bandFor(100), "Отлично");
   assert.equal(bandFor(90), "Отлично");
   assert.equal(bandFor(89), "Хорошо");
@@ -53,7 +66,18 @@ test("bandFor maps boundaries correctly", () => {
   assert.equal(bandFor(60), "Плохо");
   assert.equal(bandFor(59), "Критично");
   assert.equal(bandFor(1), "Критично");
-  assert.equal(bandFor(0), "Критично");
+});
+
+test("four mailing categories with correct due days and fail statuses", () => {
+  assert.equal(MONTHLY_CATEGORIES.length, 4);
+  const byId = Object.fromEntries(MONTHLY_CATEGORIES.map((c) => [c.id, c]));
+  assert.equal(byId.main_taxes.dueDay, 15);
+  assert.equal(byId.salary.dueDay, 10);
+  assert.equal(byId.primary_docs.dueDay, 28);
+  assert.equal(byId.debts.dueDay, 5);
+  assert.ok(byId.main_taxes.failStatuses.includes("Не отправил"));
+  assert.ok(byId.debts.statuses.includes("1-й позвонил"));
+  assert.ok(byId.debts.statuses.includes("Нет долга"));
 });
 
 test("bands cover 1..100 with no gaps", () => {
@@ -61,55 +85,4 @@ test("bands cover 1..100 with no gaps", () => {
     const def = BANDS.find((b) => b.band === bandFor(n))!;
     assert.ok(n >= def.min && n <= def.max, `score ${n}`);
   }
-});
-
-test("there are 4 monthly task categories with correct due days", () => {
-  assert.equal(MONTHLY_CATEGORIES.length, 4);
-  const byId = Object.fromEntries(MONTHLY_CATEGORIES.map((c) => [c.id, c.dueDay]));
-  assert.equal(byId.main_taxes, 15);
-  assert.equal(byId.salary, 10);
-  assert.equal(byId.primary_docs, 28);
-  assert.equal(byId.debts, 5);
-});
-
-test("monthly statuses lower Общая (penalties)", () => {
-  // perfect daily scores -> base 100; "Не запросил 1" salary penalises 10
-  const t1 = computeOverall(
-    { accuracy: 5, sla: 5 },
-    { salary: { status: "Не запросил 1" } }
-  );
-  assert.equal(t1, 90);
-  // multiple penalties stack: 10 + 15 = 25 -> 75
-  const t2 = computeOverall(
-    { accuracy: 5, sla: 5 },
-    {
-      salary: { status: "Не запросил 1" },
-      debts: { status: "Не написал 2" },
-    }
-  );
-  assert.equal(t2, 75);
-  // non-penalising statuses leave the score unchanged
-  const t3 = computeOverall(
-    { accuracy: 5, sla: 5 },
-    { debts: { status: "нет долга" }, main_taxes: { status: "Получил" } }
-  );
-  assert.equal(t3, 100);
-});
-
-test("penalty never pushes the score below 0", () => {
-  const t = computeOverall(
-    { accuracy: 0, sla: 0 },
-    {
-      salary: { status: "Не написал 2" },
-      debts: { status: "Не написал 2" },
-      primary_docs: { status: "Не написал 2" },
-    }
-  );
-  assert.ok(t >= 0);
-});
-
-test("debts category uses the 'нет долга' status set", () => {
-  const debts = MONTHLY_CATEGORIES.find((c) => c.id === "debts")!;
-  assert.equal(debts.statuses, DEBT_STATUSES);
-  assert.ok(DEBT_STATUSES.includes("нет долга"));
 });

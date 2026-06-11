@@ -116,14 +116,14 @@ const D = "2026-06-11";
 const Dy = "2026-06-10";
 
 export const seedEvaluations: Evaluation[] = [
-  evalRow("e1", "59", "Գայանե", D, { accuracy: 5, sla: 5 }, { main_taxes: "Предстоящая", salary: "Получил", primary_docs: "Получил", debts: "1ый написал" }, "Всё в срок."),
-  evalRow("e2", "23", "Լիլիթ", D, { accuracy: 5, sla: 5 }, { main_taxes: "Предстоящая", salary: "Получил", primary_docs: "Получил", debts: "нет долга" }, ""),
-  evalRow("e3", "11", "Նաիրա", D, { accuracy: 4, sla: 4 }, { main_taxes: "Предстоящая", salary: "Не запросил 1", primary_docs: "Получил", debts: "нет долга" }, "Зарплату не запросил вовремя."),
-  evalRow("e4", "100", "Լիլիթ", D, { accuracy: 3, sla: 3 }, { main_taxes: "Предстоящая", salary: "Получил", primary_docs: "Получил", debts: "Не написал 2" }, "По долгам молчит."),
-  evalRow("e5", "180", "Ավագ", D, { accuracy: 1, sla: 1 }, { main_taxes: "Предстоящая", salary: "Получил", primary_docs: "Не запросил 1", debts: "Не написал 2" }, "Критично: первичка не запрошена.", 23),
-  evalRow("e6", "336", "Հասմիկ", D, { accuracy: 5, sla: 4 }, { main_taxes: "Предстоящая", salary: "Получил", primary_docs: "Получил", debts: "нет долга" }, ""),
-  evalRow("e7", "102", "Նաիրա", Dy, { accuracy: 4, sla: 5 }, { main_taxes: "Отправил", salary: "Получил", primary_docs: "Получил", debts: "Не написал 2" }, "Вчерашняя оценка."),
-  evalRow("e8", "28", "Ստելլա", D, { accuracy: 2, sla: 2 }, { main_taxes: "Предстоящая", salary: "Не запросил 1", primary_docs: "Получил", debts: "Не написал 2" }, "Слабо.", 47),
+  evalRow("e1", "59", "Գայանե", D, { accuracy: 5, sla: 5 }, { main_taxes: "Отправил", salary: "Получил", primary_docs: "Получил", debts: "1-й написал" }, "Всё в срок."),
+  evalRow("e2", "23", "Լիլիթ", D, { accuracy: 5, sla: 5 }, { main_taxes: "Отправил", salary: "Получил", primary_docs: "Получил", debts: "Нет долга" }, ""),
+  evalRow("e3", "11", "Նաիրա", D, { accuracy: 4, sla: 4 }, { main_taxes: "Отправил", salary: "Запросил 1, не получил", primary_docs: "Получил", debts: "Нет долга" }, "Зарплату запросил, клиент не ответил."),
+  evalRow("e4", "100", "Լիլիթ", D, { accuracy: 3, sla: 3 }, { main_taxes: "Отправил", salary: "Получил", primary_docs: "Получил", debts: "1-й написал" }, "Средне по качеству ответов."),
+  evalRow("e5", "180", "Ավագ", D, { accuracy: 5, sla: 5 }, { main_taxes: "Отправил", salary: "Не запросил 1", primary_docs: "Получил", debts: "Не написал 2" }, "Зарплата не запрошена — критично."),
+  evalRow("e6", "336", "Հասմիկ", D, { accuracy: 5, sla: 4 }, { main_taxes: "Отправил", salary: "Получил", primary_docs: "Получил", debts: "Нет долга" }, ""),
+  evalRow("e7", "102", "Նаира", Dy, { accuracy: 4, sla: 5 }, { main_taxes: "Отправил", salary: "Получил", primary_docs: "Получил", debts: "Нет долга" }, "Вчерашняя оценка."),
+  evalRow("e8", "28", "Ստелла", D, { accuracy: 5, sla: 5 }, { main_taxes: "Не отправил", salary: "Получил", primary_docs: "Получил", debts: "Нет долга" }, "Налоги не отправлены — критично."),
 ];
 
 function task(
