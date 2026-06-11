@@ -1,0 +1,144 @@
+import { getReport } from "@/lib/repo";
+import { listAccountants } from "@/lib/repo";
+import { buildReportMessage } from "@/lib/templates";
+import { BANDS } from "@/lib/scoring";
+import CopyButton from "@/components/CopyButton";
+import DashboardFilters from "@/components/DashboardFilters";
+
+export const dynamic = "force-dynamic";
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: { from?: string; to?: string; accountant?: string; client?: string };
+}) {
+  const filters = {
+    from: searchParams.from || undefined,
+    to: searchParams.to || undefined,
+    accountant: searchParams.accountant || undefined,
+    client: searchParams.client || undefined,
+  };
+  const [report, accountants] = await Promise.all([
+    getReport(filters),
+    listAccountants(),
+  ]);
+  const reportMessage = buildReportMessage(report);
+
+  const totals = [
+    { label: "Активных чатов", value: report.totals.activeChats },
+    { label: "Новых чатов", value: report.totals.newChats },
+    { label: "Чаты без ответственных", value: report.totals.chatsWithoutResponsible },
+    { label: "Оценено чатов всего", value: report.totals.evaluatedChats },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-xl font-semibold">Отчёт</h1>
+          <p className="text-sm text-gray-500">
+            Ежедневный отчёт по качеству — по дате и бухгалтеру.
+          </p>
+        </div>
+        <CopyButton
+          label="Копировать отчёт"
+          className="btn-primary"
+          text={reportMessage}
+        />
+      </div>
+
+      <DashboardFilters
+        accountants={accountants.map((a) => a.name)}
+        initial={filters}
+      />
+
+      {/* Totals */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {totals.map((t) => (
+          <div key={t.label} className="card p-3">
+            <div className="text-xs text-gray-500">{t.label}</div>
+            <div className="text-2xl font-semibold tabular-nums">{t.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Distribution + service quality */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="card p-3 md:col-span-2">
+          <div className="text-sm font-medium mb-2">Распределение оценок</div>
+          <div className="grid grid-cols-4 gap-2">
+            {BANDS.map((b) => (
+              <div
+                key={b.band}
+                className="rounded p-2 text-white"
+                style={{ backgroundColor: b.color }}
+              >
+                <div className="text-xs opacity-90">{b.band}</div>
+                <div className="text-2xl font-semibold tabular-nums">
+                  {report.distribution[b.band]}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="card p-3 flex flex-col justify-center">
+          <div className="text-sm font-medium">Сервис Бухгалтерии</div>
+          <div className="text-4xl font-bold tabular-nums">
+            {report.serviceQualityPct}%
+          </div>
+          <div className="text-xs text-gray-500">средняя оценка за период</div>
+        </div>
+      </div>
+
+      {/* Per-accountant breakdown */}
+      <div className="card overflow-x-auto">
+        <table className="qa">
+          <thead>
+            <tr>
+              <th>Бухгалтер</th>
+              <th>Средняя оценка %</th>
+              <th>Оценено</th>
+              <th>Низких оценок</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.perAccountant.length === 0 && (
+              <tr>
+                <td colSpan={4} className="text-center text-gray-400 py-6">
+                  Нет данных за выбранный период.
+                </td>
+              </tr>
+            )}
+            {report.perAccountant.map((a) => (
+              <tr key={a.accountant}>
+                <td className="font-medium">{a.accountant}</td>
+                <td className="tabular-nums">{a.avgScore}%</td>
+                <td className="tabular-nums">{a.count}</td>
+                <td className="tabular-nums">
+                  <span
+                    className={a.lowCount > 0 ? "text-red-600 font-medium" : ""}
+                  >
+                    {a.lowCount}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Report message preview */}
+      <div className="card p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">
+            Сообщение для Telegram (отчёт)
+          </div>
+          <CopyButton label="Копировать" text={reportMessage} />
+        </div>
+        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
+{reportMessage}
+        </pre>
+      </div>
+    </div>
+  );
+}

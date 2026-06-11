@@ -1,0 +1,201 @@
+// Data-access layer. Uses Supabase when configured; otherwise the in-memory
+// mock store. Both paths return the same domain types so the UI is agnostic.
+import { randomUUID } from "crypto";
+import { getServiceClient } from "./supabase/server";
+import { store } from "./mock-store";
+import { bandFor, computeWeightedTotal, computeTaskStatusTotal, ACTIVE_MODEL } from "./scoring";
+import { buildReport, type DailyReport, type ReportFilters } from "./report";
+import type {
+  Accountant,
+  Chat,
+  Evaluation,
+  NewEvaluationInput,
+  Task,
+} from "./types";
+
+// --- Chats -----------------------------------------------------------------
+
+export async function listChats(search?: string): Promise<Chat[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    let q = sb.from("chats").select("*").order("agr_no");
+    const { data, error } = await q;
+    if (error) throw error;
+    let rows = (data ?? []) as Chat[];
+    if (search) rows = filterChats(rows, search);
+    return rows;
+  }
+  let rows = store().chats;
+  if (search) rows = filterChats(rows, search);
+  return rows;
+}
+
+function filterChats(rows: Chat[], search: string): Chat[] {
+  const n = search.toLowerCase();
+  return rows.filter(
+    (c) =>
+      c.agr_no.toLowerCase().includes(n) ||
+      c.chat_name.toLowerCase().includes(n) ||
+      (c.name_agr ?? "").toLowerCase().includes(n)
+  );
+}
+
+export async function getChat(agrNo: string): Promise<Chat | null> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from("chats")
+      .select("*")
+      .eq("agr_no", agrNo)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as Chat) ?? null;
+  }
+  return store().chats.find((c) => c.agr_no === agrNo) ?? null;
+}
+
+// --- Accountants -----------------------------------------------------------
+
+export async function listAccountants(): Promise<Accountant[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb.from("accountants").select("*").order("name");
+    if (error) throw error;
+    return (data ?? []) as Accountant[];
+  }
+  return store().accountants;
+}
+
+// --- Evaluations -----------------------------------------------------------
+
+export async function listEvaluations(
+  filters: ReportFilters = {}
+): Promise<Evaluation[]> {
+  const sb = getServiceClient();
+  let rows: Evaluation[];
+  if (sb) {
+    const { data, error } = await sb
+      .from("evaluations")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    rows = (data ?? []) as Evaluation[];
+  } else {
+    rows = [...store().evaluations].sort((a, b) =>
+      b.created_at.localeCompare(a.created_at)
+    );
+  }
+  return applyEvalFilters(rows, filters);
+}
+
+function applyEvalFilters(rows: Evaluation[], f: ReportFilters): Evaluation[] {
+  return rows.filter((e) => {
+    const d = e.checking_date.slice(0, 10);
+    if (f.from && d < f.from) return false;
+    if (f.to && d > f.to) return false;
+    if (f.accountant && e.accountant !== f.accountant) return false;
+    if (f.client) {
+      const n = f.client.toLowerCase();
+      if (!e.chat_agr_no.toLowerCase().includes(n)) return false;
+    }
+    return true;
+  });
+}
+
+/** Compute total + band from scores using the active model, then persist. */
+export async function createEvaluation(
+  input: NewEvaluationInput
+): Promise<Evaluation> {
+  const total =
+    ACTIVE_MODEL === "task_status" && input.scores.tasks
+      ? computeTaskStatusTotal(input.scores.tasks)
+      : computeWeightedTotal(input.scores.criteria ?? {});
+
+  const row: Evaluation = {
+    id: randomUUID(),
+    chat_agr_no: input.chat_agr_no,
+    period: input.period,
+    checking_date: input.checking_date,
+    accountant: input.accountant,
+    scores: input.scores,
+    total_score: total,
+    quality_band: bandFor(total),
+    comment: input.comment,
+    created_at: new Date().toISOString(),
+  };
+
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from("evaluations")
+      .insert(row)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as Evaluation;
+  }
+  store().evaluations.unshift(row);
+  return row;
+}
+
+export async function updateEvaluation(
+  id: string,
+  input: NewEvaluationInput
+): Promise<Evaluation> {
+  const total =
+    ACTIVE_MODEL === "task_status" && input.scores.tasks
+      ? computeTaskStatusTotal(input.scores.tasks)
+      : computeWeightedTotal(input.scores.criteria ?? {});
+  const patch = {
+    chat_agr_no: input.chat_agr_no,
+    period: input.period,
+    checking_date: input.checking_date,
+    accountant: input.accountant,
+    scores: input.scores,
+    total_score: total,
+    quality_band: bandFor(total),
+    comment: input.comment,
+  };
+
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from("evaluations")
+      .update(patch)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as Evaluation;
+  }
+  const rows = store().evaluations;
+  const idx = rows.findIndex((e) => e.id === id);
+  if (idx === -1) throw new Error(`Evaluation ${id} not found`);
+  rows[idx] = { ...rows[idx], ...patch };
+  return rows[idx];
+}
+
+// --- Tasks -----------------------------------------------------------------
+
+export async function listTasks(chatAgrNo?: string): Promise<Task[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    let q = sb.from("tasks").select("*");
+    if (chatAgrNo) q = q.eq("chat_agr_no", chatAgrNo);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []) as Task[];
+  }
+  const rows = store().tasks;
+  return chatAgrNo ? rows.filter((t) => t.chat_agr_no === chatAgrNo) : rows;
+}
+
+// --- Report ----------------------------------------------------------------
+
+export async function getReport(filters: ReportFilters): Promise<DailyReport> {
+  const [chats, evaluations] = await Promise.all([
+    listChats(),
+    listEvaluations({}), // report applies its own date filtering
+  ]);
+  return buildReport(chats, evaluations, filters);
+}

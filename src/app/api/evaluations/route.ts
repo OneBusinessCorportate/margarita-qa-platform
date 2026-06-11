@@ -1,0 +1,57 @@
+import { NextResponse } from "next/server";
+import { createEvaluation, listEvaluations } from "@/lib/repo";
+import type { NewEvaluationInput } from "@/lib/types";
+
+export const dynamic = "force-dynamic";
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const evals = await listEvaluations({
+    from: searchParams.get("from") ?? undefined,
+    to: searchParams.get("to") ?? undefined,
+    accountant: searchParams.get("accountant") ?? undefined,
+    client: searchParams.get("client") ?? undefined,
+  });
+  return NextResponse.json(evals);
+}
+
+function parseInput(body: any): NewEvaluationInput | null {
+  if (!body || typeof body.chat_agr_no !== "string") return null;
+  const checking_date =
+    typeof body.checking_date === "string"
+      ? body.checking_date
+      : new Date().toISOString().slice(0, 10);
+  const period =
+    typeof body.period === "string" && body.period
+      ? body.period
+      : checking_date.slice(0, 7).replace("-", "");
+  return {
+    chat_agr_no: body.chat_agr_no,
+    period,
+    checking_date,
+    accountant: body.accountant ?? null,
+    scores: {
+      criteria: body.scores?.criteria,
+      tasks: body.scores?.tasks,
+    },
+    comment: body.comment ?? null,
+  };
+}
+
+export async function POST(req: Request) {
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+  }
+  const input = parseInput(body);
+  if (!input) {
+    return NextResponse.json(
+      { error: "chat_agr_no is required" },
+      { status: 400 }
+    );
+  }
+  const created = await createEvaluation(input);
+  return NextResponse.json(created, { status: 201 });
+}
