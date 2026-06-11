@@ -16,17 +16,22 @@ import CopyButton from "./CopyButton";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+type Scope = "day" | "all";
+
 export default function ScoringPanel({
   chats,
   accountants,
   initialEvaluations,
+  taskActivity = [],
 }: {
   chats: Chat[];
   accountants: Accountant[];
   initialEvaluations: Evaluation[];
+  taskActivity?: { chat_agr_no: string; date: string }[];
 }) {
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
   const [date, setDate] = useState(today());
+  const [scope, setScope] = useState<Scope>("all");
   const [search, setSearch] = useState("");
   const [accFilter, setAccFilter] = useState("");
   const [onlyUnscored, setOnlyUnscored] = useState(false);
@@ -41,9 +46,18 @@ export default function ScoringPanel({
     return m;
   }, [evaluations, date]);
 
+  // Chats with activity on the selected date: an evaluation or a task that day.
+  // TODO(margarita): expand with the bot's daily "chats with messages" feed.
+  const activeTodaySet = useMemo(() => {
+    const s = new Set<string>(evalForDate.keys());
+    for (const t of taskActivity) if (t.date === date) s.add(t.chat_agr_no);
+    return s;
+  }, [evalForDate, taskActivity, date]);
+
   const visibleChats = useMemo(() => {
     const n = search.trim().toLowerCase();
     return chats.filter((c) => {
+      if (scope === "day" && !activeTodaySet.has(c.agr_no)) return false;
       if (activeOnly && c.status !== "Active") return false;
       if (accFilter && c.accountant !== accFilter) return false;
       if (onlyUnscored && evalForDate.has(c.agr_no)) return false;
@@ -56,10 +70,13 @@ export default function ScoringPanel({
         return false;
       return true;
     });
-  }, [chats, search, accFilter, onlyUnscored, activeOnly, evalForDate]);
+  }, [chats, search, accFilter, onlyUnscored, activeOnly, evalForDate, scope, activeTodaySet]);
 
   const scoredToday = chats.filter((c) => evalForDate.has(c.agr_no)).length;
   const activeCount = chats.filter((c) => c.status === "Active").length;
+  const activeTodayCount = chats.filter(
+    (c) => c.status === "Active" && activeTodaySet.has(c.agr_no)
+  ).length;
 
   function onSaved(saved: Evaluation) {
     setEvaluations((prev) => [saved, ...prev.filter((e) => e.id !== saved.id)]);
@@ -67,6 +84,26 @@ export default function ScoringPanel({
 
   return (
     <div className="space-y-3">
+      {/* Scope toggle */}
+      <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+        <button
+          onClick={() => setScope("day")}
+          className={`px-3 py-1.5 font-medium ${
+            scope === "day" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+          }`}
+        >
+          Активные за день
+        </button>
+        <button
+          onClick={() => setScope("all")}
+          className={`px-3 py-1.5 font-medium border-l border-gray-300 ${
+            scope === "all" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+          }`}
+        >
+          Все активные чаты
+        </button>
+      </div>
+
       {/* Toolbar */}
       <div className="card p-3 flex flex-wrap items-end gap-3">
         <div className="space-y-1">
@@ -122,15 +159,16 @@ export default function ScoringPanel({
 
       {/* Summary */}
       <div className="flex flex-wrap gap-2 text-sm">
-        <Stat label="Активных чатов" value={activeCount} />
+        <Stat label="Активных чатов (всего)" value={activeCount} />
+        <Stat label="Активных за день" value={activeTodayCount} />
         <Stat label="Оценено за день" value={scoredToday} />
         <Stat label="Показано" value={visibleChats.length} />
       </div>
 
       <p className="text-xs text-gray-500 px-1">
-        Откройте чат по ссылке, проверьте коммуникацию и проставьте оценку прямо
-        в строке. Если чата нет в списке — снимите фильтры или найдите его
-        поиском. Сохранённые оценки можно редактировать.
+        {scope === "day"
+          ? "Режим «за день»: показаны чаты с активностью за выбранную дату (оценки/задачи; позже — данные бота). Это быстрее для ежедневной проверки. Чтобы оценить любой другой чат — переключитесь на «Все активные чаты»."
+          : "Режим «все активные»: показаны все активные чаты. Откройте чат по ссылке, проверьте коммуникацию и проставьте оценку прямо в строке. Сохранённые оценки можно редактировать."}
       </p>
 
       <div className="card overflow-x-auto">

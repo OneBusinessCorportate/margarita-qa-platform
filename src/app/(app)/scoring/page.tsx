@@ -1,13 +1,14 @@
 import ScoringPanel from "@/components/ScoringPanel";
-import { listAccountants, listChats, listEvaluations } from "@/lib/repo";
+import { listAccountants, listChats, listEvaluations, listTasks } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
 
 export default async function ScoringPage() {
-  const [chats, accountants, evaluations] = await Promise.all([
+  const [chats, accountants, evaluations, tasks] = await Promise.all([
     listChats(),
     listAccountants(),
     listEvaluations({}),
+    listTasks(),
   ]);
 
   return (
@@ -23,7 +24,11 @@ export default async function ScoringPage() {
       <ScoringPanel
         chats={chats}
         accountants={accountants}
-        initialEvaluations={evaluations.slice(0, 500)}
+        initialEvaluations={evaluations.slice(0, 1000)}
+        taskActivity={tasks.map((t) => ({
+          chat_agr_no: t.chat_agr_no,
+          date: (t.checking_date ?? t.due_date_original ?? "").slice(0, 10),
+        }))}
       />
     </div>
   );
