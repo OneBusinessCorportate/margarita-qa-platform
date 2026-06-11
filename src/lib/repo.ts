@@ -12,7 +12,9 @@ import type {
   Evaluation,
   NewEvaluationInput,
   NewTaskInput,
+  NewViolationInput,
   Task,
+  Violation,
 } from "./types";
 
 function overallFor(input: NewEvaluationInput): number {
@@ -236,6 +238,63 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
     return data as Task;
   }
   store().tasks.unshift(row);
+  return row;
+}
+
+// --- Violations (Нарушения) ------------------------------------------------
+
+export async function listViolations(filters: {
+  from?: string;
+  to?: string;
+  accountant?: string;
+} = {}): Promise<Violation[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    let q = sb.from(TABLES.violations).select("*");
+    if (filters.from) q = q.gte("vdate", filters.from);
+    if (filters.to) q = q.lte("vdate", filters.to);
+    if (filters.accountant) q = q.eq("accountant", filters.accountant);
+    const { data, error } = await q.order("vdate", { ascending: false }).limit(5000);
+    if (error) throw error;
+    return (data ?? []).map((v: any) => ({
+      ...v,
+      sanction: v.sanction === null ? null : Number(v.sanction),
+    })) as Violation[];
+  }
+  let rows = [...store().violations].sort((a, b) => b.vdate.localeCompare(a.vdate));
+  if (filters.from) rows = rows.filter((v) => v.vdate >= filters.from!);
+  if (filters.to) rows = rows.filter((v) => v.vdate <= filters.to!);
+  if (filters.accountant) rows = rows.filter((v) => v.accountant === filters.accountant);
+  return rows;
+}
+
+export async function createViolation(
+  input: NewViolationInput
+): Promise<Violation> {
+  const row: Violation = {
+    id: randomUUID(),
+    vdate: input.vdate,
+    accountant: input.accountant ?? null,
+    chat_agr_no: input.chat_agr_no ?? null,
+    client: input.client ?? null,
+    severity: input.severity ?? null,
+    violation_type: input.violation_type ?? null,
+    gross: input.gross ?? null,
+    sanction: input.sanction ?? null,
+    note: input.note ?? null,
+    created_at: new Date().toISOString(),
+  };
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.violations)
+      .insert(row)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as Violation;
+  }
+  store().violations.unshift(row);
   return row;
 }
 

@@ -86,6 +86,32 @@ export interface NewEvaluationInput {
   total_override?: number | null;
 }
 
+export interface Violation {
+  id: string;
+  vdate: string; // ISO date
+  accountant: string | null;
+  chat_agr_no: string | null;
+  client: string | null;
+  severity: string | null; // Среднее / Критичное / Грубое
+  violation_type: string | null;
+  gross: string | null;
+  sanction: number | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface NewViolationInput {
+  vdate: string;
+  accountant?: string | null;
+  chat_agr_no?: string | null;
+  client?: string | null;
+  severity?: string | null;
+  violation_type?: string | null;
+  gross?: string | null;
+  sanction?: number | null;
+  note?: string | null;
+}
+
 export interface NewTaskInput {
   chat_agr_no: string;
   type?: "monthly" | "single";

@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import type { DailyReport } from "./report";
-import { MONTHLY_CATEGORIES } from "./scoring";
+import { MONTHLY_CATEGORIES, failingMailings } from "./scoring";
 import type { Chat, Evaluation } from "./types";
 
 export function telegramConfigured(): boolean {
@@ -72,6 +72,13 @@ export function buildScoreMessage(
   lines.push(`Дата проверки: ${evaluation.checking_date}`);
   lines.push(`Общая оценка: ${evaluation.total_score}% — ${evaluation.quality_band}`);
   if (evaluation.accountant) lines.push(`Ответственный: ${evaluation.accountant}`);
+
+  const fails = failingMailings(evaluation.scores.monthly);
+  if (fails.length) {
+    lines.push(
+      `⚠ Не выполнена рассылка: ${fails.map((f) => `${f.category} (${f.status})`).join(", ")}`
+    );
+  }
 
   const monthly = evaluation.scores.monthly;
   if (monthly) {

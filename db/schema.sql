@@ -93,8 +93,24 @@ create table if not exists mqa_users (
   created_at    timestamptz not null default now()
 );
 
+-- Нарушения (violations) log — item 6.
+create table if not exists mqa_violations (
+  id             text primary key default gen_random_uuid()::text,
+  vdate          date not null,
+  accountant     text,
+  chat_agr_no    text,
+  client         text,
+  severity       text,   -- Среднее / Критичное / Грубое
+  violation_type text,   -- сервисное нарушение (описание)
+  gross          text,
+  sanction       numeric,
+  note           text,
+  created_at     timestamptz not null default now()
+);
+
 -- Lock down to service-role access only.
 alter table mqa_accountants enable row level security;
+alter table mqa_violations  enable row level security;
 alter table mqa_chats       enable row level security;
 alter table mqa_criteria    enable row level security;
 alter table mqa_evaluations enable row level security;
