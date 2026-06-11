@@ -29,7 +29,11 @@ const DRY = process.argv.includes("--dry-run");
 const FILE = arg("file") ?? "data/sheet.xlsx";
 
 const iso = (v: unknown): string | null => {
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (v instanceof Date) {
+    const y = v.getUTCFullYear();
+    if (Number.isNaN(v.getTime()) || y < 2000 || y > 2100) return null; // guard corrupt serials
+    return v.toISOString().slice(0, 10);
+  }
   if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
   return null;
 };

@@ -32,7 +32,7 @@ function normalizeEvaluation(row: any): Evaluation {
 export async function listChats(search?: string): Promise<Chat[]> {
   const sb = getServiceClient();
   if (sb) {
-    let q = sb.from(TABLES.chats).select("*").order("agr_no");
+    let q = sb.from(TABLES.chats).select("*").order("agr_no").limit(10000);
     const { data, error } = await q;
     if (error) throw error;
     let rows = (data ?? []) as Chat[];
@@ -88,10 +88,16 @@ export async function listEvaluations(
   const sb = getServiceClient();
   let rows: Evaluation[];
   if (sb) {
-    const { data, error } = await sb
-      .from(TABLES.evaluations)
-      .select("*")
-      .order("created_at", { ascending: false });
+    // Push filters into the query so large histories aren't truncated by the
+    // default 1000-row cap (reports must see every row in range).
+    let q = sb.from(TABLES.evaluations).select("*");
+    if (filters.from) q = q.gte("checking_date", filters.from);
+    if (filters.to) q = q.lte("checking_date", filters.to);
+    if (filters.accountant) q = q.eq("accountant", filters.accountant);
+    if (filters.client) q = q.ilike("chat_agr_no", `%${filters.client}%`);
+    const { data, error } = await q
+      .order("created_at", { ascending: false })
+      .limit(10000);
     if (error) throw error;
     rows = (data ?? []).map(normalizeEvaluation);
   } else {
@@ -238,7 +244,7 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
 export async function getReport(filters: ReportFilters): Promise<DailyReport> {
   const [chats, evaluations, tasks] = await Promise.all([
     listChats(),
-    listEvaluations({}), // report applies its own date filtering
+    listEvaluations(filters), // server-side date/accountant/client filter
     listTasks(),
   ]);
   return buildReport(chats, evaluations, filters, tasks);
