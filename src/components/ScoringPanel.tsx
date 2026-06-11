@@ -16,53 +16,6 @@ import CopyButton from "./CopyButton";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-interface Draft {
-  chat_agr_no: string;
-  accountant: string;
-  checking_date: string;
-  criteria: CriteriaScores;
-  monthly: Record<string, MonthlyStatus>;
-  comment: string;
-  overrideTotal: string; // "" = auto
-}
-
-function emptyMonthly(): Record<string, MonthlyStatus> {
-  const m: Record<string, MonthlyStatus> = {};
-  for (const c of MONTHLY_CATEGORIES) m[c.id] = { status: "", prev: PREV_STATUS_DEFAULT };
-  return m;
-}
-
-function blankDraft(): Draft {
-  return {
-    chat_agr_no: "",
-    accountant: "",
-    checking_date: today(),
-    criteria: {},
-    monthly: emptyMonthly(),
-    comment: "",
-    overrideTotal: "",
-  };
-}
-
-function draftFromEval(ev: Evaluation): Draft {
-  return {
-    chat_agr_no: ev.chat_agr_no,
-    accountant: ev.accountant ?? "",
-    checking_date: ev.checking_date,
-    criteria: ev.scores.criteria ?? {},
-    monthly: { ...emptyMonthly(), ...(ev.scores.monthly ?? {}) },
-    comment: ev.comment ?? "",
-    overrideTotal: "",
-  };
-}
-
-function draftTotal(d: Draft): number {
-  if (d.overrideTotal.trim() !== "" && !Number.isNaN(Number(d.overrideTotal))) {
-    return Number(d.overrideTotal);
-  }
-  return computeOverall(d.criteria);
-}
-
 export default function ScoringPanel({
   chats,
   accountants,
@@ -73,102 +26,120 @@ export default function ScoringPanel({
   initialEvaluations: Evaluation[];
 }) {
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<Draft | null>(null);
-  const [newDraft, setNewDraft] = useState<Draft>(blankDraft());
+  const [date, setDate] = useState(today());
   const [search, setSearch] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [accFilter, setAccFilter] = useState("");
+  const [onlyUnscored, setOnlyUnscored] = useState(false);
+  const [activeOnly, setActiveOnly] = useState(true);
 
-  const chatMap = useMemo(() => new Map(chats.map((c) => [c.agr_no, c])), [chats]);
-  const filteredChats = useMemo(() => {
+  // Today's evaluations indexed by chat for the selected date.
+  const evalForDate = useMemo(() => {
+    const m = new Map<string, Evaluation>();
+    for (const e of evaluations) {
+      if (e.checking_date.slice(0, 10) === date) m.set(e.chat_agr_no, e);
+    }
+    return m;
+  }, [evaluations, date]);
+
+  const visibleChats = useMemo(() => {
     const n = search.trim().toLowerCase();
-    if (!n) return chats;
-    return chats.filter(
-      (c) =>
-        c.agr_no.toLowerCase().includes(n) ||
-        c.chat_name.toLowerCase().includes(n) ||
-        (c.name_agr ?? "").toLowerCase().includes(n)
-    );
-  }, [chats, search]);
+    return chats.filter((c) => {
+      if (activeOnly && c.status !== "Active") return false;
+      if (accFilter && c.accountant !== accFilter) return false;
+      if (onlyUnscored && evalForDate.has(c.agr_no)) return false;
+      if (
+        n &&
+        !c.agr_no.toLowerCase().includes(n) &&
+        !c.chat_name.toLowerCase().includes(n) &&
+        !(c.name_agr ?? "").toLowerCase().includes(n)
+      )
+        return false;
+      return true;
+    });
+  }, [chats, search, accFilter, onlyUnscored, activeOnly, evalForDate]);
 
-  async function persist(d: Draft, id: string | null) {
-    if (!d.chat_agr_no) {
-      setError("Выберите чат");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    const payload = {
-      chat_agr_no: d.chat_agr_no,
-      checking_date: d.checking_date,
-      accountant: d.accountant || null,
-      scores: { criteria: d.criteria, monthly: d.monthly },
-      comment: d.comment || null,
-      total_override:
-        d.overrideTotal.trim() !== "" ? Number(d.overrideTotal) : null,
-    };
-    try {
-      const res = await fetch(
-        id ? `/api/evaluations/${id}` : "/api/evaluations",
-        {
-          method: id ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      );
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || "Не удалось сохранить");
-        return;
-      }
-      const saved: Evaluation = await res.json();
-      setEvaluations((prev) => {
-        const without = prev.filter((e) => e.id !== saved.id);
-        return [saved, ...without];
-      });
-      if (id) {
-        setEditingId(null);
-        setEditDraft(null);
-      } else {
-        setNewDraft(blankDraft()); // new blank row appears below
-      }
-    } catch {
-      setError("Сетевая ошибка");
-    } finally {
-      setSaving(false);
-    }
+  const scoredToday = chats.filter((c) => evalForDate.has(c.agr_no)).length;
+  const activeCount = chats.filter((c) => c.status === "Active").length;
+
+  function onSaved(saved: Evaluation) {
+    setEvaluations((prev) => [saved, ...prev.filter((e) => e.id !== saved.id)]);
   }
 
   return (
     <div className="space-y-3">
+      {/* Toolbar */}
       <div className="card p-3 flex flex-wrap items-end gap-3">
-        <div className="space-y-1 grow min-w-[240px]">
-          <label className="text-xs text-gray-500">
-            Поиск чата (№ договора / название) — фильтрует выпадающий список ниже
-          </label>
+        <div className="space-y-1">
+          <label className="text-xs text-gray-500 block">Дата проверки</label>
+          <input
+            type="date"
+            className="input"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1 grow min-w-[200px]">
+          <label className="text-xs text-gray-500 block">Поиск чата (№ / название)</label>
           <input
             className="input w-full"
-            placeholder="напр. 59, B-3302 или Фролкин"
+            placeholder="напр. 59 или Фролкин"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <p className="text-xs text-gray-500 max-w-md">
-          Новая оценка вводится в нижней строке таблицы. Выберите № договора —
-          остальные данные подтянутся. После сохранения появится новая пустая
-          строка. Любую строку можно отредактировать.
-        </p>
+        <div className="space-y-1">
+          <label className="text-xs text-gray-500 block">Бухгалтер</label>
+          <select
+            className="input"
+            value={accFilter}
+            onChange={(e) => setAccFilter(e.target.value)}
+          >
+            <option value="">Все</option>
+            {accountants.map((a) => (
+              <option key={a.name} value={a.name}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <label className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5">
+          <input
+            type="checkbox"
+            checked={onlyUnscored}
+            onChange={(e) => setOnlyUnscored(e.target.checked)}
+          />
+          Только неоценённые
+        </label>
+        <label className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5">
+          <input
+            type="checkbox"
+            checked={activeOnly}
+            onChange={(e) => setActiveOnly(e.target.checked)}
+          />
+          Только активные
+        </label>
       </div>
 
-      {error && <div className="text-sm text-red-600 px-1">{error}</div>}
+      {/* Summary */}
+      <div className="flex flex-wrap gap-2 text-sm">
+        <Stat label="Активных чатов" value={activeCount} />
+        <Stat label="Оценено за день" value={scoredToday} />
+        <Stat label="Показано" value={visibleChats.length} />
+      </div>
+
+      <p className="text-xs text-gray-500 px-1">
+        Откройте чат по ссылке, проверьте коммуникацию и проставьте оценку прямо
+        в строке. Если чата нет в списке — снимите фильтры или найдите его
+        поиском. Сохранённые оценки можно редактировать.
+      </p>
 
       <div className="card overflow-x-auto">
         <table className="qa">
           <thead>
             <tr>
-              <th className="min-w-[220px]">№ / Чат / Бухгалтер</th>
-              <th>Дата</th>
+              <th className="min-w-[230px]">№ / Чат / Бухгалтер</th>
+              <th>Чат</th>
+              <th title="Предварительная оценка от бота — появится позже">Предв. (бот)</th>
               {DAILY_CRITERIA.map((c) => (
                 <th key={c.id} title={c.name}>
                   {c.id === "accuracy" ? "Точность" : "СЛА"}
@@ -181,54 +152,28 @@ export default function ScoringPanel({
               ))}
               <th>Общая</th>
               <th>Качество</th>
-              <th className="min-w-[160px]">Комментарий</th>
+              <th className="min-w-[150px]">Комментарий</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {evaluations.map((ev) =>
-              editingId === ev.id && editDraft ? (
-                <EditableRow
-                  key={ev.id}
-                  draft={editDraft}
-                  setDraft={setEditDraft as (d: Draft) => void}
-                  chats={chats}
-                  filteredChats={filteredChats}
-                  chatMap={chatMap}
-                  accountants={accountants}
-                  saving={saving}
-                  fixedChat
-                  onSave={() => persist(editDraft, ev.id)}
-                  onCancel={() => {
-                    setEditingId(null);
-                    setEditDraft(null);
-                  }}
-                />
-              ) : (
-                <DisplayRow
-                  key={ev.id}
-                  ev={ev}
-                  chat={chatMap.get(ev.chat_agr_no) ?? null}
-                  onEdit={() => {
-                    setEditingId(ev.id);
-                    setEditDraft(draftFromEval(ev));
-                  }}
-                />
-              )
+            {visibleChats.length === 0 && (
+              <tr>
+                <td colSpan={14} className="text-center text-gray-400 py-6">
+                  Нет чатов по текущим фильтрам.
+                </td>
+              </tr>
             )}
-            {/* New blank row */}
-            <EditableRow
-              draft={newDraft}
-              setDraft={setNewDraft}
-              chats={chats}
-              filteredChats={filteredChats}
-              chatMap={chatMap}
-              accountants={accountants}
-              saving={saving}
-              isNew
-              onSave={() => persist(newDraft, null)}
-              onCancel={() => setNewDraft(blankDraft())}
-            />
+            {visibleChats.map((chat) => (
+              <ChatScoreRow
+                key={`${chat.agr_no}|${date}`}
+                chat={chat}
+                accountants={accountants}
+                date={date}
+                existing={evalForDate.get(chat.agr_no) ?? null}
+                onSaved={onSaved}
+              />
+            ))}
           </tbody>
         </table>
       </div>
@@ -236,124 +181,122 @@ export default function ScoringPanel({
   );
 }
 
-function DisplayRow({
-  ev,
-  chat,
-  onEdit,
-}: {
-  ev: Evaluation;
-  chat: Chat | null;
-  onEdit: () => void;
-}) {
-  const monthly = ev.scores.monthly ?? {};
+function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <tr>
-      <td>
-        <div className="font-medium">№ {ev.chat_agr_no}</div>
-        <div className="text-gray-500 text-xs">{chat?.chat_name ?? "—"}</div>
-        <div className="text-gray-400 text-xs">{ev.accountant ?? "—"}</div>
-      </td>
-      <td className="whitespace-nowrap">{ev.checking_date}</td>
-      {DAILY_CRITERIA.map((c) => (
-        <td key={c.id} className="tabular-nums text-center">
-          {ev.scores.criteria?.[c.id] ?? "—"}
-        </td>
-      ))}
-      {MONTHLY_CATEGORIES.map((c) => (
-        <td key={c.id} className="text-xs whitespace-nowrap">
-          {monthly[c.id]?.status || "—"}
-        </td>
-      ))}
-      <td className="tabular-nums font-semibold text-center">{ev.total_score}</td>
-      <td>
-        <BandChip band={ev.quality_band} />
-      </td>
-      <td className="text-xs text-gray-600">{ev.comment}</td>
-      <td className="whitespace-nowrap">
-        <div className="flex gap-1">
-          <button className="btn-secondary" onClick={onEdit}>
-            Изм.
-          </button>
-          <CopyButton label="Копир." text={buildScoreMessage(ev, chat)} />
-        </div>
-      </td>
-    </tr>
+    <div className="card px-3 py-1.5">
+      <span className="text-gray-500">{label}: </span>
+      <span className="font-semibold tabular-nums">{value}</span>
+    </div>
   );
 }
 
-function EditableRow({
-  draft,
-  setDraft,
-  chats,
-  filteredChats,
-  chatMap,
-  accountants,
-  saving,
-  isNew,
-  fixedChat,
-  onSave,
-  onCancel,
-}: {
-  draft: Draft;
-  setDraft: (d: Draft) => void;
-  chats: Chat[];
-  filteredChats: Chat[];
-  chatMap: Map<string, Chat>;
-  accountants: Accountant[];
-  saving: boolean;
-  isNew?: boolean;
-  fixedChat?: boolean;
-  onSave: () => void;
-  onCancel: () => void;
-}) {
-  const chat = draft.chat_agr_no ? chatMap.get(draft.chat_agr_no) : null;
-  const total = draftTotal(draft);
+function emptyMonthly(): Record<string, MonthlyStatus> {
+  const m: Record<string, MonthlyStatus> = {};
+  for (const c of MONTHLY_CATEGORIES) m[c.id] = { status: "", prev: PREV_STATUS_DEFAULT };
+  return m;
+}
 
-  function pickChat(agrNo: string) {
-    const c = chatMap.get(agrNo);
-    setDraft({
-      ...draft,
-      chat_agr_no: agrNo,
-      accountant: c?.accountant ?? draft.accountant,
-    });
-  }
+function ChatScoreRow({
+  chat,
+  accountants,
+  date,
+  existing,
+  onSaved,
+}: {
+  chat: Chat;
+  accountants: Accountant[];
+  date: string;
+  existing: Evaluation | null;
+  onSaved: (e: Evaluation) => void;
+}) {
+  const [accountant, setAccountant] = useState(
+    existing?.accountant ?? chat.accountant ?? ""
+  );
+  const [criteria, setCriteria] = useState<CriteriaScores>(
+    existing?.scores.criteria ?? {}
+  );
+  const [monthly, setMonthly] = useState<Record<string, MonthlyStatus>>({
+    ...emptyMonthly(),
+    ...(existing?.scores.monthly ?? {}),
+  });
+  const [comment, setComment] = useState(existing?.comment ?? "");
+  const [override, setOverride] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
+
+  const total =
+    override.trim() !== "" && !Number.isNaN(Number(override))
+      ? Number(override)
+      : computeOverall(criteria);
+
   const setCrit = (id: CriterionId, v: string) =>
-    setDraft({
-      ...draft,
-      criteria: { ...draft.criteria, [id]: v === "" ? undefined : Number(v) },
-    });
-  const setMonthly = (id: string, patch: Partial<MonthlyStatus>) =>
-    setDraft({
-      ...draft,
-      monthly: { ...draft.monthly, [id]: { ...draft.monthly[id], ...patch } },
-    });
+    setCriteria((c) => ({ ...c, [id]: v === "" ? undefined : Number(v) }));
+  const setMon = (id: string, status: string) =>
+    setMonthly((m) => ({ ...m, [id]: { ...m[id], status } }));
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    const payload = {
+      chat_agr_no: chat.agr_no,
+      checking_date: date,
+      accountant: accountant || null,
+      scores: { criteria, monthly },
+      comment: comment || null,
+      total_override: override.trim() !== "" ? Number(override) : null,
+    };
+    try {
+      const res = await fetch(
+        savedId ? `/api/evaluations/${savedId}` : "/api/evaluations",
+        {
+          method: savedId ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error || "Ошибка");
+        return;
+      }
+      const saved: Evaluation = await res.json();
+      setSavedId(saved.id);
+      onSaved(saved);
+    } catch {
+      setError("Сеть");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const previewEval: Evaluation = {
+    id: savedId ?? "preview",
+    chat_agr_no: chat.agr_no,
+    period: date.slice(0, 7).replace("-", ""),
+    checking_date: date,
+    accountant: accountant || null,
+    scores: { criteria, monthly },
+    total_score: total,
+    quality_band: "Критично",
+    comment: comment || null,
+    created_at: new Date().toISOString(),
+  };
 
   return (
-    <tr className={isNew ? "bg-blue-50/40" : "bg-yellow-50/40"}>
+    <tr className={savedId ? "" : "bg-blue-50/30"}>
       <td className="space-y-1">
-        {fixedChat ? (
-          <>
-            <div className="font-medium">№ {draft.chat_agr_no}</div>
-            <div className="text-gray-500 text-xs">{chat?.chat_name ?? ""}</div>
-          </>
-        ) : (
-          <select
-            className="input w-full"
-            value={draft.chat_agr_no}
-            onChange={(e) => pickChat(e.target.value)}
-          >
-            <option value="">— выберите чат —</option>
-            {filteredChats.map((c) => (
-              <option key={c.agr_no} value={c.agr_no}>
-                № {c.agr_no} — {c.chat_name}
-              </option>
-            ))}
-          </select>
-        )}
+        <div className="font-medium">
+          № {chat.agr_no}
+          {chat.status !== "Active" && (
+            <span className="ml-1 text-xs text-gray-400">(неактивен)</span>
+          )}
+        </div>
+        <div className="text-gray-600 text-xs">{chat.chat_name}</div>
         <select
-          className="input w-full"
-          value={draft.accountant}
-          onChange={(e) => setDraft({ ...draft, accountant: e.target.value })}
+          className="input w-full text-xs"
+          value={accountant}
+          onChange={(e) => setAccountant(e.target.value)}
         >
           <option value="">— бухгалтер —</option>
           {accountants.map((a) => (
@@ -362,38 +305,32 @@ function EditableRow({
             </option>
           ))}
         </select>
-        {chat && (
-          <div className="text-xs text-gray-400">
-            Долги: {chat.debts ?? "—"}
-            {chat.chat_link && (
-              <>
-                {" · "}
-                <a
-                  href={chat.chat_link}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-blue-600 hover:underline"
-                >
-                  чат
-                </a>
-              </>
-            )}
-          </div>
-        )}
+        <div className="text-xs text-gray-400">
+          Долги: {chat.debts ?? "—"} · Менеджер: {chat.manager ?? "—"}
+        </div>
       </td>
       <td>
-        <input
-          type="date"
-          className="input w-[130px]"
-          value={draft.checking_date}
-          onChange={(e) => setDraft({ ...draft, checking_date: e.target.value })}
-        />
+        {chat.chat_link ? (
+          <a
+            href={chat.chat_link}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-secondary whitespace-nowrap"
+            title="Открыть чат в Telegram"
+          >
+            Открыть ↗
+          </a>
+        ) : (
+          <span className="text-gray-400 text-xs">нет ссылки</span>
+        )}
       </td>
+      {/* Preliminary bot score — TODO(margarita): wire to bot. */}
+      <td className="text-center text-gray-300">—</td>
       {DAILY_CRITERIA.map((c) => (
         <td key={c.id}>
           <select
-            className="input w-[56px]"
-            value={draft.criteria[c.id] ?? ""}
+            className="input w-[52px]"
+            value={criteria[c.id] ?? ""}
             onChange={(e) => setCrit(c.id, e.target.value)}
             title={c.name}
           >
@@ -409,9 +346,9 @@ function EditableRow({
       {MONTHLY_CATEGORIES.map((c) => (
         <td key={c.id}>
           <select
-            className="input w-[130px] text-xs"
-            value={draft.monthly[c.id]?.status ?? ""}
-            onChange={(e) => setMonthly(c.id, { status: e.target.value })}
+            className="input w-[120px] text-xs"
+            value={monthly[c.id]?.status ?? ""}
+            onChange={(e) => setMon(c.id, e.target.value)}
             title={c.name}
           >
             <option value="">—</option>
@@ -425,9 +362,9 @@ function EditableRow({
       ))}
       <td>
         <input
-          className="input w-[64px] tabular-nums text-center"
-          value={draft.overrideTotal === "" ? total : draft.overrideTotal}
-          onChange={(e) => setDraft({ ...draft, overrideTotal: e.target.value })}
+          className="input w-[60px] tabular-nums text-center"
+          value={override === "" ? total : override}
+          onChange={(e) => setOverride(e.target.value)}
           title="Авто из критериев; можно переопределить"
         />
       </td>
@@ -437,25 +374,21 @@ function EditableRow({
       <td>
         <input
           className="input w-full"
-          value={draft.comment}
-          onChange={(e) => setDraft({ ...draft, comment: e.target.value })}
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
           placeholder="комментарий…"
         />
       </td>
       <td className="whitespace-nowrap">
-        <div className="flex gap-1">
-          <button
-            className="btn-primary"
-            onClick={onSave}
-            disabled={saving || !draft.chat_agr_no}
-          >
-            {saving ? "…" : isNew ? "Добавить" : "Сохр."}
-          </button>
-          {!isNew && (
-            <button className="btn-secondary" onClick={onCancel}>
-              Отм.
+        <div className="flex flex-col gap-1">
+          <div className="flex gap-1">
+            <button className="btn-primary" onClick={save} disabled={saving}>
+              {saving ? "…" : savedId ? "Сохр." : "Оценить"}
             </button>
-          )}
+            <CopyButton label="Копир." text={buildScoreMessage(previewEval, chat)} />
+          </div>
+          {savedId && <span className="text-[10px] text-green-600">сохранено ✓</span>}
+          {error && <span className="text-[10px] text-red-600">{error}</span>}
         </div>
       </td>
     </tr>
