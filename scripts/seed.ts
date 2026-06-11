@@ -7,6 +7,7 @@
 // upserted by id. Run db/schema.sql first to create the tables.
 import { createClient } from "@supabase/supabase-js";
 import { CRITERIA } from "../src/lib/scoring";
+import { TABLES } from "../src/lib/tables";
 import {
   seedAccountants,
   seedChats,
@@ -27,15 +28,15 @@ async function main() {
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
   console.log("Seeding accountants…");
-  let { error } = await sb.from("accountants").upsert(seedAccountants);
+  let { error } = await sb.from(TABLES.accountants).upsert(seedAccountants);
   if (error) throw error;
 
   console.log("Seeding chats…");
-  ({ error } = await sb.from("chats").upsert(seedChats));
+  ({ error } = await sb.from(TABLES.chats).upsert(seedChats));
   if (error) throw error;
 
   console.log("Seeding criteria…");
-  ({ error } = await sb.from("criteria").upsert(
+  ({ error } = await sb.from(TABLES.criteria).upsert(
     CRITERIA.map((c) => ({
       id: c.id,
       name: c.name,
@@ -47,11 +48,11 @@ async function main() {
   if (error) throw error;
 
   console.log("Seeding evaluations…");
-  ({ error } = await sb.from("evaluations").upsert(seedEvaluations));
+  ({ error } = await sb.from(TABLES.evaluations).upsert(seedEvaluations));
   if (error) throw error;
 
   console.log("Seeding tasks…");
-  ({ error } = await sb.from("tasks").upsert(seedTasks));
+  ({ error } = await sb.from(TABLES.tasks).upsert(seedTasks));
   if (error) throw error;
 
   console.log("Done.");

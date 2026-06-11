@@ -3,8 +3,8 @@ import {
   SESSION_COOKIE,
   SESSION_MAX_AGE,
   createSessionToken,
-  verifyCredentials,
 } from "@/lib/auth";
+import { authenticate } from "@/lib/users";
 
 export async function POST(req: Request) {
   let email = "";
@@ -17,7 +17,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
 
-  if (!verifyCredentials(email, password)) {
+  if (!(await authenticate(email, password))) {
     return NextResponse.json(
       { error: "Неверный email или пароль" },
       { status: 401 }

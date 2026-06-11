@@ -14,34 +14,9 @@ function secret(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-interface UserRecord {
-  email: string;
-  password: string;
-}
-
-function parseUsers(): UserRecord[] {
-  const raw = process.env.AUTH_USERS;
-  if (!raw) {
-    // Dev default so the app is usable out of the box. CHANGE in production.
-    return [{ email: "info@onebusiness.am", password: "changeme" }];
-  }
-  return raw
-    .split(",")
-    .map((pair) => pair.trim())
-    .filter(Boolean)
-    .map((pair) => {
-      const idx = pair.indexOf(":");
-      return {
-        email: pair.slice(0, idx).trim().toLowerCase(),
-        password: pair.slice(idx + 1),
-      };
-    });
-}
-
-export function verifyCredentials(email: string, password: string): boolean {
-  const e = email.trim().toLowerCase();
-  return parseUsers().some((u) => u.email === e && u.password === password);
-}
+// NOTE: credential verification + password hashing live in src/lib/users.ts
+// (Node runtime only). This module stays edge-safe (jose only) so it can be
+// imported by middleware.
 
 export interface SessionPayload {
   email: string;

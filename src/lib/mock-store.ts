@@ -8,11 +8,17 @@ import {
   seedTasks,
 } from "./seed-data";
 
+interface StoredUser {
+  email: string;
+  password_hash: string;
+}
+
 interface Store {
   chats: Chat[];
   accountants: Accountant[];
   evaluations: Evaluation[];
   tasks: Task[];
+  users: StoredUser[];
 }
 
 // Use a global to survive module reloads in Next dev (HMR).
@@ -25,6 +31,7 @@ export function store(): Store {
       accountants: structuredClone(seedAccountants),
       evaluations: structuredClone(seedEvaluations),
       tasks: structuredClone(seedTasks),
+      users: [],
     };
   }
   return g.__qaStore;

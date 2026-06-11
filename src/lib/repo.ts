@@ -3,6 +3,7 @@
 import { randomUUID } from "crypto";
 import { getServiceClient } from "./supabase/server";
 import { store } from "./mock-store";
+import { TABLES } from "./tables";
 import { bandFor, computeWeightedTotal, computeTaskStatusTotal, ACTIVE_MODEL } from "./scoring";
 import { buildReport, type DailyReport, type ReportFilters } from "./report";
 import type {
@@ -13,12 +14,19 @@ import type {
   Task,
 } from "./types";
 
+// PostgREST returns `numeric`/`double precision` columns in ways that can
+// surface as strings depending on driver/type. Normalize so downstream math
+// (report aggregation) always operates on real numbers.
+function normalizeEvaluation(row: any): Evaluation {
+  return { ...row, total_score: Number(row.total_score) } as Evaluation;
+}
+
 // --- Chats -----------------------------------------------------------------
 
 export async function listChats(search?: string): Promise<Chat[]> {
   const sb = getServiceClient();
   if (sb) {
-    let q = sb.from("chats").select("*").order("agr_no");
+    let q = sb.from(TABLES.chats).select("*").order("agr_no");
     const { data, error } = await q;
     if (error) throw error;
     let rows = (data ?? []) as Chat[];
@@ -44,7 +52,7 @@ export async function getChat(agrNo: string): Promise<Chat | null> {
   const sb = getServiceClient();
   if (sb) {
     const { data, error } = await sb
-      .from("chats")
+      .from(TABLES.chats)
       .select("*")
       .eq("agr_no", agrNo)
       .maybeSingle();
@@ -59,7 +67,7 @@ export async function getChat(agrNo: string): Promise<Chat | null> {
 export async function listAccountants(): Promise<Accountant[]> {
   const sb = getServiceClient();
   if (sb) {
-    const { data, error } = await sb.from("accountants").select("*").order("name");
+    const { data, error } = await sb.from(TABLES.accountants).select("*").order("name");
     if (error) throw error;
     return (data ?? []) as Accountant[];
   }
@@ -75,11 +83,11 @@ export async function listEvaluations(
   let rows: Evaluation[];
   if (sb) {
     const { data, error } = await sb
-      .from("evaluations")
+      .from(TABLES.evaluations)
       .select("*")
       .order("created_at", { ascending: false });
     if (error) throw error;
-    rows = (data ?? []) as Evaluation[];
+    rows = (data ?? []).map(normalizeEvaluation);
   } else {
     rows = [...store().evaluations].sort((a, b) =>
       b.created_at.localeCompare(a.created_at)
@@ -127,12 +135,12 @@ export async function createEvaluation(
   const sb = getServiceClient();
   if (sb) {
     const { data, error } = await sb
-      .from("evaluations")
+      .from(TABLES.evaluations)
       .insert(row)
       .select()
       .single();
     if (error) throw error;
-    return data as Evaluation;
+    return normalizeEvaluation(data);
   }
   store().evaluations.unshift(row);
   return row;
@@ -160,13 +168,13 @@ export async function updateEvaluation(
   const sb = getServiceClient();
   if (sb) {
     const { data, error } = await sb
-      .from("evaluations")
+      .from(TABLES.evaluations)
       .update(patch)
       .eq("id", id)
       .select()
       .single();
     if (error) throw error;
-    return data as Evaluation;
+    return normalizeEvaluation(data);
   }
   const rows = store().evaluations;
   const idx = rows.findIndex((e) => e.id === id);
@@ -180,7 +188,7 @@ export async function updateEvaluation(
 export async function listTasks(chatAgrNo?: string): Promise<Task[]> {
   const sb = getServiceClient();
   if (sb) {
-    let q = sb.from("tasks").select("*");
+    let q = sb.from(TABLES.tasks).select("*");
     if (chatAgrNo) q = q.eq("chat_agr_no", chatAgrNo);
     const { data, error } = await q;
     if (error) throw error;
