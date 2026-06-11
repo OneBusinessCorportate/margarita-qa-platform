@@ -228,7 +228,7 @@ function ChatScoreRow({
   const total =
     override.trim() !== "" && !Number.isNaN(Number(override))
       ? Number(override)
-      : computeOverall(criteria);
+      : computeOverall(criteria, monthly);
 
   const setCrit = (id: CriterionId, v: string) =>
     setCriteria((c) => ({ ...c, [id]: v === "" ? undefined : Number(v) }));

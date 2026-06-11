@@ -17,7 +17,7 @@ import type {
 
 function overallFor(input: NewEvaluationInput): number {
   if (typeof input.total_override === "number") return input.total_override;
-  return computeOverall(input.scores.criteria ?? {});
+  return computeOverall(input.scores.criteria ?? {}, input.scores.monthly);
 }
 
 // PostgREST returns `numeric`/`double precision` columns in ways that can

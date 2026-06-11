@@ -1,8 +1,9 @@
-import { getReport } from "@/lib/repo";
-import { listAccountants } from "@/lib/repo";
-import { buildReportMessage } from "@/lib/templates";
-import { BANDS } from "@/lib/scoring";
+import { getReport, listAccountants, listChats, listEvaluations } from "@/lib/repo";
+import { buildReportMessage, telegramConfigured } from "@/lib/templates";
+import { BANDS, MONTHLY_CATEGORIES } from "@/lib/scoring";
 import CopyButton from "@/components/CopyButton";
+import SendTelegramButton from "@/components/SendTelegramButton";
+import BandChip from "@/components/BandChip";
 import DashboardFilters from "@/components/DashboardFilters";
 
 export const dynamic = "force-dynamic";
@@ -18,11 +19,15 @@ export default async function DashboardPage({
     accountant: searchParams.accountant || undefined,
     client: searchParams.client || undefined,
   };
-  const [report, accountants] = await Promise.all([
+  const [report, accountants, evaluations, chats] = await Promise.all([
     getReport(filters),
     listAccountants(),
+    listEvaluations(filters),
+    listChats(),
   ]);
+  const chatMap = new Map(chats.map((c) => [c.agr_no, c]));
   const reportMessage = buildReportMessage(report);
+  const botReady = telegramConfigured();
 
   const totals = [
     { label: "Активных чатов", value: report.totals.activeChats },
@@ -40,11 +45,14 @@ export default async function DashboardPage({
             Ежедневный отчёт по качеству — по дате и бухгалтеру.
           </p>
         </div>
-        <CopyButton
-          label="Копировать отчёт"
-          className="btn-primary"
-          text={reportMessage}
-        />
+        <div className="flex items-center gap-2">
+          <CopyButton
+            label="Копировать отчёт"
+            className="btn-primary"
+            text={reportMessage}
+          />
+          <SendTelegramButton text={reportMessage} configured={botReady} />
+        </div>
       </div>
 
       <DashboardFilters
@@ -169,13 +177,86 @@ export default async function DashboardPage({
         </table>
       </div>
 
+      {/* Per-chat detail: statuses + quality + link */}
+      <div className="card overflow-x-auto">
+        <div className="px-3 pt-3 text-sm font-medium">
+          По чатам (оценённые за период) — статусы и качество
+        </div>
+        <table className="qa">
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th className="min-w-[180px]">№ / Чат</th>
+              <th>Бухгалтер</th>
+              {MONTHLY_CATEGORIES.map((c) => (
+                <th key={c.id} title={c.name}>
+                  {c.shortName}
+                </th>
+              ))}
+              <th>Общая</th>
+              <th>Качество</th>
+              <th>Чат</th>
+            </tr>
+          </thead>
+          <tbody>
+            {evaluations.length === 0 && (
+              <tr>
+                <td colSpan={11} className="text-center text-gray-400 py-6">
+                  Нет оценок за период.
+                </td>
+              </tr>
+            )}
+            {evaluations.map((ev) => {
+              const chat = chatMap.get(ev.chat_agr_no) ?? null;
+              const monthly = ev.scores.monthly ?? {};
+              return (
+                <tr key={ev.id}>
+                  <td className="whitespace-nowrap">{ev.checking_date}</td>
+                  <td>
+                    <div className="font-medium">№ {ev.chat_agr_no}</div>
+                    <div className="text-gray-500 text-xs">{chat?.chat_name ?? "—"}</div>
+                  </td>
+                  <td>{ev.accountant ?? "—"}</td>
+                  {MONTHLY_CATEGORIES.map((c) => (
+                    <td key={c.id} className="text-xs whitespace-nowrap">
+                      {monthly[c.id]?.status || "—"}
+                    </td>
+                  ))}
+                  <td className="tabular-nums font-semibold text-center">{ev.total_score}</td>
+                  <td>
+                    <BandChip band={ev.quality_band} />
+                  </td>
+                  <td>
+                    {chat?.chat_link ? (
+                      <a
+                        href={chat.chat_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-600 hover:underline whitespace-nowrap"
+                      >
+                        Открыть ↗
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
       {/* Report message preview */}
       <div className="card p-3 space-y-2">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">
             Сообщение для Telegram (отчёт)
           </div>
-          <CopyButton label="Копировать" text={reportMessage} />
+          <div className="flex items-center gap-2">
+            <CopyButton label="Копировать" text={reportMessage} />
+            <SendTelegramButton text={reportMessage} configured={botReady} />
+          </div>
         </div>
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {reportMessage}

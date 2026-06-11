@@ -7,6 +7,7 @@ import {
   telegramConfigured,
 } from "@/lib/templates";
 import CopyButton from "@/components/CopyButton";
+import SendTelegramButton from "@/components/SendTelegramButton";
 import BandChip from "@/components/BandChip";
 
 export const dynamic = "force-dynamic";
@@ -26,9 +27,10 @@ export default async function MessagesPage() {
       <div>
         <h1 className="text-xl font-semibold">Сообщения для Telegram</h1>
         <p className="text-sm text-gray-500">
-          v1: только копирование в буфер обмена. Отправка через бота появится
-          позже (за {`TELEGRAM_BOT_TOKEN`} / {`TELEGRAM_CHAT_ID`}).{" "}
-          {botReady ? "Бот настроен." : "Бот не настроен."}
+          Копируйте в буфер обмена или отправляйте напрямую через бота.{" "}
+          {botReady
+            ? "Бот настроен — кнопка «Отправить в Telegram» активна."
+            : "Бот не настроен (задайте TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID, чтобы включить отправку)."}
         </p>
       </div>
 
@@ -38,9 +40,7 @@ export default async function MessagesPage() {
           <div className="text-sm font-medium">Сообщение-отчёт (за всё время)</div>
           <div className="flex gap-2">
             <CopyButton label="Копировать отчёт" text={reportMessage} />
-            <button className="btn-secondary" disabled title="Доступно после настройки бота">
-              Отправить (скоро)
-            </button>
+            <SendTelegramButton text={reportMessage} configured={botReady} />
           </div>
         </div>
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
@@ -127,7 +127,10 @@ export default async function MessagesPage() {
                     </pre>
                   </td>
                   <td className="whitespace-nowrap">
-                    <CopyButton label="Копировать" text={msg} />
+                    <div className="flex gap-1">
+                      <CopyButton label="Копировать" text={msg} />
+                      <SendTelegramButton text={msg} configured={botReady} label="Отправить" />
+                    </div>
                   </td>
                 </tr>
               );

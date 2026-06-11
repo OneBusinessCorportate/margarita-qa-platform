@@ -72,6 +72,42 @@ test("there are 4 monthly task categories with correct due days", () => {
   assert.equal(byId.debts, 5);
 });
 
+test("monthly statuses lower Общая (penalties)", () => {
+  // perfect daily scores -> base 100; "Не запросил 1" salary penalises 10
+  const t1 = computeOverall(
+    { accuracy: 5, sla: 5 },
+    { salary: { status: "Не запросил 1" } }
+  );
+  assert.equal(t1, 90);
+  // multiple penalties stack: 10 + 15 = 25 -> 75
+  const t2 = computeOverall(
+    { accuracy: 5, sla: 5 },
+    {
+      salary: { status: "Не запросил 1" },
+      debts: { status: "Не написал 2" },
+    }
+  );
+  assert.equal(t2, 75);
+  // non-penalising statuses leave the score unchanged
+  const t3 = computeOverall(
+    { accuracy: 5, sla: 5 },
+    { debts: { status: "нет долга" }, main_taxes: { status: "Получил" } }
+  );
+  assert.equal(t3, 100);
+});
+
+test("penalty never pushes the score below 0", () => {
+  const t = computeOverall(
+    { accuracy: 0, sla: 0 },
+    {
+      salary: { status: "Не написал 2" },
+      debts: { status: "Не написал 2" },
+      primary_docs: { status: "Не написал 2" },
+    }
+  );
+  assert.ok(t >= 0);
+});
+
 test("debts category uses the 'нет долга' status set", () => {
   const debts = MONTHLY_CATEGORIES.find((c) => c.id === "debts")!;
   assert.equal(debts.statuses, DEBT_STATUSES);

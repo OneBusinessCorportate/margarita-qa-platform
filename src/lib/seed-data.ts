@@ -88,23 +88,23 @@ function evalRow(
   comment: string,
   override?: number
 ): Evaluation {
+  const monthlyMap = {
+    main_taxes: M(monthly.main_taxes),
+    salary: M(monthly.salary),
+    primary_docs: M(monthly.primary_docs),
+    debts: M(monthly.debts),
+  };
   const total =
-    typeof override === "number" ? override : computeOverall(criteria);
+    typeof override === "number"
+      ? override
+      : computeOverall(criteria, monthlyMap);
   return {
     id,
     chat_agr_no,
     period: checking_date.slice(0, 7).replace("-", ""),
     checking_date,
     accountant,
-    scores: {
-      criteria,
-      monthly: {
-        main_taxes: M(monthly.main_taxes),
-        salary: M(monthly.salary),
-        primary_docs: M(monthly.primary_docs),
-        debts: M(monthly.debts),
-      },
-    },
+    scores: { criteria, monthly: monthlyMap },
     total_score: total,
     quality_band: bandFor(total),
     comment,

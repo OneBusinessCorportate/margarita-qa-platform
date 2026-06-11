@@ -163,6 +163,30 @@ export const MONTHLY_CATEGORIES: MonthlyCategory[] = [
 
 export const PREV_STATUS_DEFAULT = "--";
 
+// Statuses that LOWER the Общая оценка, and by how many points each. Statuses
+// not listed (e.g. "Получил", "нет долга", "Предстоящая", "Отправил",
+// "1ый написал", "--") carry no penalty.
+// TODO(margarita): confirm exactly which statuses penalize and the magnitudes.
+export const STATUS_PENALTIES: Record<string, number> = {
+  "Не запросил 1": 10,
+  "Запросил 1, не получил": 5,
+  "Не написал 1": 10,
+  "Не написал 2": 15,
+};
+
+/** Total penalty across the four monthly statuses of an evaluation. */
+export function statusPenalty(
+  monthly?: Record<string, { status: string }>
+): number {
+  if (!monthly) return 0;
+  let p = 0;
+  for (const cat of MONTHLY_CATEGORIES) {
+    const s = monthly[cat.id]?.status;
+    if (s) p += STATUS_PENALTIES[s] ?? 0;
+  }
+  return p;
+}
+
 // --- Single-task (the "Single task" block + "Задачи" tab) ------------------
 
 export const SINGLE_TASK_STATUSES = [
@@ -226,6 +250,7 @@ export type CriteriaScores = Partial<Record<CriterionId, number>>;
  */
 export function computeOverall(
   scores: CriteriaScores,
+  monthly?: Record<string, { status: string }>,
   criteria: Criterion[] = CRITERIA
 ): number {
   let total = 0;
@@ -237,6 +262,8 @@ export function computeOverall(
         : c.scaleMax; // un-entered -> full marks
     total += (value * c.weight) / c.scaleMax;
   }
+  // Monthly task statuses can lower the score.
+  total = Math.max(0, total - statusPenalty(monthly));
   return Math.round(total * 100) / 100;
 }
 
