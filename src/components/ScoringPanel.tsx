@@ -23,14 +23,16 @@ export default function ScoringPanel({
   accountants,
   initialEvaluations,
   taskActivity = [],
+  latestActivityDate = null,
 }: {
   chats: Chat[];
   accountants: Accountant[];
   initialEvaluations: Evaluation[];
   taskActivity?: { chat_agr_no: string; date: string }[];
+  latestActivityDate?: string | null;
 }) {
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
-  const [date, setDate] = useState(today());
+  const [date, setDate] = useState(latestActivityDate ?? today());
   const [scope, setScope] = useState<Scope>("all");
   const [search, setSearch] = useState("");
   const [accFilter, setAccFilter] = useState("");
@@ -197,8 +199,27 @@ export default function ScoringPanel({
           <tbody>
             {visibleChats.length === 0 && (
               <tr>
-                <td colSpan={14} className="text-center text-gray-400 py-6">
-                  Нет чатов по текущим фильтрам.
+                <td colSpan={14} className="text-center text-gray-500 py-6">
+                  {scope === "day" ? (
+                    <div className="space-y-2">
+                      <div>За {date} нет активных чатов (оценок/задач).</div>
+                      <div className="flex gap-2 justify-center">
+                        {latestActivityDate && latestActivityDate !== date && (
+                          <button
+                            className="btn-secondary"
+                            onClick={() => setDate(latestActivityDate)}
+                          >
+                            Последняя дата с активностью: {latestActivityDate}
+                          </button>
+                        )}
+                        <button className="btn-secondary" onClick={() => setScope("all")}>
+                          Показать все активные чаты
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    "Нет чатов по текущим фильтрам."
+                  )}
                 </td>
               </tr>
             )}
