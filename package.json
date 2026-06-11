@@ -8,6 +8,7 @@
     "start": "next start -p $PORT",
     "lint": "next lint",
     "seed": "tsx scripts/seed.ts",
+    "import": "tsx scripts/import-xlsx.ts",
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
@@ -25,6 +26,7 @@
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
     "tsx": "^4.19.1",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "xlsx": "^0.18.5"
   }
 }

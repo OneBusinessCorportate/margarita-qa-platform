@@ -29,3 +29,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# imported data files (may contain PII)
+/data/*.xlsx
