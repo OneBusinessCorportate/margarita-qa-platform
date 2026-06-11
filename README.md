@@ -1,0 +1,1 @@
+# margarita-qa-platform
