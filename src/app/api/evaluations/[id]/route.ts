@@ -32,8 +32,10 @@ export async function PUT(
         : checking_date.slice(0, 7).replace("-", ""),
     checking_date,
     accountant: body.accountant ?? null,
-    scores: { criteria: body.scores?.criteria, tasks: body.scores?.tasks },
+    scores: { criteria: body.scores?.criteria, monthly: body.scores?.monthly },
     comment: body.comment ?? null,
+    total_override:
+      typeof body.total_override === "number" ? body.total_override : null,
   };
   try {
     const updated = await updateEvaluation(params.id, input);

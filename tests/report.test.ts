@@ -1,67 +1,62 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildReport } from "../src/lib/report";
-import { seedChats, seedEvaluations } from "../src/lib/seed-data";
+import { seedChats, seedEvaluations, seedTasks } from "../src/lib/seed-data";
 
 test("report totals reflect seed data with no filters", () => {
-  const r = buildReport(seedChats, seedEvaluations, {});
-  // 9 active chats in seed (one Inactive: 318)
-  assert.equal(r.totals.activeChats, 9);
-  // one active chat without accountant (523)
+  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks);
+  assert.equal(r.totals.activeChats, seedChats.filter((c) => c.status === "Active").length);
+  // one active chat without an accountant (700)
   assert.equal(r.totals.chatsWithoutResponsible, 1);
-  // evaluated distinct chats = 7 evaluations across 7 distinct chats
-  assert.equal(r.totals.evaluatedChats, 7);
+  // 8 evaluations across 8 distinct chats
+  assert.equal(r.totals.evaluatedChats, 8);
 });
 
 test("distribution counts add up to number of evaluations", () => {
-  const r = buildReport(seedChats, seedEvaluations, {});
+  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks);
   const sum =
-    r.distribution.Отлично +
-    r.distribution.Хорошо +
-    r.distribution.Плохо +
-    r.distribution.Критично;
+    r.distribution.Отлично + r.distribution.Хорошо + r.distribution.Плохо + r.distribution.Критично;
   assert.equal(sum, seedEvaluations.length);
 });
 
 test("accountant filter narrows results", () => {
-  const r = buildReport(seedChats, seedEvaluations, { accountant: "Լիլիթ" });
-  // Лилит evaluated 2 chats (B-3302, 401)
+  const r = buildReport(seedChats, seedEvaluations, { accountant: "Լիլիթ" }, seedTasks);
+  // Лилит evaluated chats 23 and 100
   assert.equal(r.totals.evaluatedChats, 2);
   assert.equal(r.perAccountant.length, 1);
   assert.equal(r.perAccountant[0].accountant, "Լիլիթ");
 });
 
 test("date range filter excludes out-of-range evaluations", () => {
-  const r = buildReport(seedChats, seedEvaluations, {
-    from: "2026-06-11",
-    to: "2026-06-11",
-  });
-  // e7 is dated 2026-06-10 -> excluded, leaving 6 evaluations
+  const r = buildReport(seedChats, seedEvaluations, { from: "2026-06-11", to: "2026-06-11" }, seedTasks);
+  // e7 is dated 2026-06-10 -> excluded, leaving 7
   const sum =
-    r.distribution.Отлично +
-    r.distribution.Хорошо +
-    r.distribution.Плохо +
-    r.distribution.Критично;
-  assert.equal(sum, 6);
+    r.distribution.Отлично + r.distribution.Хорошо + r.distribution.Плохо + r.distribution.Критично;
+  assert.equal(sum, 7);
 });
 
 test("service quality is the average of totals", () => {
-  const r = buildReport(seedChats, seedEvaluations, {});
-  const avg =
-    seedEvaluations.reduce((s, e) => s + e.total_score, 0) /
-    seedEvaluations.length;
+  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks);
+  const avg = seedEvaluations.reduce((s, e) => s + e.total_score, 0) / seedEvaluations.length;
   assert.equal(r.serviceQualityPct, Math.round(avg * 10) / 10);
 });
 
 test("client filter matches by agr_no", () => {
-  const r = buildReport(seedChats, seedEvaluations, { client: "B-3302" });
+  const r = buildReport(seedChats, seedEvaluations, { client: "100" }, seedTasks);
   assert.equal(r.totals.evaluatedChats, 1);
 });
 
 test("per-accountant breakdown flags low scores", () => {
-  const r = buildReport(seedChats, seedEvaluations, {});
-  const tigran = r.perAccountant.find((a) => a.accountant === "Տիգրան");
-  // Tigran's only eval is Критично -> lowCount 1
-  assert.ok(tigran);
-  assert.equal(tigran!.lowCount, 1);
+  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks);
+  const avag = r.perAccountant.find((a) => a.accountant === "Ավագ");
+  assert.ok(avag);
+  assert.equal(avag!.lowCount, 1); // e5 is Критично
+});
+
+test("tasks block aggregates by status", () => {
+  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks);
+  assert.equal(r.tasks.total, seedTasks.length);
+  assert.equal(r.tasks.onTime, 1); // t2
+  assert.equal(r.tasks.late, 2); // t1, t3
+  assert.equal(r.tasks.overdue, 1); // t4
 });

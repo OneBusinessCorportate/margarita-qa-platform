@@ -90,8 +90,9 @@ export default async function DashboardPage({
         </div>
       </div>
 
-      {/* Per-accountant breakdown */}
+      {/* Per-accountant: Сервис Бухгалтерии */}
       <div className="card overflow-x-auto">
+        <div className="px-3 pt-3 text-sm font-medium">Сервис Бухгалтерии — по бухгалтерам</div>
         <table className="qa">
           <thead>
             <tr>
@@ -112,13 +113,54 @@ export default async function DashboardPage({
             {report.perAccountant.map((a) => (
               <tr key={a.accountant}>
                 <td className="font-medium">{a.accountant}</td>
-                <td className="tabular-nums">{a.avgScore}%</td>
+                <td className="tabular-nums">{a.avgScore < 0 ? "—" : `${a.avgScore}%`}</td>
                 <td className="tabular-nums">{a.count}</td>
                 <td className="tabular-nums">
                   <span
                     className={a.lowCount > 0 ? "text-red-600 font-medium" : ""}
                   >
                     {a.lowCount}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Задачи Бухгалтерии */}
+      <div className="card overflow-x-auto">
+        <div className="px-3 pt-3 text-sm font-medium">
+          Задачи Бухгалтерии — всего {report.tasks.total} (в срок: {report.tasks.onTime},
+          с опозданием: {report.tasks.late}, просрочено: {report.tasks.overdue})
+        </div>
+        <table className="qa">
+          <thead>
+            <tr>
+              <th>Бухгалтер</th>
+              <th>Всего</th>
+              <th>В срок</th>
+              <th>С опозданием</th>
+              <th>Просрочено</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.tasks.perAccountant.length === 0 && (
+              <tr>
+                <td colSpan={5} className="text-center text-gray-400 py-6">
+                  Нет задач за выбранный период.
+                </td>
+              </tr>
+            )}
+            {report.tasks.perAccountant.map((a) => (
+              <tr key={a.accountant}>
+                <td className="font-medium">{a.accountant}</td>
+                <td className="tabular-nums">{a.total}</td>
+                <td className="tabular-nums">{a.onTime}</td>
+                <td className="tabular-nums">{a.late}</td>
+                <td className="tabular-nums">
+                  <span className={a.overdue > 0 ? "text-red-600 font-medium" : ""}>
+                    {a.overdue}
                   </span>
                 </td>
               </tr>

@@ -65,20 +65,21 @@ create index if not exists mqa_evaluations_chat_idx on mqa_evaluations (chat_agr
 create table if not exists mqa_tasks (
   id                  text primary key default gen_random_uuid()::text,
   chat_agr_no         text not null references mqa_chats(agr_no),
-  type                text not null default 'monthly'
+  type                text not null default 'single'
                       check (type in ('monthly', 'single')),
-  category            text not null,
+  category            text,                 -- null for single tasks
   status              text,
   prev_status         text,
   due_date_original   date,
   due_date_postponed  date,
   completed_at        date,
-  priority            integer,
+  priority            text,                 -- Low / Medium / High
   description         text,
   result              text,
-  task_status         text
-                      check (task_status is null or task_status in
-                        ('Completed On Time', 'Late', 'Overdue', 'Cancelled'))
+  task_status         text,                 -- Completed (On Time) / Completed (Late) / Overdue / Cancelled / -
+  accountant          text,
+  checking_date       date,
+  period              text
 );
 
 create index if not exists mqa_tasks_chat_idx on mqa_tasks (chat_agr_no);

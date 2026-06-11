@@ -1,5 +1,11 @@
 import { getReport, listChats, listEvaluations } from "@/lib/repo";
-import { buildReportMessage, buildScoreMessage, telegramConfigured } from "@/lib/templates";
+import {
+  buildReportMessage,
+  buildScoreMessage,
+  surveyInviteAm,
+  surveyInviteRu,
+  telegramConfigured,
+} from "@/lib/templates";
 import CopyButton from "@/components/CopyButton";
 import BandChip from "@/components/BandChip";
 
@@ -40,6 +46,38 @@ export default async function MessagesPage() {
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {reportMessage}
         </pre>
+      </div>
+
+      {/* Client survey invitations (AM / RU) */}
+      <div className="card overflow-x-auto">
+        <div className="p-3 text-sm font-medium border-b border-gray-100">
+          Приглашение на опрос (AM / RU) — по чатам
+        </div>
+        <table className="qa">
+          <thead>
+            <tr>
+              <th>№ / Чат</th>
+              <th>RU</th>
+              <th>AM</th>
+            </tr>
+          </thead>
+          <tbody>
+            {chats.slice(0, 50).map((c) => (
+              <tr key={c.agr_no}>
+                <td>
+                  <div className="font-medium">№ {c.agr_no}</div>
+                  <div className="text-gray-500 text-xs">{c.chat_name}</div>
+                </td>
+                <td>
+                  <CopyButton label="Копировать RU" text={surveyInviteRu(c)} />
+                </td>
+                <td>
+                  <CopyButton label="Պատճենել AM" text={surveyInviteAm(c)} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {/* Per-chat score messages */}

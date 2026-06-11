@@ -1,33 +1,56 @@
-// Pure aggregation for the daily / per-accountant report. Kept separate from
-// data access so it is trivially unit-testable.
-import type { Chat, Evaluation } from "./types";
-import { bandFor, type QualityBand } from "./scoring";
+// Pure aggregation for the daily / per-accountant report, mirroring the
+// "Отчет" tab: a "Сервис Бухгалтерии" block (chat scores) and a "Задачи
+// Бухгалтерии" block (single tasks). Kept separate from data access so it is
+// trivially unit-testable.
+import type { Chat, Evaluation, Task } from "./types";
+import {
+  bandFor,
+  isTaskLate,
+  isTaskOnTime,
+  isTaskOverdue,
+  type QualityBand,
+} from "./scoring";
 
 export interface ReportFilters {
   from?: string; // ISO date inclusive
   to?: string; // ISO date inclusive
   accountant?: string;
-  client?: string; // matches chat agr_no or chat_name (substring)
+  client?: string; // matches chat agr_no or chat name (substring)
 }
 
-export interface AccountantBreakdown {
+export interface AccountantScore {
   accountant: string;
-  avgScore: number; // 0..100
-  count: number; // evaluations counted
-  lowCount: number; // evaluations in Плохо/Критично
+  avgScore: number; // 0..100, -1 means "no evaluations"
+  count: number;
+  lowCount: number; // Плохо + Критично
+}
+
+export interface AccountantTasks {
+  accountant: string;
+  total: number;
+  onTime: number;
+  late: number;
+  overdue: number;
 }
 
 export interface DailyReport {
   filters: ReportFilters;
   totals: {
-    activeChats: number; // Активных чатов
-    newChats: number; // Новых чатов (created in range)
-    chatsWithoutResponsible: number; // Чаты без ответственных
-    evaluatedChats: number; // Оценено чатов всего
+    activeChats: number;
+    newChats: number;
+    chatsWithoutResponsible: number;
+    evaluatedChats: number;
   };
-  distribution: Record<QualityBand, number>; // Отлично/Хорошо/Плохо/Критично
-  serviceQualityPct: number; // "Сервис Бухгалтерии" overall %
-  perAccountant: AccountantBreakdown[];
+  distribution: Record<QualityBand, number>;
+  serviceQualityPct: number; // "Сервис Бухгалтерии" %
+  perAccountant: AccountantScore[];
+  tasks: {
+    total: number;
+    onTime: number;
+    late: number;
+    overdue: number;
+    perAccountant: AccountantTasks[];
+  };
 }
 
 function inRange(date: string | null, from?: string, to?: string): boolean {
@@ -41,7 +64,8 @@ function inRange(date: string | null, from?: string, to?: string): boolean {
 export function buildReport(
   chats: Chat[],
   evaluations: Evaluation[],
-  filters: ReportFilters
+  filters: ReportFilters,
+  tasks: Task[] = []
 ): DailyReport {
   const { from, to, accountant, client } = filters;
 
@@ -57,7 +81,6 @@ export function buildReport(
     );
   };
 
-  // Evaluations filtered by date range + accountant + client.
   const evals = evaluations.filter((e) => {
     if (!inRange(e.checking_date, from, to)) return false;
     if (accountant && e.accountant !== accountant) return false;
@@ -65,7 +88,6 @@ export function buildReport(
     return true;
   });
 
-  // Chats filtered by accountant + client (for the totals block).
   const scopedChats = chats.filter((c) => {
     if (accountant && c.accountant !== accountant) return false;
     if (!matchesClient(c.agr_no)) return false;
@@ -78,11 +100,9 @@ export function buildReport(
     Плохо: 0,
     Критично: 0,
   };
-  for (const e of evals) {
-    distribution[bandFor(e.total_score)] += 1;
-  }
+  for (const e of evals) distribution[bandFor(e.total_score)] += 1;
 
-  // Per-accountant breakdown.
+  // Per-accountant chat scores.
   const byAcc = new Map<string, { sum: number; count: number; low: number }>();
   for (const e of evals) {
     const key = e.accountant ?? "—";
@@ -93,10 +113,10 @@ export function buildReport(
     if (band === "Плохо" || band === "Критично") agg.low += 1;
     byAcc.set(key, agg);
   }
-  const perAccountant: AccountantBreakdown[] = [...byAcc.entries()]
+  const perAccountant: AccountantScore[] = [...byAcc.entries()]
     .map(([name, a]) => ({
       accountant: name,
-      avgScore: a.count ? Math.round((a.sum / a.count) * 10) / 10 : 0,
+      avgScore: a.count ? Math.round((a.sum / a.count) * 10) / 10 : -1,
       count: a.count,
       lowCount: a.low,
     }))
@@ -107,6 +127,41 @@ export function buildReport(
   const serviceQualityPct = evals.length
     ? Math.round((totalScoreSum / evals.length) * 10) / 10
     : 0;
+
+  // Tasks block.
+  const scopedTasks = tasks.filter((t) => {
+    const d = t.checking_date ?? t.completed_at ?? t.due_date_original;
+    if (!inRange(d ?? null, from, to)) return false;
+    if (accountant && t.accountant !== accountant) return false;
+    if (!matchesClient(t.chat_agr_no)) return false;
+    return true;
+  });
+  const taskByAcc = new Map<
+    string,
+    { total: number; onTime: number; late: number; overdue: number }
+  >();
+  let tOnTime = 0,
+    tLate = 0,
+    tOverdue = 0;
+  for (const t of scopedTasks) {
+    const key = t.accountant ?? "—";
+    const agg = taskByAcc.get(key) ?? { total: 0, onTime: 0, late: 0, overdue: 0 };
+    agg.total += 1;
+    if (isTaskOnTime(t.task_status)) {
+      agg.onTime += 1;
+      tOnTime += 1;
+    } else if (isTaskLate(t.task_status)) {
+      agg.late += 1;
+      tLate += 1;
+    } else if (isTaskOverdue(t.task_status)) {
+      agg.overdue += 1;
+      tOverdue += 1;
+    }
+    taskByAcc.set(key, agg);
+  }
+  const tasksPerAccountant: AccountantTasks[] = [...taskByAcc.entries()]
+    .map(([accountant, a]) => ({ accountant, ...a }))
+    .sort((x, y) => y.total - x.total);
 
   return {
     filters,
@@ -122,5 +177,12 @@ export function buildReport(
     distribution,
     serviceQualityPct,
     perAccountant,
+    tasks: {
+      total: scopedTasks.length,
+      onTime: tOnTime,
+      late: tLate,
+      overdue: tOverdue,
+      perAccountant: tasksPerAccountant,
+    },
   };
 }

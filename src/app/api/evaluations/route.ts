@@ -32,9 +32,11 @@ function parseInput(body: any): NewEvaluationInput | null {
     accountant: body.accountant ?? null,
     scores: {
       criteria: body.scores?.criteria,
-      tasks: body.scores?.tasks,
+      monthly: body.scores?.monthly,
     },
     comment: body.comment ?? null,
+    total_override:
+      typeof body.total_override === "number" ? body.total_override : null,
   };
 }
 

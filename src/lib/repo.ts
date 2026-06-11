@@ -4,15 +4,21 @@ import { randomUUID } from "crypto";
 import { getServiceClient } from "./supabase/server";
 import { store } from "./mock-store";
 import { TABLES } from "./tables";
-import { bandFor, computeWeightedTotal, computeTaskStatusTotal, ACTIVE_MODEL } from "./scoring";
+import { bandFor, computeOverall } from "./scoring";
 import { buildReport, type DailyReport, type ReportFilters } from "./report";
 import type {
   Accountant,
   Chat,
   Evaluation,
   NewEvaluationInput,
+  NewTaskInput,
   Task,
 } from "./types";
+
+function overallFor(input: NewEvaluationInput): number {
+  if (typeof input.total_override === "number") return input.total_override;
+  return computeOverall(input.scores.criteria ?? {});
+}
 
 // PostgREST returns `numeric`/`double precision` columns in ways that can
 // surface as strings depending on driver/type. Normalize so downstream math
@@ -114,10 +120,7 @@ function applyEvalFilters(rows: Evaluation[], f: ReportFilters): Evaluation[] {
 export async function createEvaluation(
   input: NewEvaluationInput
 ): Promise<Evaluation> {
-  const total =
-    ACTIVE_MODEL === "task_status" && input.scores.tasks
-      ? computeTaskStatusTotal(input.scores.tasks)
-      : computeWeightedTotal(input.scores.criteria ?? {});
+  const total = overallFor(input);
 
   const row: Evaluation = {
     id: randomUUID(),
@@ -150,10 +153,7 @@ export async function updateEvaluation(
   id: string,
   input: NewEvaluationInput
 ): Promise<Evaluation> {
-  const total =
-    ACTIVE_MODEL === "task_status" && input.scores.tasks
-      ? computeTaskStatusTotal(input.scores.tasks)
-      : computeWeightedTotal(input.scores.criteria ?? {});
+  const total = overallFor(input);
   const patch = {
     chat_agr_no: input.chat_agr_no,
     period: input.period,
@@ -198,12 +198,48 @@ export async function listTasks(chatAgrNo?: string): Promise<Task[]> {
   return chatAgrNo ? rows.filter((t) => t.chat_agr_no === chatAgrNo) : rows;
 }
 
+export async function createTask(input: NewTaskInput): Promise<Task> {
+  const checking_date =
+    input.checking_date ?? new Date().toISOString().slice(0, 10);
+  const row: Task = {
+    id: randomUUID(),
+    chat_agr_no: input.chat_agr_no,
+    type: input.type ?? "single",
+    category: input.category ?? null,
+    status: null,
+    prev_status: null,
+    due_date_original: input.due_date_original ?? null,
+    due_date_postponed: input.due_date_postponed ?? null,
+    completed_at: input.completed_at ?? null,
+    priority: input.priority ?? "Medium",
+    description: input.description ?? null,
+    result: input.result ?? null,
+    task_status: input.task_status ?? "-",
+    accountant: input.accountant ?? null,
+    checking_date,
+    period: checking_date.slice(0, 7).replace("-", ""),
+  };
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.tasks)
+      .insert(row)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as Task;
+  }
+  store().tasks.unshift(row);
+  return row;
+}
+
 // --- Report ----------------------------------------------------------------
 
 export async function getReport(filters: ReportFilters): Promise<DailyReport> {
-  const [chats, evaluations] = await Promise.all([
+  const [chats, evaluations, tasks] = await Promise.all([
     listChats(),
     listEvaluations({}), // report applies its own date filtering
+    listTasks(),
   ]);
-  return buildReport(chats, evaluations, filters);
+  return buildReport(chats, evaluations, filters, tasks);
 }

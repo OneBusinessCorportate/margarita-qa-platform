@@ -3,49 +3,45 @@ import assert from "node:assert/strict";
 import {
   BANDS,
   CRITERIA,
-  TASK_CATEGORIES,
+  DAILY_CRITERIA,
+  DEBT_STATUSES,
+  MONTHLY_CATEGORIES,
   bandFor,
-  computeTaskStatusTotal,
+  computeOverall,
   computeWeightedTotal,
 } from "../src/lib/scoring";
 
 test("criteria weights sum to 100", () => {
-  const sum = CRITERIA.reduce((s, c) => s + c.weight, 0);
-  assert.equal(sum, 100);
+  assert.equal(CRITERIA.reduce((s, c) => s + c.weight, 0), 100);
 });
 
-test("perfect scores give 100", () => {
-  const total = computeWeightedTotal({
-    accuracy: 5,
-    sla: 5,
-    fcr: 5,
-    clarity: 5,
-  });
-  assert.equal(total, 100);
+test("daily criteria are accuracy + sla", () => {
+  assert.deepEqual(DAILY_CRITERIA.map((c) => c.id), ["accuracy", "sla"]);
 });
 
-test("zero scores give 0", () => {
-  const total = computeWeightedTotal({ accuracy: 0, sla: 0, fcr: 0, clarity: 0 });
-  assert.equal(total, 0);
+test("computeWeightedTotal: perfect = 100, zero = 0", () => {
+  assert.equal(computeWeightedTotal({ accuracy: 5, sla: 5, fcr: 5, clarity: 5 }), 100);
+  assert.equal(computeWeightedTotal({ accuracy: 0, sla: 0, fcr: 0, clarity: 0 }), 0);
 });
 
-test("weighted total matches Σ(score × weight ÷ 5)", () => {
-  // accuracy 4 (40), sla 3 (25), fcr 2 (20), clarity 5 (15)
-  // = 4*40/5 + 3*25/5 + 2*20/5 + 5*15/5 = 32 + 15 + 8 + 15 = 70
-  const total = computeWeightedTotal({ accuracy: 4, sla: 3, fcr: 2, clarity: 5 });
-  assert.equal(total, 70);
+test("computeWeightedTotal matches Σ(score × weight ÷ 5)", () => {
+  // 4*40/5 + 3*25/5 + 2*20/5 + 5*15/5 = 32+15+8+15 = 70
+  assert.equal(computeWeightedTotal({ accuracy: 4, sla: 3, fcr: 2, clarity: 5 }), 70);
 });
 
-test("missing criteria are skipped (not treated as 0)", () => {
-  // only accuracy=5 -> 5*40/5 = 40
-  const total = computeWeightedTotal({ accuracy: 5 });
-  assert.equal(total, 40);
+test("computeWeightedTotal skips missing criteria (treats as 0 contribution)", () => {
+  assert.equal(computeWeightedTotal({ accuracy: 5 }), 40);
 });
 
-test("out-of-range scores are clamped", () => {
-  const total = computeWeightedTotal({ accuracy: 99, sla: -5, fcr: 5, clarity: 5 });
-  // accuracy clamps to 5 (40), sla clamps to 0, fcr 20, clarity 15 = 75
-  assert.equal(total, 75);
+test("computeOverall treats un-entered criteria as FULL marks", () => {
+  // accuracy 5 + sla 5 + fcr(full 20) + clarity(full 15) = 100
+  assert.equal(computeOverall({ accuracy: 5, sla: 5 }), 100);
+  // accuracy 4 -> 32 + 25 + 20 + 15 = 92
+  assert.equal(computeOverall({ accuracy: 4, sla: 5 }), 92);
+  // nothing entered -> all full -> 100
+  assert.equal(computeOverall({}), 100);
+  // both zero -> 0 + 0 + 20 + 15 = 35
+  assert.equal(computeOverall({ accuracy: 0, sla: 0 }), 35);
 });
 
 test("bandFor maps boundaries correctly", () => {
@@ -62,33 +58,22 @@ test("bandFor maps boundaries correctly", () => {
 
 test("bands cover 1..100 with no gaps", () => {
   for (let n = 1; n <= 100; n++) {
-    const band = bandFor(n);
-    const def = BANDS.find((b) => b.band === band)!;
-    assert.ok(n >= def.min && n <= def.max, `score ${n} -> ${band}`);
+    const def = BANDS.find((b) => b.band === bandFor(n))!;
+    assert.ok(n >= def.min && n <= def.max, `score ${n}`);
   }
 });
 
-test("task-status model: full credit gives 100", () => {
-  const total = computeTaskStatusTotal({
-    main_taxes: "Отправил",
-    salary: "Получил",
-    primary_docs: "1ый/2ой написал",
-    debts: "нет долга",
-  });
-  assert.equal(total, 100);
+test("there are 4 monthly task categories with correct due days", () => {
+  assert.equal(MONTHLY_CATEGORIES.length, 4);
+  const byId = Object.fromEntries(MONTHLY_CATEGORIES.map((c) => [c.id, c.dueDay]));
+  assert.equal(byId.main_taxes, 15);
+  assert.equal(byId.salary, 10);
+  assert.equal(byId.primary_docs, 28);
+  assert.equal(byId.debts, 5);
 });
 
-test("task-status model: penalizing statuses reduce total", () => {
-  const total = computeTaskStatusTotal({
-    main_taxes: "Не запросил 1", // 0 credit, weight 30
-    salary: "Получил",
-    primary_docs: "1ый/2ой написал",
-    debts: "нет долга",
-  });
-  assert.equal(total, 70);
-});
-
-test("task categories weights sum to 100", () => {
-  const sum = TASK_CATEGORIES.reduce((s, c) => s + c.weight, 0);
-  assert.equal(sum, 100);
+test("debts category uses the 'нет долга' status set", () => {
+  const debts = MONTHLY_CATEGORIES.find((c) => c.id === "debts")!;
+  assert.equal(debts.statuses, DEBT_STATUSES);
+  assert.ok(DEBT_STATUSES.includes("нет долга"));
 });

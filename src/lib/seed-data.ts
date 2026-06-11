@@ -1,269 +1,166 @@
 // ---------------------------------------------------------------------------
-// Sample seed data (~10 chats) matching the shapes documented in the build
-// brief / source sheet. Used by:
-//   - the in-memory mock store (when Supabase is not configured), and
-//   - scripts/seed.ts (to populate a real Supabase instance).
-//
-// If an Excel export is dropped into /data later, replace this with an import.
-// TODO(margarita): swap sample rows for the real sheet export.
+// Seed data derived from Margarita's real Google Sheet (accountants from the
+// "Правила" tab; chats / statuses from "Чаты" / "Тех" / "Задачи"). Used by the
+// in-memory mock store and scripts/seed.ts. Replace with a full import via
+// scripts/import-xlsx.ts when migrating the real history.
 // ---------------------------------------------------------------------------
 
 import type { Accountant, Chat, Evaluation, Task } from "./types";
-import { bandFor, computeWeightedTotal } from "./scoring";
+import { bandFor, computeOverall } from "./scoring";
 
 export const seedAccountants: Accountant[] = [
   { name: "Գայանե", active: true, role: "accountant" },
   { name: "Լիլիթ", active: true, role: "accountant" },
   { name: "Նաիրա", active: true, role: "accountant" },
-  { name: "Արմինե", active: true, role: "accountant" },
-  { name: "Տիգրան", active: true, role: "accountant" },
-  { name: "Սյուզաննա", active: false, role: "dismissed" },
-  { name: "Հասմիկ", active: true, role: "other-specialist" },
+  { name: "Լիլիթ Ք․", active: true, role: "accountant" },
+  { name: "Օլյա", active: true, role: "accountant" },
+  { name: "Ավագ", active: true, role: "accountant" },
+  { name: "Ստելլա", active: true, role: "accountant" },
+  { name: "Թագուհի", active: true, role: "accountant" },
+  { name: "Հասմիկ", active: true, role: "accountant" },
+  { name: "Նաիրա Մ․", active: true, role: "accountant" },
+  { name: "Էմիլյա", active: true, role: "accountant" },
+  { name: "Սոնա", active: true, role: "accountant" },
+  { name: "Գայանե Դ․", active: true, role: "accountant" },
+  { name: "Mane Lawer", active: true, role: "other-specialist" },
+  { name: "Gohar Registration", active: true, role: "other-specialist" },
+  { name: "Manager", active: true, role: "other-specialist" },
 ];
 
-export const seedManagers = ["Մարգարիտա", "Արամ", "Դավիթ"];
+export const seedManagers = ["Մարգարիտա", "Գայանե", "Նաիրա", "Ստելլա"];
 
-export const seedChats: Chat[] = [
-  {
-    agr_no: "59",
-    hvhh: "01234567",
-    name_agr: "ԱՐՄ ՏՐԵՅԴ ՍՊԸ",
-    name_tax: "ARM TRADE LLC",
-    status: "Active",
-    tax_activation_date: "2024-02-01",
-    chat_name: "ARM TRADE — бухгалтерия",
-    chat_link: "https://t.me/armtrade_chat",
-    accountant: "Գայանե",
-    manager: "Մարգարիտա",
-    debts: "нет долга",
-    created_date: "2024-01-15",
-  },
-  {
-    agr_no: "B-3302",
-    hvhh: "02345678",
-    name_agr: "ԲԻԶՆԵՍ ՊԼՅՈՒՍ ՍՊԸ",
-    name_tax: "BUSINESS PLUS LLC",
-    status: "Active",
-    tax_activation_date: "2023-11-10",
-    chat_name: "Business Plus chat",
-    chat_link: "https://t.me/bplus_chat",
-    accountant: "Լիլիթ",
-    manager: "Արամ",
-    debts: "150000 AMD",
-    created_date: "2023-10-01",
-  },
-  {
-    agr_no: "104",
-    hvhh: "03456789",
-    name_agr: "ՆՈՐ ՀՈՐԻԶՈՆ ՍՊԸ",
-    name_tax: "NEW HORIZON LLC",
-    status: "Active",
-    tax_activation_date: "2024-03-05",
-    chat_name: "New Horizon — учёт",
-    chat_link: "https://t.me/newhorizon_chat",
-    accountant: "Նաիրա",
-    manager: "Մարգարիտա",
-    debts: "нет долга",
-    created_date: "2024-02-20",
-  },
-  {
-    agr_no: "212",
-    hvhh: "04567890",
-    name_agr: "ԷՅ ԷՄ ՍԵՐՎԻՍ ՍՊԸ",
-    name_tax: "AM SERVICE LLC",
-    status: "Active",
-    tax_activation_date: "2024-01-20",
-    chat_name: "AM Service chat",
-    chat_link: "https://t.me/amservice_chat",
-    accountant: "Արմինե",
-    manager: "Դավիթ",
-    debts: "75000 AMD",
-    created_date: "2024-01-05",
-  },
-  {
-    agr_no: "B-3410",
-    hvhh: "05678901",
-    name_agr: "ԿԱՊԻՏԱԼ ԳՐՈՒՊ ՍՊԸ",
-    name_tax: "CAPITAL GROUP LLC",
-    status: "Active",
-    tax_activation_date: "2023-09-15",
-    chat_name: "Capital Group — бухгалтер",
-    chat_link: "https://t.me/capitalgroup_chat",
-    accountant: "Տիգրան",
-    manager: "Արամ",
-    debts: "нет долга",
-    created_date: "2023-08-30",
-  },
-  {
-    agr_no: "318",
-    hvhh: "06789012",
-    name_agr: "ԳՐԻՆ ՖԵՐՄ ՍՊԸ",
-    name_tax: "GREEN FARM LLC",
-    status: "Inactive",
-    tax_activation_date: null,
-    chat_name: "Green Farm chat",
-    chat_link: "https://t.me/greenfarm_chat",
-    accountant: "Գայանե",
-    manager: "Մարգարիտա",
-    debts: "--",
-    created_date: "2023-12-12",
-  },
-  {
-    agr_no: "401",
-    hvhh: "07890123",
-    name_agr: "ՍՄԱՐՏ ՍՈԼՅՈՒՇՆՍ ՍՊԸ",
-    name_tax: "SMART SOLUTIONS LLC",
-    status: "Active",
-    tax_activation_date: "2024-04-01",
-    chat_name: "Smart Solutions — учёт",
-    chat_link: "https://t.me/smartsol_chat",
-    accountant: "Լիլիթ",
-    manager: "Դավիթ",
-    debts: "320000 AMD",
-    created_date: "2024-03-18",
-  },
-  {
-    agr_no: "B-3511",
-    hvhh: "08901234",
-    name_agr: "ՕՐԱՆԺ ՌԵԹԵՅԼ ՍՊԸ",
-    name_tax: "ORANGE RETAIL LLC",
-    status: "Active",
-    tax_activation_date: "2024-02-14",
-    chat_name: "Orange Retail chat",
-    chat_link: "https://t.me/orangeretail_chat",
-    accountant: "Նաիրա",
-    manager: "Մարգարիտա",
-    debts: "нет долга",
-    created_date: "2024-01-28",
-  },
-  {
-    agr_no: "523",
-    hvhh: "09012345",
-    name_agr: "ՎԵԿՏՈՐ ՍՊԸ",
-    name_tax: "VECTOR LLC",
-    status: "Active",
-    tax_activation_date: "2024-05-02",
-    chat_name: "Vector — бухгалтерия",
-    chat_link: "https://t.me/vector_chat",
-    accountant: null, // no responsible accountant -> counts as "без ответственных"
-    manager: "Արամ",
-    debts: "нет долга",
-    created_date: "2024-04-22",
-  },
-  {
-    agr_no: "B-3620",
-    hvhh: "10123456",
-    name_agr: "ՊՐԵՄԻՈՒՄ ՖՈՒԴ ՍՊԸ",
-    name_tax: "PREMIUM FOOD LLC",
-    status: "Active",
-    tax_activation_date: "2024-03-30",
-    chat_name: "Premium Food chat",
-    chat_link: "https://t.me/premiumfood_chat",
-    accountant: "Արմինե",
-    manager: "Դավիթ",
-    debts: "45000 AMD",
-    created_date: "2024-03-10",
-  },
-];
-
-// A small set of evaluations dated "today-ish" so the dashboard has content.
-// total_score / quality_band are derived to keep data self-consistent.
-function evalRow(
-  id: string,
-  chat: string,
-  accountant: string,
-  date: string,
-  criteria: { accuracy: number; sla: number; fcr: number; clarity: number },
-  comment: string
-): Evaluation {
-  const total = computeWeightedTotal(criteria);
+function chat(
+  agr_no: string,
+  name_agr: string,
+  hvhh: string,
+  accountant: string | null,
+  debts: string,
+  link: string,
+  status: "Active" | "Inactive" = "Active"
+): Chat {
   return {
-    id,
-    chat_agr_no: chat,
-    period: date.slice(0, 7).replace("-", ""),
-    checking_date: date,
+    agr_no,
+    hvhh,
+    name_agr,
+    name_tax: name_agr,
+    status,
+    tax_activation_date: "2024-05-12",
+    chat_name: name_agr,
+    chat_link: link,
     accountant,
-    scores: { criteria },
-    total_score: total,
-    quality_band: bandFor(total),
-    comment,
-    created_at: `${date}T09:00:00.000Z`,
+    manager: accountant,
+    debts,
+    created_date: "2025-01-01",
   };
 }
 
-const TODAY = "2026-06-11"; // matches the seed snapshot; dashboard defaults to range
+export const seedChats: Chat[] = [
+  chat("59", "ИП Фролкин Владимир N B-3932 RU", "23357581", "Գայանե", "30000", "https://web.telegram.org/a/#-4983666095"),
+  chat("23", "ИП Дмитрий Родичев N-23 RU", "40113062", "Լիլիթ", "нет долга", "https://web.telegram.org/a/#-4014170511"),
+  chat("19", "ИП Виталий Самарцев N-19 RU", "71064197", "Գայանե", "нет долга", "https://web.telegram.org/a/#-4018402264"),
+  chat("33", "ИП Тимофей Кабанов N-33 RU", "72961955", "Լիլիթ", "нет долга", "https://web.telegram.org/a/#-4199207502"),
+  chat("11", "Мишт Тей OOO N-11 RU", "40130903", "Նաիրա", "нет долга", "https://web.telegram.org/a/#-4082607480"),
+  chat("100", "ИП Кирилл Оболдин N-1101 RU", "10000100", "Լիլիթ", "24000", "https://web.telegram.org/a/#-4086698328"),
+  chat("102", "Ретейл Софт ООО - OneBusiness N-102 RU", "10000102", "Նաիրա", "86000", "https://web.telegram.org/a/#-4022409024"),
+  chat("28", "АЕОН Девелопмент", "10000028", "Ստելլա", "100000", "https://web.telegram.org/a/?account=2#-5184209470"),
+  chat("180", "ООО Пар Груп N-180 RU", "10000180", "Ավագ", "18000", "https://web.telegram.org/a/#-4173746570"),
+  chat("220", "ИП Никита Капишников N-220 RU", "10000220", "Ավագ", "72000", "https://web.telegram.org/a/#-4194805297"),
+  chat("336", "ИП Сурбине Арушанян N-336 RU", "10000336", "Հասմիկ", "нет долга", "https://web.telegram.org/a/#-4061368619"),
+  chat("368", "Норк Вью Кондоминиум N-368 RU", "10000368", "Նաիրա", "30000", "https://web.telegram.org/a/#-4520708494"),
+  chat("510", "ИП Андрей Голубков N-510 RU", "10000510", "Լիլիթ Ք․", "нет долга", "https://web.telegram.org/a/#-4175286619"),
+  chat("700", "ООО Вектор N-700 RU", "10000700", null, "нет долга", "https://web.telegram.org/a/#-4500000700"),
+];
+
+const M = (status: string, prev = "--") => ({ status, prev });
+
+function evalRow(
+  id: string,
+  chat_agr_no: string,
+  accountant: string,
+  checking_date: string,
+  criteria: { accuracy: number; sla: number },
+  monthly: {
+    main_taxes: string;
+    salary: string;
+    primary_docs: string;
+    debts: string;
+  },
+  comment: string,
+  override?: number
+): Evaluation {
+  const total =
+    typeof override === "number" ? override : computeOverall(criteria);
+  return {
+    id,
+    chat_agr_no,
+    period: checking_date.slice(0, 7).replace("-", ""),
+    checking_date,
+    accountant,
+    scores: {
+      criteria,
+      monthly: {
+        main_taxes: M(monthly.main_taxes),
+        salary: M(monthly.salary),
+        primary_docs: M(monthly.primary_docs),
+        debts: M(monthly.debts),
+      },
+    },
+    total_score: total,
+    quality_band: bandFor(total),
+    comment,
+    created_at: `${checking_date}T09:00:00.000Z`,
+  };
+}
+
+const D = "2026-06-11";
+const Dy = "2026-06-10";
 
 export const seedEvaluations: Evaluation[] = [
-  evalRow("e1", "59", "Գայանե", TODAY, { accuracy: 5, sla: 5, fcr: 5, clarity: 5 }, "Отличная работа, всё в срок."),
-  evalRow("e2", "B-3302", "Լիլիթ", TODAY, { accuracy: 4, sla: 4, fcr: 4, clarity: 5 }, "Хорошо, мелкие задержки."),
-  evalRow("e3", "104", "Նաիրա", TODAY, { accuracy: 3, sla: 3, fcr: 4, clarity: 3 }, "Средне, есть пробелы по срокам."),
-  evalRow("e4", "212", "Արմինե", TODAY, { accuracy: 2, sla: 2, fcr: 3, clarity: 3 }, "Много недочётов, требует внимания."),
-  evalRow("e5", "B-3410", "Տիգրան", TODAY, { accuracy: 1, sla: 1, fcr: 1, clarity: 2 }, "Критично: сорваны сроки."),
-  evalRow("e6", "401", "Լիլիթ", TODAY, { accuracy: 5, sla: 4, fcr: 5, clarity: 4 }, "Очень хорошо."),
-  evalRow("e7", "B-3511", "Նաիրա", "2026-06-10", { accuracy: 4, sla: 5, fcr: 4, clarity: 4 }, "Вчерашняя оценка."),
+  evalRow("e1", "59", "Գայանե", D, { accuracy: 5, sla: 5 }, { main_taxes: "Предстоящая", salary: "Получил", primary_docs: "Получил", debts: "1ый написал" }, "Всё в срок."),
+  evalRow("e2", "23", "Լիլիթ", D, { accuracy: 5, sla: 5 }, { main_taxes: "Предстоящая", salary: "Получил", primary_docs: "Получил", debts: "нет долга" }, ""),
+  evalRow("e3", "11", "Նաիրա", D, { accuracy: 4, sla: 4 }, { main_taxes: "Предстоящая", salary: "Не запросил 1", primary_docs: "Получил", debts: "нет долга" }, "Зарплату не запросил вовремя."),
+  evalRow("e4", "100", "Լիլիթ", D, { accuracy: 3, sla: 3 }, { main_taxes: "Предстоящая", salary: "Получил", primary_docs: "Получил", debts: "Не написал 2" }, "По долгам молчит."),
+  evalRow("e5", "180", "Ավագ", D, { accuracy: 1, sla: 1 }, { main_taxes: "Предстоящая", salary: "Получил", primary_docs: "Не запросил 1", debts: "Не написал 2" }, "Критично: первичка не запрошена.", 23),
+  evalRow("e6", "336", "Հասմիկ", D, { accuracy: 5, sla: 4 }, { main_taxes: "Предстоящая", salary: "Получил", primary_docs: "Получил", debts: "нет долга" }, ""),
+  evalRow("e7", "102", "Նաիրա", Dy, { accuracy: 4, sla: 5 }, { main_taxes: "Отправил", salary: "Получил", primary_docs: "Получил", debts: "Не написал 2" }, "Вчерашняя оценка."),
+  evalRow("e8", "28", "Ստելլա", D, { accuracy: 2, sla: 2 }, { main_taxes: "Предстоящая", salary: "Не запросил 1", primary_docs: "Получил", debts: "Не написал 2" }, "Слабо.", 47),
 ];
+
+function task(
+  id: string,
+  chat_agr_no: string,
+  accountant: string,
+  description: string,
+  due_original: string,
+  status: Task["task_status"],
+  completed_at: string | null,
+  due_postponed: string | null = null,
+  result: string | null = null
+): Task {
+  return {
+    id,
+    chat_agr_no,
+    type: "single",
+    category: null,
+    status: null,
+    prev_status: null,
+    due_date_original: due_original,
+    due_date_postponed: due_postponed,
+    completed_at,
+    priority: "Medium",
+    description,
+    result,
+    task_status: status,
+    accountant,
+    checking_date: D,
+    period: "202606",
+  };
+}
 
 export const seedTasks: Task[] = [
-  {
-    id: "t1",
-    chat_agr_no: "59",
-    type: "monthly",
-    category: "Основные налоги",
-    status: "Отправил",
-    prev_status: "Предстоящая",
-    due_date_original: "2026-06-15",
-    due_date_postponed: null,
-    completed_at: "2026-06-12",
-    priority: 1,
-    description: "Сдача основных налогов за май",
-    result: "Сдано",
-    task_status: "Completed On Time",
-  },
-  {
-    id: "t2",
-    chat_agr_no: "B-3302",
-    type: "monthly",
-    category: "Заработная плата",
-    status: "Запросил 1, не получил",
-    prev_status: "Не запросил 1",
-    due_date_original: "2026-06-10",
-    due_date_postponed: "2026-06-13",
-    completed_at: null,
-    priority: 2,
-    description: "Расчёт ЗП",
-    result: null,
-    task_status: "Late",
-  },
-  {
-    id: "t3",
-    chat_agr_no: "104",
-    type: "single",
-    category: "Первичная документация / очная встреча",
-    status: "1ый/2ой написал",
-    prev_status: "Не написал 1",
-    due_date_original: "2026-06-28",
-    due_date_postponed: null,
-    completed_at: null,
-    priority: 3,
-    description: "Очная встреча по первичке",
-    result: null,
-    task_status: null,
-  },
-  {
-    id: "t4",
-    chat_agr_no: "B-3410",
-    type: "monthly",
-    category: "Долги",
-    status: "Не запросил 1",
-    prev_status: "--",
-    due_date_original: "2026-06-05",
-    due_date_postponed: null,
-    completed_at: null,
-    priority: 1,
-    description: "Запрос по долгам",
-    result: null,
-    task_status: "Overdue",
-  },
+  task("t1", "59", "Գայանե", "example", "2026-06-10", "Completed (Late)", "2026-06-12", "2026-06-11"),
+  task("t2", "23", "Լիլիթ", "Registered for work permit", "2026-06-13", "Completed (On Time)", "2026-06-13"),
+  task("t3", "11", "Նաիրա", "Call", "2026-06-07", "Completed (Late)", "2026-06-08", "2026-06-08"),
+  task("t4", "220", "Ավագ", "call/no update", "2026-06-17", "Overdue", null, "2026-06-20"),
+  task("t5", "368", "Նաիրա", "Встреча", "2026-06-16", "Cancelled", null, null, "Cancelled"),
 ];
-
-// Default credentials seed note: see AUTH_USERS in .env.example.
