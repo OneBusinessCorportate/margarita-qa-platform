@@ -232,6 +232,13 @@ export default function ScoringPanel({
           ? "Режим «за день»: показаны чаты с активностью за выбранную дату (оценки/задачи; позже — данные бота). Это быстрее для ежедневной проверки. Чтобы оценить любой другой чат — переключитесь на «Все активные чаты»."
           : "Режим «все активные»: показаны все активные чаты. Откройте чат по ссылке, проверьте коммуникацию и проставьте оценку прямо в строке. Сохранённые оценки можно редактировать."}
       </p>
+      <p className="text-xs text-gray-400 px-1">
+        Статусы рассылок переносятся с прошлой проверки автоматически (под
+        каждым статусом показан «пред:» — статус на момент прошлой проверки) —
+        меняйте только то, что изменилось. Оценка появляется после ввода
+        «Точность»/«СЛА». Совет: один раз нажмите «Открыть Telegram ⚡», затем
+        каждый чат по ссылке открывается мгновенно в той же вкладке.
+      </p>
 
       <div className="card overflow-x-auto">
         <table className="qa dense">
@@ -337,9 +344,18 @@ function ChatScoreRow({
   const [criteria, setCriteria] = useState<CriteriaScores>(
     existing?.scores.criteria ?? {}
   );
-  const [monthly, setMonthly] = useState<Record<string, MonthlyStatus>>({
-    ...emptyMonthly(),
-    ...(existing?.scores.monthly ?? {}),
+  // Mailing statuses carry over from the previous check by default (Margarita
+  // can't re-verify each day whether e.g. primary docs were sent). For an
+  // existing eval we keep its saved statuses; for a new one we pre-fill from
+  // the previous check and she only changes what changed.
+  const [monthly, setMonthly] = useState<Record<string, MonthlyStatus>>(() => {
+    const base = emptyMonthly();
+    if (existing?.scores.monthly) return { ...base, ...existing.scores.monthly };
+    for (const c of MONTHLY_CATEGORIES) {
+      const prev = prevStatuses[c.id];
+      if (prev) base[c.id] = { status: prev, prev };
+    }
+    return base;
   });
   const [comment, setComment] = useState(existing?.comment ?? "");
   const [override, setOverride] = useState("");
@@ -352,13 +368,13 @@ function ChatScoreRow({
       ? Number(override)
       : computeOverall(criteria, monthly);
 
-  // A row only shows a score once it's been scored (saved, a criterion entered,
-  // a mailing status chosen, or an override typed). Otherwise it shows "—" so
-  // an un-reviewed chat doesn't look like it already scored 100/Отлично.
+  // A row shows a score once it's been reviewed today: saved, a criterion
+  // entered, or an override typed. Mailing statuses are pre-filled (carried
+  // forward), so they don't by themselves count as "reviewed" — otherwise
+  // every un-reviewed chat would show a default score.
   const touched =
     Boolean(savedId) ||
     DAILY_CRITERIA.some((c) => typeof criteria[c.id] === "number") ||
-    MONTHLY_CATEGORIES.some((c) => Boolean(monthly[c.id]?.status)) ||
     override.trim() !== "";
 
   const setCrit = (id: CriterionId, v: string) =>
