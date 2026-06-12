@@ -17,9 +17,22 @@ import CopyButton from "./CopyButton";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-/** Open all chat links in ONE reused Telegram tab — switching chats just
- * changes the hash, so Telegram Web stays loaded (no 7s reload each time). */
-const TG_WINDOW = "telegram_chat";
+// Open all chat links in ONE reused Telegram tab per account — switching chats
+// just changes the hash, so Telegram Web stays loaded (no 7s reload each time).
+// The "K" web client (web.telegram.org/k/) loads much faster than "A".
+type TgClient = "a" | "k";
+
+function tgWindowFor(link: string): string {
+  return link.includes("account=2") ? "telegram_chat_2" : "telegram_chat";
+}
+
+/** Rewrite a web.telegram.org/a/ link to the chosen (faster) client. */
+function tgHref(link: string, client: TgClient): string {
+  if (client === "k" && link.includes("web.telegram.org/a/")) {
+    return link.replace("web.telegram.org/a/", "web.telegram.org/k/");
+  }
+  return link;
+}
 
 type Scope = "day" | "all";
 
@@ -45,6 +58,17 @@ export default function ScoringPanel({
   const [onlyUnscored, setOnlyUnscored] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
+  const [tgClient, setTgClient] = useState<TgClient>("a");
+
+  // Persist the chosen Telegram web client.
+  useEffect(() => {
+    const saved = window.localStorage.getItem("qa_tg_client");
+    if (saved === "a" || saved === "k") setTgClient(saved);
+  }, []);
+  function chooseTg(c: TgClient) {
+    setTgClient(c);
+    window.localStorage.setItem("qa_tg_client", c);
+  }
 
   // Refresh the chat/eval data every 40 minutes (item 5). With the bot feed
   // wired in, this is how "Активные за день" stays current through the day.
@@ -214,14 +238,31 @@ export default function ScoringPanel({
           Обновить ⟳
         </button>
         <a
-          href="https://web.telegram.org/a/"
-          target={TG_WINDOW}
+          href={`https://web.telegram.org/${tgClient}/`}
+          target="telegram_chat"
           rel="noreferrer"
           className="btn-secondary"
           title="Откройте Telegram один раз — дальше каждый чат по ссылке открывается мгновенно в этой же вкладке"
         >
           Открыть Telegram ⚡
         </a>
+        <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+          клиент:
+          <button
+            className={`px-2 py-0.5 rounded ${tgClient === "a" ? "bg-blue-600 text-white" : "border border-gray-300"}`}
+            onClick={() => chooseTg("a")}
+            title="Telegram Web A (привычный)"
+          >
+            A
+          </button>
+          <button
+            className={`px-2 py-0.5 rounded ${tgClient === "k" ? "bg-blue-600 text-white" : "border border-gray-300"}`}
+            onClick={() => chooseTg("k")}
+            title="Telegram Web K — загружается заметно быстрее"
+          >
+            K (быстрее)
+          </button>
+        </span>
         {refreshedAt && (
           <span className="text-xs text-gray-400">обновлено в {refreshedAt}</span>
         )}
@@ -298,6 +339,7 @@ export default function ScoringPanel({
                 date={date}
                 existing={evalForDate.get(chat.agr_no) ?? null}
                 prevStatuses={prevByChat.get(chat.agr_no) ?? {}}
+                tgClient={tgClient}
                 onSaved={onSaved}
               />
             ))}
@@ -329,6 +371,7 @@ function ChatScoreRow({
   date,
   existing,
   prevStatuses,
+  tgClient,
   onSaved,
 }: {
   chat: Chat;
@@ -336,6 +379,7 @@ function ChatScoreRow({
   date: string;
   existing: Evaluation | null;
   prevStatuses: Record<string, string>;
+  tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
 }) {
   const [accountant, setAccountant] = useState(
@@ -445,8 +489,8 @@ function ChatScoreRow({
           <span className="font-medium">№ {chat.agr_no}</span>
           {chat.chat_link ? (
             <a
-              href={chat.chat_link}
-              target={TG_WINDOW}
+              href={tgHref(chat.chat_link, tgClient)}
+              target={tgWindowFor(chat.chat_link)}
               rel="noreferrer"
               className="text-blue-600 hover:underline text-xs whitespace-nowrap"
               title="Открыть чат в одной вкладке Telegram (быстро)"
