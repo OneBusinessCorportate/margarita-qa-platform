@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   DAILY_CRITERIA,
   MONTHLY_CATEGORIES,
@@ -15,6 +16,10 @@ import BandChip from "./BandChip";
 import CopyButton from "./CopyButton";
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+/** Open all chat links in ONE reused Telegram tab — switching chats just
+ * changes the hash, so Telegram Web stays loaded (no 7s reload each time). */
+const TG_WINDOW = "telegram_chat";
 
 type Scope = "day" | "all";
 
@@ -31,6 +36,7 @@ export default function ScoringPanel({
   taskActivity?: { chat_agr_no: string; date: string }[];
   latestActivityDate?: string | null;
 }) {
+  const router = useRouter();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
   const [date, setDate] = useState(latestActivityDate ?? today());
   const [scope, setScope] = useState<Scope>("all");
@@ -38,6 +44,38 @@ export default function ScoringPanel({
   const [accFilter, setAccFilter] = useState("");
   const [onlyUnscored, setOnlyUnscored] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
+
+  // Refresh the chat/eval data every 40 minutes (item 5). With the bot feed
+  // wired in, this is how "Активные за день" stays current through the day.
+  useEffect(() => {
+    const id = setInterval(() => {
+      router.refresh();
+      setRefreshedAt(new Date().toLocaleTimeString("ru-RU"));
+    }, 40 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [router]);
+
+  // Previous status per chat per mailing = the status at the most recent
+  // evaluation BEFORE the selected date (item 6).
+  const prevByChat = useMemo(() => {
+    const latestBefore = new Map<string, Evaluation>();
+    for (const e of evaluations) {
+      if (e.checking_date.slice(0, 10) >= date) continue;
+      const cur = latestBefore.get(e.chat_agr_no);
+      if (!cur || e.checking_date > cur.checking_date) latestBefore.set(e.chat_agr_no, e);
+    }
+    const out = new Map<string, Record<string, string>>();
+    for (const [chatNo, e] of latestBefore) {
+      const rec: Record<string, string> = {};
+      for (const cat of MONTHLY_CATEGORIES) {
+        const s = e.scores.monthly?.[cat.id]?.status;
+        if (s) rec[cat.id] = s;
+      }
+      out.set(chatNo, rec);
+    }
+    return out;
+  }, [evaluations, date]);
 
   // Today's evaluations indexed by chat for the selected date.
   const evalForDate = useMemo(() => {
@@ -160,11 +198,24 @@ export default function ScoringPanel({
       </div>
 
       {/* Summary */}
-      <div className="flex flex-wrap gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
         <Stat label="Активных чатов (всего)" value={activeCount} />
         <Stat label="Активных за день" value={activeTodayCount} />
         <Stat label="Оценено за день" value={scoredToday} />
         <Stat label="Показано" value={visibleChats.length} />
+        <button
+          className="btn-secondary"
+          onClick={() => {
+            router.refresh();
+            setRefreshedAt(new Date().toLocaleTimeString("ru-RU"));
+          }}
+          title="Список обновляется автоматически каждые 40 минут"
+        >
+          Обновить ⟳
+        </button>
+        {refreshedAt && (
+          <span className="text-xs text-gray-400">обновлено в {refreshedAt}</span>
+        )}
       </div>
 
       <p className="text-xs text-gray-500 px-1">
@@ -177,12 +228,12 @@ export default function ScoringPanel({
         <table className="qa">
           <thead>
             <tr>
-              <th className="min-w-[230px]">№ / Чат / Бухгалтер</th>
-              <th>Чат</th>
-              <th title="Предварительная оценка от бота — появится позже">Предв. (бот)</th>
+              <th className="sticky left-0 z-20 bg-gray-100 min-w-[210px]">
+                № / Чат / Бухгалтер
+              </th>
               {DAILY_CRITERIA.map((c) => (
                 <th key={c.id} title={c.name}>
-                  {c.id === "accuracy" ? "Точность" : "СЛА"}
+                  {c.id === "accuracy" ? "Точн." : "СЛА"}
                 </th>
               ))}
               {MONTHLY_CATEGORIES.map((c) => (
@@ -191,15 +242,15 @@ export default function ScoringPanel({
                 </th>
               ))}
               <th>Общая</th>
-              <th>Качество</th>
-              <th className="min-w-[150px]">Комментарий</th>
+              <th>Кач-во</th>
+              <th className="min-w-[140px]">Комментарий</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             {visibleChats.length === 0 && (
               <tr>
-                <td colSpan={14} className="text-center text-gray-500 py-6">
+                <td colSpan={11} className="text-center text-gray-500 py-6">
                   {scope === "day" ? (
                     <div className="space-y-2">
                       <div>За {date} нет активных чатов (оценок/задач).</div>
@@ -230,6 +281,7 @@ export default function ScoringPanel({
                 accountants={accountants}
                 date={date}
                 existing={evalForDate.get(chat.agr_no) ?? null}
+                prevStatuses={prevByChat.get(chat.agr_no) ?? {}}
                 onSaved={onSaved}
               />
             ))}
@@ -260,12 +312,14 @@ function ChatScoreRow({
   accountants,
   date,
   existing,
+  prevStatuses,
   onSaved,
 }: {
   chat: Chat;
   accountants: Accountant[];
   date: string;
   existing: Evaluation | null;
+  prevStatuses: Record<string, string>;
   onSaved: (e: Evaluation) => void;
 }) {
   const [accountant, setAccountant] = useState(
@@ -306,11 +360,19 @@ function ChatScoreRow({
   async function save() {
     setSaving(true);
     setError(null);
+    // Record the previous-check status for each mailing automatically.
+    const monthlyWithPrev: Record<string, MonthlyStatus> = {};
+    for (const cat of MONTHLY_CATEGORIES) {
+      monthlyWithPrev[cat.id] = {
+        status: monthly[cat.id]?.status ?? "",
+        prev: prevStatuses[cat.id] ?? PREV_STATUS_DEFAULT,
+      };
+    }
     const payload = {
       chat_agr_no: chat.agr_no,
       checking_date: date,
       accountant: accountant || null,
-      scores: { criteria, monthly },
+      scores: { criteria, monthly: monthlyWithPrev },
       comment: comment || null,
       total_override: override.trim() !== "" ? Number(override) : null,
     };
@@ -353,11 +415,24 @@ function ChatScoreRow({
 
   return (
     <tr className={savedId ? "" : "bg-blue-50/30"}>
-      <td className="space-y-1">
-        <div className="font-medium">
-          № {chat.agr_no}
+      <td className="sticky left-0 z-10 bg-white space-y-1 align-top">
+        <div className="flex items-center gap-2">
+          <span className="font-medium">№ {chat.agr_no}</span>
+          {chat.chat_link ? (
+            <a
+              href={chat.chat_link}
+              target={TG_WINDOW}
+              rel="noreferrer"
+              className="text-blue-600 hover:underline text-xs whitespace-nowrap"
+              title="Открыть чат в одной вкладке Telegram (быстро)"
+            >
+              Открыть ↗
+            </a>
+          ) : (
+            <span className="text-gray-400 text-xs">нет ссылки</span>
+          )}
           {chat.status !== "Active" && (
-            <span className="ml-1 text-xs text-gray-400">(неактивен)</span>
+            <span className="text-xs text-gray-400">(неактивен)</span>
           )}
         </div>
         <div className="text-gray-600 text-xs">{chat.chat_name}</div>
@@ -377,23 +452,6 @@ function ChatScoreRow({
           Долги: {chat.debts ?? "—"} · Менеджер: {chat.manager ?? "—"}
         </div>
       </td>
-      <td>
-        {chat.chat_link ? (
-          <a
-            href={chat.chat_link}
-            target="_blank"
-            rel="noreferrer"
-            className="btn-secondary whitespace-nowrap"
-            title="Открыть чат в Telegram"
-          >
-            Открыть ↗
-          </a>
-        ) : (
-          <span className="text-gray-400 text-xs">нет ссылки</span>
-        )}
-      </td>
-      {/* Preliminary bot score — TODO(margarita): wire to bot. */}
-      <td className="text-center text-gray-300">—</td>
       {DAILY_CRITERIA.map((c) => (
         <td key={c.id}>
           <select
@@ -414,7 +472,7 @@ function ChatScoreRow({
       {MONTHLY_CATEGORIES.map((c) => (
         <td key={c.id}>
           <select
-            className="input w-[120px] text-xs"
+            className="input w-[116px] text-xs"
             value={monthly[c.id]?.status ?? ""}
             onChange={(e) => setMon(c.id, e.target.value)}
             title={c.name}
@@ -426,6 +484,11 @@ function ChatScoreRow({
               </option>
             ))}
           </select>
+          {prevStatuses[c.id] && (
+            <div className="text-[10px] text-gray-400 mt-0.5" title="Статус на прошлой проверке">
+              пред: {prevStatuses[c.id]}
+            </div>
+          )}
         </td>
       ))}
       <td>

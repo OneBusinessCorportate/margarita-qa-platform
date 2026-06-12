@@ -14,3 +14,20 @@ export const VIOLATION_TYPES = [
   "Не отправлена рассылка",
   "Другое",
 ] as const;
+
+// Грубые нарушения — gross violations (their own vocabulary).
+export const GROSS_VIOLATION_TYPES = [
+  "Игнорирование задач",
+  "Грубость / некорректное общение с клиентом",
+  "Дезинформация клиента",
+  "Срыв сроков по вине бухгалтера",
+  "Потеря клиента",
+  "Другое (грубое)",
+] as const;
+
+/** All violation-type suggestions for a given severity. */
+export function violationTypeOptions(severity?: string): readonly string[] {
+  if (severity === "Грубое") return GROSS_VIOLATION_TYPES;
+  return VIOLATION_TYPES;
+}
+

@@ -1,8 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { VIOLATION_SEVERITIES, VIOLATION_TYPES } from "@/lib/violations";
+import {
+  VIOLATION_SEVERITIES,
+  violationTypeOptions,
+} from "@/lib/violations";
 import type { Chat, Violation } from "@/lib/types";
+
+const TG_WINDOW = "telegram_chat";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -44,6 +49,24 @@ export default function ViolationsPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chatMap = useMemo(() => new Map(chats.map((c) => [c.agr_no, c])), [chats]);
+
+  // Filters (item 3): severity (incl. Грубое), accountant, date range.
+  const [fSeverity, setFSeverity] = useState("");
+  const [fAccountant, setFAccountant] = useState("");
+  const [fFrom, setFFrom] = useState("");
+  const [fTo, setFTo] = useState("");
+
+  const filtered = useMemo(
+    () =>
+      rows.filter((v) => {
+        if (fSeverity && v.severity !== fSeverity) return false;
+        if (fAccountant && v.accountant !== fAccountant) return false;
+        if (fFrom && (v.vdate ?? "") < fFrom) return false;
+        if (fTo && (v.vdate ?? "") > fTo) return false;
+        return true;
+      }),
+    [rows, fSeverity, fAccountant, fFrom, fTo]
+  );
 
   function pickChat(agrNo: string) {
     const c = chatMap.get(agrNo);
@@ -94,6 +117,48 @@ export default function ViolationsPanel({
 
   return (
     <div className="space-y-3">
+      {/* Filters */}
+      <div className="card p-3 flex flex-wrap items-end gap-3">
+        <Field label="Важность">
+          <select className="input" value={fSeverity} onChange={(e) => setFSeverity(e.target.value)}>
+            <option value="">Все</option>
+            {VIOLATION_SEVERITIES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Бухгалтер">
+          <select className="input" value={fAccountant} onChange={(e) => setFAccountant(e.target.value)}>
+            <option value="">Все</option>
+            {accountants.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="С даты">
+          <input type="date" className="input" value={fFrom} onChange={(e) => setFFrom(e.target.value)} />
+        </Field>
+        <Field label="По дату">
+          <input type="date" className="input" value={fTo} onChange={(e) => setFTo(e.target.value)} />
+        </Field>
+        <button
+          className="btn-secondary"
+          onClick={() => {
+            setFSeverity("");
+            setFAccountant("");
+            setFFrom("");
+            setFTo("");
+          }}
+        >
+          Сброс
+        </button>
+        <span className="text-xs text-gray-400 pb-1.5">Показано: {filtered.length}</span>
+      </div>
+
       {error && <div className="text-sm text-red-600 px-1">{error}</div>}
       <div className="card overflow-x-auto">
         <table className="qa">
@@ -102,7 +167,7 @@ export default function ViolationsPanel({
               <th>Дата</th>
               <th>Бухгалтер</th>
               <th className="min-w-[200px]">Клиент / Чат</th>
-              <th>Тип (важность)</th>
+              <th>Важность</th>
               <th className="min-w-[200px]">Нарушение</th>
               <th>Санкция (драм)</th>
               <th className="min-w-[160px]">Комментарий</th>
@@ -110,14 +175,26 @@ export default function ViolationsPanel({
             </tr>
           </thead>
           <tbody>
-            {rows.map((v) => (
+            {filtered.map((v) => {
+              const chat = v.chat_agr_no ? chatMap.get(v.chat_agr_no) : null;
+              return (
               <tr key={v.id}>
                 <td className="whitespace-nowrap">{v.vdate}</td>
                 <td>{v.accountant ?? "—"}</td>
                 <td>
                   <div>{v.client ?? v.chat_agr_no ?? "—"}</div>
                   {v.chat_agr_no && (
-                    <div className="text-xs text-gray-400">№ {v.chat_agr_no}</div>
+                    <div className="text-xs text-gray-400">
+                      № {v.chat_agr_no}
+                      {chat?.chat_link && (
+                        <>
+                          {" · "}
+                          <a href={chat.chat_link} target={TG_WINDOW} rel="noreferrer" className="text-blue-600 hover:underline">
+                            открыть
+                          </a>
+                        </>
+                      )}
+                    </div>
                   )}
                 </td>
                 <td>
@@ -136,7 +213,8 @@ export default function ViolationsPanel({
                 <td className="text-xs text-gray-600">{v.note ?? ""}</td>
                 <td></td>
               </tr>
-            ))}
+              );
+            })}
             {/* New row */}
             <tr className="bg-blue-50/40">
               <td>
@@ -203,7 +281,7 @@ export default function ViolationsPanel({
                   onChange={(e) => setDraft({ ...draft, violation_type: e.target.value })}
                 />
                 <datalist id="violation-types">
-                  {VIOLATION_TYPES.map((t) => (
+                  {violationTypeOptions(draft.severity).map((t) => (
                     <option key={t} value={t} />
                   ))}
                 </datalist>
@@ -234,6 +312,15 @@ export default function ViolationsPanel({
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <label className="text-xs text-gray-500 block">{label}</label>
+      {children}
     </div>
   );
 }

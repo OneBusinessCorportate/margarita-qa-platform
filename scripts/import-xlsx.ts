@@ -26,6 +26,7 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 const DRY = process.argv.includes("--dry-run");
+const CHATS_ONLY = process.argv.includes("--chats-only");
 const FILE = arg("file") ?? "data/sheet.xlsx";
 
 const iso = (v: unknown): string | null => {
@@ -207,6 +208,10 @@ function main() {
     for (const part of chunk([...chatMap.values()], 500)) {
       e = (await sb.from(TABLES.chats).upsert(part)).error;
       if (e) throw e;
+    }
+    if (CHATS_ONLY) {
+      console.log("Chats-only import complete (evaluations/tasks skipped).");
+      return;
     }
     for (const part of chunk(evaluations, 500)) {
       e = (await sb.from(TABLES.evaluations).insert(part)).error;
