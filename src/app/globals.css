@@ -24,6 +24,16 @@ table.qa tr:hover td {
   @apply bg-gray-50;
 }
 
+/* Dense variant for the wide scoring grid — tighter padding to avoid h-scroll. */
+table.qa.dense th,
+table.qa.dense td {
+  @apply px-1 py-1;
+}
+table.qa.dense select.input,
+table.qa.dense input.input {
+  @apply px-1 py-0.5;
+}
+
 .input {
   @apply border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
 }

@@ -213,6 +213,15 @@ export default function ScoringPanel({
         >
           Обновить ⟳
         </button>
+        <a
+          href="https://web.telegram.org/a/"
+          target={TG_WINDOW}
+          rel="noreferrer"
+          className="btn-secondary"
+          title="Откройте Telegram один раз — дальше каждый чат по ссылке открывается мгновенно в этой же вкладке"
+        >
+          Открыть Telegram ⚡
+        </a>
         {refreshedAt && (
           <span className="text-xs text-gray-400">обновлено в {refreshedAt}</span>
         )}
@@ -225,10 +234,10 @@ export default function ScoringPanel({
       </p>
 
       <div className="card overflow-x-auto">
-        <table className="qa">
+        <table className="qa dense">
           <thead>
             <tr>
-              <th className="sticky left-0 z-20 bg-gray-100 min-w-[210px]">
+              <th className="sticky left-0 z-20 bg-gray-100 w-[176px]">
                 № / Чат / Бухгалтер
               </th>
               {DAILY_CRITERIA.map((c) => (
@@ -243,7 +252,7 @@ export default function ScoringPanel({
               ))}
               <th>Общая</th>
               <th>Кач-во</th>
-              <th className="min-w-[140px]">Комментарий</th>
+              <th className="w-[120px]">Коммент.</th>
               <th></th>
             </tr>
           </thead>
@@ -415,7 +424,7 @@ function ChatScoreRow({
 
   return (
     <tr className={savedId ? "" : "bg-blue-50/30"}>
-      <td className="sticky left-0 z-10 bg-white space-y-1 align-top">
+      <td className="sticky left-0 z-10 bg-white space-y-0.5 align-top w-[176px]">
         <div className="flex items-center gap-2">
           <span className="font-medium">№ {chat.agr_no}</span>
           {chat.chat_link ? (
@@ -455,7 +464,7 @@ function ChatScoreRow({
       {DAILY_CRITERIA.map((c) => (
         <td key={c.id}>
           <select
-            className="input w-[52px]"
+            className="input w-[42px]"
             value={criteria[c.id] ?? ""}
             onChange={(e) => setCrit(c.id, e.target.value)}
             title={c.name}
@@ -472,7 +481,7 @@ function ChatScoreRow({
       {MONTHLY_CATEGORIES.map((c) => (
         <td key={c.id}>
           <select
-            className="input w-[116px] text-xs"
+            className="input w-[86px] text-xs"
             value={monthly[c.id]?.status ?? ""}
             onChange={(e) => setMon(c.id, e.target.value)}
             title={c.name}
@@ -493,7 +502,7 @@ function ChatScoreRow({
       ))}
       <td>
         <input
-          className="input w-[60px] tabular-nums text-center"
+          className="input w-[46px] tabular-nums text-center"
           value={override !== "" ? override : touched ? total : ""}
           placeholder="—"
           onChange={(e) => setOverride(e.target.value)}
@@ -512,14 +521,20 @@ function ChatScoreRow({
         />
       </td>
       <td className="whitespace-nowrap">
-        <div className="flex flex-col gap-1">
-          <div className="flex gap-1">
-            <button className="btn-primary" onClick={save} disabled={saving}>
-              {saving ? "…" : savedId ? "Сохр." : "Оценить"}
-            </button>
-            <CopyButton label="Копир." text={buildScoreMessage(previewEval, chat)} />
-          </div>
-          {savedId && <span className="text-[10px] text-green-600">сохранено ✓</span>}
+        <div className="flex flex-col gap-0.5 items-stretch">
+          <button
+            className="btn-primary !px-2 !py-1 text-xs"
+            onClick={save}
+            disabled={saving}
+          >
+            {saving ? "…" : savedId ? "Сохр." : "Оценить"}
+          </button>
+          <CopyButton
+            label="Копир."
+            className="btn-secondary !px-2 !py-1 text-xs"
+            text={buildScoreMessage(previewEval, chat)}
+          />
+          {savedId && <span className="text-[10px] text-green-600">✓</span>}
           {error && <span className="text-[10px] text-red-600">{error}</span>}
         </div>
       </td>
