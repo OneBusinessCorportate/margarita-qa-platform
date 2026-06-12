@@ -22,14 +22,7 @@ export default async function ScoringPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Панель оценки — чаты на сегодня</h1>
-        <p className="text-sm text-gray-500">
-          Список активных чатов на выбранную дату. Откройте чат по ссылке,
-          проверьте коммуникацию, проставьте оценку и качество — всё в одной
-          строке.
-        </p>
-      </div>
+      <h1 className="text-xl font-semibold">Оценка чатов</h1>
       <ScoringPanel
         chats={chats}
         accountants={accountants}

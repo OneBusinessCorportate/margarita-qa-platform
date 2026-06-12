@@ -136,11 +136,26 @@ export default function ScoringPanel({
     });
   }, [chats, search, accFilter, onlyUnscored, activeOnly, evalForDate, scope, activeTodaySet]);
 
-  const scoredToday = chats.filter((c) => evalForDate.has(c.agr_no)).length;
-  const activeCount = chats.filter((c) => c.status === "Active").length;
-  const activeTodayCount = chats.filter(
-    (c) => c.status === "Active" && activeTodaySet.has(c.agr_no)
-  ).length;
+  // Most problematic chats on top (item 1). Sort by score ascending so the
+  // lowest scores float up. Scored chats use their saved total; un-scored chats
+  // are mixed in by their *expected* score — carried-forward mailing statuses
+  // run through the same engine, so a chat with a failing mailing surfaces at
+  // the top even before it's been reviewed today.
+  const sortedChats = useMemo(() => {
+    const scoreFor = (c: Chat): number => {
+      const ev = evalForDate.get(c.agr_no);
+      if (ev) return ev.total_score;
+      const prev = prevByChat.get(c.agr_no) ?? {};
+      const monthly: Record<string, { status: string }> = {};
+      for (const cat of MONTHLY_CATEGORIES) {
+        if (prev[cat.id]) monthly[cat.id] = { status: prev[cat.id] };
+      }
+      return computeOverall({}, monthly);
+    };
+    return [...visibleChats].sort(
+      (a, b) => scoreFor(a) - scoreFor(b) || a.agr_no.localeCompare(b.agr_no)
+    );
+  }, [visibleChats, evalForDate, prevByChat]);
 
   function onSaved(saved: Evaluation) {
     setEvaluations((prev) => [saved, ...prev.filter((e) => e.id !== saved.id)]);
@@ -221,12 +236,18 @@ export default function ScoringPanel({
         </label>
       </div>
 
-      {/* Summary */}
+      {/* Compact action bar — Telegram + refresh only. The list updates itself
+          every 40 minutes; the per-day counters were removed as noise. */}
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <Stat label="Активных чатов (всего)" value={activeCount} />
-        <Stat label="Активных за день" value={activeTodayCount} />
-        <Stat label="Оценено за день" value={scoredToday} />
-        <Stat label="Показано" value={visibleChats.length} />
+        <a
+          href={`https://web.telegram.org/${tgClient}/`}
+          target="telegram_chat"
+          rel="noreferrer"
+          className="btn-secondary"
+          title="Откройте Telegram один раз — дальше каждый чат по ссылке открывается мгновенно в этой же вкладке"
+        >
+          Открыть Telegram ⚡
+        </a>
         <button
           className="btn-secondary"
           onClick={() => {
@@ -237,16 +258,7 @@ export default function ScoringPanel({
         >
           Обновить ⟳
         </button>
-        <a
-          href={`https://web.telegram.org/${tgClient}/`}
-          target="telegram_chat"
-          rel="noreferrer"
-          className="btn-secondary"
-          title="Откройте Telegram один раз — дальше каждый чат по ссылке открывается мгновенно в этой же вкладке"
-        >
-          Открыть Telegram ⚡
-        </a>
-        <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+        <span className="inline-flex items-center gap-1 text-xs text-gray-400">
           клиент:
           <button
             className={`px-2 py-0.5 rounded ${tgClient === "a" ? "bg-blue-600 text-white" : "border border-gray-300"}`}
@@ -260,32 +272,22 @@ export default function ScoringPanel({
             onClick={() => chooseTg("k")}
             title="Telegram Web K — загружается заметно быстрее"
           >
-            K (быстрее)
+            K
           </button>
         </span>
         {refreshedAt && (
           <span className="text-xs text-gray-400">обновлено в {refreshedAt}</span>
         )}
+        <span className="ml-auto text-xs text-gray-400">
+          самые проблемные чаты — сверху
+        </span>
       </div>
 
-      <p className="text-xs text-gray-500 px-1">
-        {scope === "day"
-          ? "Режим «за день»: показаны чаты с активностью за выбранную дату (оценки/задачи; позже — данные бота). Это быстрее для ежедневной проверки. Чтобы оценить любой другой чат — переключитесь на «Все активные чаты»."
-          : "Режим «все активные»: показаны все активные чаты. Откройте чат по ссылке, проверьте коммуникацию и проставьте оценку прямо в строке. Сохранённые оценки можно редактировать."}
-      </p>
-      <p className="text-xs text-gray-400 px-1">
-        Статусы рассылок переносятся с прошлой проверки автоматически (под
-        каждым статусом показан «пред:» — статус на момент прошлой проверки) —
-        меняйте только то, что изменилось. Оценка появляется после ввода
-        «Точность»/«СЛА». Совет: один раз нажмите «Открыть Telegram ⚡», затем
-        каждый чат по ссылке открывается мгновенно в той же вкладке.
-      </p>
-
-      <div className="card overflow-x-auto">
-        <table className="qa dense">
+      <div className="card">
+        <table className="qa dense sticky-head">
           <thead>
             <tr>
-              <th className="sticky left-0 z-20 bg-gray-100 w-[176px]">
+              <th className="corner sticky left-0 bg-gray-100 w-[176px]">
                 № / Чат / Бухгалтер
               </th>
               {DAILY_CRITERIA.map((c) => (
@@ -300,12 +302,12 @@ export default function ScoringPanel({
               ))}
               <th>Общая</th>
               <th>Кач-во</th>
-              <th className="w-[120px]">Коммент.</th>
+              <th className="w-full">Коммент.</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {visibleChats.length === 0 && (
+            {sortedChats.length === 0 && (
               <tr>
                 <td colSpan={11} className="text-center text-gray-500 py-6">
                   {scope === "day" ? (
@@ -331,7 +333,7 @@ export default function ScoringPanel({
                 </td>
               </tr>
             )}
-            {visibleChats.map((chat) => (
+            {sortedChats.map((chat) => (
               <ChatScoreRow
                 key={`${chat.agr_no}|${date}`}
                 chat={chat}
@@ -346,15 +348,6 @@ export default function ScoringPanel({
           </tbody>
         </table>
       </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="card px-3 py-1.5">
-      <span className="text-gray-500">{label}: </span>
-      <span className="font-semibold tabular-nums">{value}</span>
     </div>
   );
 }

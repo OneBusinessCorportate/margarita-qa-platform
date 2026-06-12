@@ -27,11 +27,23 @@ table.qa tr:hover td {
 /* Dense variant for the wide scoring grid — tighter padding to avoid h-scroll. */
 table.qa.dense th,
 table.qa.dense td {
-  @apply px-1 py-1;
+  @apply px-1 py-0.5;
 }
 table.qa.dense select.input,
 table.qa.dense input.input {
   @apply px-1 py-0.5;
+}
+
+/* Sticky header row: the column titles stay visible while scrolling the long
+   chat list (the navbar itself scrolls away). The header cells need an opaque
+   background so rows don't show through. */
+table.qa.sticky-head thead th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+table.qa.sticky-head thead th.corner {
+  z-index: 30;
 }
 
 .input {

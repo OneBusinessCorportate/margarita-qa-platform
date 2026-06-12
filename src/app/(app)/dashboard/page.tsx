@@ -177,11 +177,11 @@ export default async function DashboardPage({
         </table>
       </div>
 
-      {/* Per-chat detail: statuses + quality + link */}
-      <div className="card overflow-x-auto">
-        <div className="px-3 pt-3 text-sm font-medium">
+      {/* Per-chat detail: hidden by default (item 2 — open on click). */}
+      <details className="card overflow-x-auto">
+        <summary className="px-3 py-2 text-sm font-medium cursor-pointer select-none">
           По чатам (оценённые за период) — статусы и качество
-        </div>
+        </summary>
         <table className="qa">
           <thead>
             <tr>
@@ -245,23 +245,18 @@ export default async function DashboardPage({
             })}
           </tbody>
         </table>
-      </div>
+      </details>
 
-      {/* Report message preview */}
-      <div className="card p-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">
-            Сообщение для Telegram (отчёт)
-          </div>
-          <div className="flex items-center gap-2">
-            <CopyButton label="Копировать" text={reportMessage} />
-            <SendTelegramButton text={reportMessage} configured={botReady} />
-          </div>
-        </div>
+      {/* Report message preview — hidden by default; the «Копировать отчёт»
+          button at the top already copies it. Open only to read the text. */}
+      <details className="card p-3 space-y-2">
+        <summary className="text-sm font-medium cursor-pointer select-none">
+          Текст сообщения для Telegram (отчёт)
+        </summary>
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {reportMessage}
         </pre>
-      </div>
+      </details>
     </div>
   );
 }
