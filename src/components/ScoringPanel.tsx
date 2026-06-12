@@ -10,10 +10,9 @@ import {
   type CriteriaScores,
   type CriterionId,
 } from "@/lib/scoring";
+import { predictEvaluation, toSnapshot, type AiModel } from "@/lib/ai";
 import type { Accountant, Chat, Evaluation, MonthlyStatus } from "@/lib/types";
-import { buildScoreMessage } from "@/lib/templates";
 import BandChip from "./BandChip";
-import CopyButton from "./CopyButton";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -40,12 +39,14 @@ export default function ScoringPanel({
   chats,
   accountants,
   initialEvaluations,
+  aiModel,
   taskActivity = [],
   latestActivityDate = null,
 }: {
   chats: Chat[];
   accountants: Accountant[];
   initialEvaluations: Evaluation[];
+  aiModel: AiModel;
   taskActivity?: { chat_agr_no: string; date: string }[];
   latestActivityDate?: string | null;
 }) {
@@ -136,26 +137,20 @@ export default function ScoringPanel({
     });
   }, [chats, search, accFilter, onlyUnscored, activeOnly, evalForDate, scope, activeTodaySet]);
 
-  // Most problematic chats on top (item 1). Sort by score ascending so the
-  // lowest scores float up. Scored chats use their saved total; un-scored chats
-  // are mixed in by their *expected* score — carried-forward mailing statuses
-  // run through the same engine, so a chat with a failing mailing surfaces at
-  // the top even before it's been reviewed today.
+  // Most problematic chats on top (item 1). Scored chats sort by Margarita's
+  // saved total; un-scored ones are mixed in by the AI's predicted total, so a
+  // chat the AI expects to fail surfaces at the top before it's reviewed.
   const sortedChats = useMemo(() => {
     const scoreFor = (c: Chat): number => {
       const ev = evalForDate.get(c.agr_no);
       if (ev) return ev.total_score;
-      const prev = prevByChat.get(c.agr_no) ?? {};
-      const monthly: Record<string, { status: string }> = {};
-      for (const cat of MONTHLY_CATEGORIES) {
-        if (prev[cat.id]) monthly[cat.id] = { status: prev[cat.id] };
-      }
-      return computeOverall({}, monthly);
+      return predictEvaluation(c.accountant, prevByChat.get(c.agr_no) ?? {}, aiModel)
+        .total;
     };
     return [...visibleChats].sort(
       (a, b) => scoreFor(a) - scoreFor(b) || a.agr_no.localeCompare(b.agr_no)
     );
-  }, [visibleChats, evalForDate, prevByChat]);
+  }, [visibleChats, evalForDate, prevByChat, aiModel]);
 
   function onSaved(saved: Evaluation) {
     setEvaluations((prev) => [saved, ...prev.filter((e) => e.id !== saved.id)]);
@@ -236,8 +231,7 @@ export default function ScoringPanel({
         </label>
       </div>
 
-      {/* Compact action bar — Telegram + refresh only. The list updates itself
-          every 40 minutes; the per-day counters were removed as noise. */}
+      {/* Compact action bar — Telegram + refresh only. */}
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <a
           href={`https://web.telegram.org/${tgClient}/`}
@@ -279,7 +273,7 @@ export default function ScoringPanel({
           <span className="text-xs text-gray-400">обновлено в {refreshedAt}</span>
         )}
         <span className="ml-auto text-xs text-gray-400">
-          самые проблемные чаты — сверху
+          самые проблемные чаты — сверху · строка «AI» — прогноз, строка ниже — ваша оценка
         </span>
       </div>
 
@@ -341,6 +335,7 @@ export default function ScoringPanel({
                 date={date}
                 existing={evalForDate.get(chat.agr_no) ?? null}
                 prevStatuses={prevByChat.get(chat.agr_no) ?? {}}
+                aiModel={aiModel}
                 tgClient={tgClient}
                 onSaved={onSaved}
               />
@@ -364,6 +359,7 @@ function ChatScoreRow({
   date,
   existing,
   prevStatuses,
+  aiModel,
   tgClient,
   onSaved,
 }: {
@@ -372,6 +368,7 @@ function ChatScoreRow({
   date: string;
   existing: Evaluation | null;
   prevStatuses: Record<string, string>;
+  aiModel: AiModel;
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
 }) {
@@ -400,15 +397,20 @@ function ChatScoreRow({
   const [error, setError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
 
+  // AI's row: same fields, predicted from the learned model. Re-predicts when
+  // the accountant changes (the model is per-accountant).
+  const ai = useMemo(
+    () => predictEvaluation(accountant || null, prevStatuses, aiModel),
+    [accountant, prevStatuses, aiModel]
+  );
+
   const total =
     override.trim() !== "" && !Number.isNaN(Number(override))
       ? Number(override)
       : computeOverall(criteria, monthly);
 
-  // A row shows a score once it's been reviewed today: saved, a criterion
-  // entered, or an override typed. Mailing statuses are pre-filled (carried
-  // forward), so they don't by themselves count as "reviewed" — otherwise
-  // every un-reviewed chat would show a default score.
+  // Margarita's line shows a score once it's been reviewed today: saved, a
+  // criterion entered, or a score typed. (The AI line always shows its own.)
   const touched =
     Boolean(savedId) ||
     DAILY_CRITERIA.some((c) => typeof criteria[c.id] === "number") ||
@@ -418,6 +420,19 @@ function ChatScoreRow({
     setCriteria((c) => ({ ...c, [id]: v === "" ? undefined : Number(v) }));
   const setMon = (id: string, status: string) =>
     setMonthly((m) => ({ ...m, [id]: { ...m[id], status } }));
+
+  /** One click: agree with the AI — its row becomes Margarita's answer. */
+  function acceptAi() {
+    setCriteria({ ...ai.criteria });
+    setMonthly((m) => {
+      const next = { ...m };
+      for (const c of MONTHLY_CATEGORIES) {
+        next[c.id] = { ...next[c.id], status: ai.monthly[c.id]?.status ?? "" };
+      }
+      return next;
+    });
+    setOverride(String(ai.total));
+  }
 
   async function save() {
     setSaving(true);
@@ -434,7 +449,9 @@ function ChatScoreRow({
       chat_agr_no: chat.agr_no,
       checking_date: date,
       accountant: accountant || null,
-      scores: { criteria, monthly: monthlyWithPrev },
+      // The AI snapshot is stored with her answer — the (AI, Margarita)
+      // training pair the model learns from on the next load.
+      scores: { criteria, monthly: monthlyWithPrev, ai: toSnapshot(ai) },
       comment: comment || null,
       total_override: override.trim() !== "" ? Number(override) : null,
     };
@@ -462,119 +479,134 @@ function ChatScoreRow({
     }
   }
 
-  const previewEval: Evaluation = {
-    id: savedId ?? "preview",
-    chat_agr_no: chat.agr_no,
-    period: date.slice(0, 7).replace("-", ""),
-    checking_date: date,
-    accountant: accountant || null,
-    scores: { criteria, monthly },
-    total_score: total,
-    quality_band: "Критично",
-    comment: comment || null,
-    created_at: new Date().toISOString(),
-  };
-
   return (
-    <tr className={savedId ? "" : "bg-blue-50/30"}>
-      <td className="sticky left-0 z-10 bg-white space-y-0.5 align-top w-[176px]">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">№ {chat.agr_no}</span>
-          {chat.chat_link ? (
-            <a
-              href={tgHref(chat.chat_link, tgClient)}
-              target={tgWindowFor(chat.chat_link)}
-              rel="noreferrer"
-              className="text-blue-600 hover:underline text-xs whitespace-nowrap"
-              title="Открыть чат в одной вкладке Telegram (быстро)"
-            >
-              Открыть ↗
-            </a>
-          ) : (
-            <span className="text-gray-400 text-xs">нет ссылки</span>
-          )}
-          {chat.status !== "Active" && (
-            <span className="text-xs text-gray-400">(неактивен)</span>
-          )}
-        </div>
-        <div className="text-gray-600 text-xs">{chat.chat_name}</div>
-        <select
-          className="input w-full text-xs"
-          value={accountant}
-          onChange={(e) => setAccountant(e.target.value)}
+    <>
+      {/* AI line — read-only prediction of the same fields. */}
+      <tr className="ai-row bg-gray-50/80 text-gray-500">
+        <td
+          rowSpan={2}
+          className="sticky left-0 z-10 bg-white space-y-0.5 align-top w-[176px] border-b border-gray-200"
         >
-          <option value="">— бухгалтер —</option>
-          {accountants.map((a) => (
-            <option key={a.name} value={a.name}>
-              {a.name}
-            </option>
-          ))}
-        </select>
-        <div className="text-xs text-gray-400">
-          Долги: {chat.debts ?? "—"} · Менеджер: {chat.manager ?? "—"}
-        </div>
-      </td>
-      {DAILY_CRITERIA.map((c) => (
-        <td key={c.id}>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-900">№ {chat.agr_no}</span>
+            {chat.chat_link ? (
+              <a
+                href={tgHref(chat.chat_link, tgClient)}
+                target={tgWindowFor(chat.chat_link)}
+                rel="noreferrer"
+                className="text-blue-600 hover:underline text-xs whitespace-nowrap"
+                title="Открыть чат в одной вкладке Telegram (быстро)"
+              >
+                Открыть ↗
+              </a>
+            ) : (
+              <span className="text-gray-400 text-xs">нет ссылки</span>
+            )}
+            {chat.status !== "Active" && (
+              <span className="text-xs text-gray-400">(неактивен)</span>
+            )}
+          </div>
+          <div className="text-gray-600 text-xs truncate" title={chat.chat_name}>
+            {chat.chat_name}
+          </div>
           <select
-            className="input w-[42px]"
-            value={criteria[c.id] ?? ""}
-            onChange={(e) => setCrit(c.id, e.target.value)}
-            title={c.name}
+            className="input w-full text-xs"
+            value={accountant}
+            onChange={(e) => setAccountant(e.target.value)}
           >
-            <option value="">—</option>
-            {Array.from({ length: c.scaleMax + 1 }, (_, i) => i).map((n) => (
-              <option key={n} value={n}>
-                {n}
+            <option value="">— бухгалтер —</option>
+            {accountants.map((a) => (
+              <option key={a.name} value={a.name}>
+                {a.name}
               </option>
             ))}
           </select>
         </td>
-      ))}
-      {MONTHLY_CATEGORIES.map((c) => (
-        <td key={c.id}>
-          <select
-            className="input w-[86px] text-xs"
-            value={monthly[c.id]?.status ?? ""}
-            onChange={(e) => setMon(c.id, e.target.value)}
-            title={c.name}
-          >
-            <option value="">—</option>
-            {c.statuses.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          {prevStatuses[c.id] && (
-            <div className="text-[10px] text-gray-400 mt-0.5" title="Статус на прошлой проверке">
-              пред: {prevStatuses[c.id]}
-            </div>
-          )}
+        {DAILY_CRITERIA.map((c) => (
+          <td key={c.id} className="text-center tabular-nums text-xs" title={`AI: ${c.name}`}>
+            {ai.criteria[c.id]}
+          </td>
+        ))}
+        {MONTHLY_CATEGORIES.map((c) => (
+          <td key={c.id} className="text-xs whitespace-nowrap" title={`AI: ${c.name}`}>
+            {ai.monthly[c.id]?.status || "—"}
+          </td>
+        ))}
+        <td className="text-center tabular-nums text-xs font-medium">{ai.total}</td>
+        <td>
+          <BandChip band={ai.band} />
         </td>
-      ))}
-      <td>
-        <input
-          className="input w-[46px] tabular-nums text-center"
-          value={override !== "" ? override : touched ? total : ""}
-          placeholder="—"
-          onChange={(e) => setOverride(e.target.value)}
-          title="Авто из критериев; можно переопределить"
-        />
-      </td>
-      <td>
-        {touched ? <BandChip total={total} /> : <span className="text-gray-300">—</span>}
-      </td>
-      <td>
-        <input
-          className="input w-full"
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          placeholder="комментарий…"
-        />
-      </td>
-      <td className="whitespace-nowrap">
-        <div className="flex flex-col gap-0.5 items-stretch">
+        <td className="text-xs text-gray-400 truncate" title={ai.note}>
+          AI · {ai.note}
+        </td>
+        <td className="whitespace-nowrap">
+          <button
+            className="btn-secondary !px-2 !py-0.5 text-xs"
+            onClick={acceptAi}
+            title="Согласиться с AI — скопировать его строку в вашу"
+          >
+            Принять AI
+          </button>
+        </td>
+      </tr>
+
+      {/* Margarita's line — editable; what she saves is what counts. */}
+      <tr className={savedId ? "" : "bg-blue-50/30"}>
+        {DAILY_CRITERIA.map((c) => (
+          <td key={c.id} className="border-b border-gray-200">
+            <select
+              className="input w-[42px]"
+              value={criteria[c.id] ?? ""}
+              onChange={(e) => setCrit(c.id, e.target.value)}
+              title={c.name}
+            >
+              <option value="">—</option>
+              {Array.from({ length: c.scaleMax + 1 }, (_, i) => i).map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </td>
+        ))}
+        {MONTHLY_CATEGORIES.map((c) => (
+          <td key={c.id} className="border-b border-gray-200">
+            <select
+              className="input w-[86px] text-xs"
+              value={monthly[c.id]?.status ?? ""}
+              onChange={(e) => setMon(c.id, e.target.value)}
+              title={c.name}
+            >
+              <option value="">—</option>
+              {c.statuses.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </td>
+        ))}
+        <td className="border-b border-gray-200">
+          <input
+            className="input w-[46px] tabular-nums text-center"
+            value={override !== "" ? override : touched ? total : ""}
+            placeholder="—"
+            onChange={(e) => setOverride(e.target.value)}
+            title="Авто из критериев; можно переопределить"
+          />
+        </td>
+        <td className="border-b border-gray-200">
+          {touched ? <BandChip total={total} /> : <span className="text-gray-300">—</span>}
+        </td>
+        <td className="border-b border-gray-200">
+          <input
+            className="input w-full"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="комментарий…"
+          />
+        </td>
+        <td className="whitespace-nowrap border-b border-gray-200">
           <button
             className="btn-primary !px-2 !py-1 text-xs"
             onClick={save}
@@ -582,15 +614,10 @@ function ChatScoreRow({
           >
             {saving ? "…" : savedId ? "Сохр." : "Оценить"}
           </button>
-          <CopyButton
-            label="Копир."
-            className="btn-secondary !px-2 !py-1 text-xs"
-            text={buildScoreMessage(previewEval, chat)}
-          />
-          {savedId && <span className="text-[10px] text-green-600">✓</span>}
-          {error && <span className="text-[10px] text-red-600">{error}</span>}
-        </div>
-      </td>
-    </tr>
+          {savedId && <span className="ml-1 text-[10px] text-green-600">✓</span>}
+          {error && <span className="ml-1 text-[10px] text-red-600">{error}</span>}
+        </td>
+      </tr>
+    </>
   );
 }

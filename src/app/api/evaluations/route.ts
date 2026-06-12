@@ -33,6 +33,7 @@ function parseInput(body: any): NewEvaluationInput | null {
     scores: {
       criteria: body.scores?.criteria,
       monthly: body.scores?.monthly,
+      ai: body.scores?.ai,
     },
     comment: body.comment ?? null,
     total_override:

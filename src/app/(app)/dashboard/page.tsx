@@ -1,9 +1,6 @@
-import { getReport, listAccountants, listChats, listEvaluations } from "@/lib/repo";
-import { buildReportMessage, telegramConfigured } from "@/lib/templates";
-import { BANDS, MONTHLY_CATEGORIES } from "@/lib/scoring";
-import CopyButton from "@/components/CopyButton";
-import SendTelegramButton from "@/components/SendTelegramButton";
-import BandChip from "@/components/BandChip";
+import Link from "next/link";
+import { getReport, listAccountants } from "@/lib/repo";
+import { BANDS } from "@/lib/scoring";
 import DashboardFilters from "@/components/DashboardFilters";
 
 export const dynamic = "force-dynamic";
@@ -19,15 +16,10 @@ export default async function DashboardPage({
     accountant: searchParams.accountant || undefined,
     client: searchParams.client || undefined,
   };
-  const [report, accountants, evaluations, chats] = await Promise.all([
+  const [report, accountants] = await Promise.all([
     getReport(filters),
     listAccountants(),
-    listEvaluations(filters),
-    listChats(),
   ]);
-  const chatMap = new Map(chats.map((c) => [c.agr_no, c]));
-  const reportMessage = buildReportMessage(report);
-  const botReady = telegramConfigured();
 
   const totals = [
     { label: "Активных чатов", value: report.totals.activeChats },
@@ -38,21 +30,11 @@ export default async function DashboardPage({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-xl font-semibold">Отчёт</h1>
-          <p className="text-sm text-gray-500">
-            Ежедневный отчёт по качеству — по дате и бухгалтеру.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <CopyButton
-            label="Копировать отчёт"
-            className="btn-primary"
-            text={reportMessage}
-          />
-          <SendTelegramButton text={reportMessage} configured={botReady} />
-        </div>
+      <div>
+        <h1 className="text-xl font-semibold">Отчёт</h1>
+        <p className="text-sm text-gray-500">
+          Ежедневный отчёт по качеству — по дате и бухгалтеру.
+        </p>
       </div>
 
       <DashboardFilters
@@ -177,86 +159,23 @@ export default async function DashboardPage({
         </table>
       </div>
 
-      {/* Per-chat detail: hidden by default (item 2 — open on click). */}
-      <details className="card overflow-x-auto">
-        <summary className="px-3 py-2 text-sm font-medium cursor-pointer select-none">
-          По чатам (оценённые за период) — статусы и качество
-        </summary>
-        <table className="qa">
-          <thead>
-            <tr>
-              <th>Дата</th>
-              <th className="min-w-[180px]">№ / Чат</th>
-              <th>Бухгалтер</th>
-              {MONTHLY_CATEGORIES.map((c) => (
-                <th key={c.id} title={c.name}>
-                  {c.shortName}
-                </th>
-              ))}
-              <th>Общая</th>
-              <th>Качество</th>
-              <th>Чат</th>
-            </tr>
-          </thead>
-          <tbody>
-            {evaluations.length === 0 && (
-              <tr>
-                <td colSpan={11} className="text-center text-gray-400 py-6">
-                  Нет оценок за период.
-                </td>
-              </tr>
-            )}
-            {evaluations.map((ev) => {
-              const chat = chatMap.get(ev.chat_agr_no) ?? null;
-              const monthly = ev.scores.monthly ?? {};
-              return (
-                <tr key={ev.id}>
-                  <td className="whitespace-nowrap">{ev.checking_date}</td>
-                  <td>
-                    <div className="font-medium">№ {ev.chat_agr_no}</div>
-                    <div className="text-gray-500 text-xs">{chat?.chat_name ?? "—"}</div>
-                  </td>
-                  <td>{ev.accountant ?? "—"}</td>
-                  {MONTHLY_CATEGORIES.map((c) => (
-                    <td key={c.id} className="text-xs whitespace-nowrap">
-                      {monthly[c.id]?.status || "—"}
-                    </td>
-                  ))}
-                  <td className="tabular-nums font-semibold text-center">{ev.total_score}</td>
-                  <td>
-                    <BandChip band={ev.quality_band} />
-                  </td>
-                  <td>
-                    {chat?.chat_link ? (
-                      <a
-                        href={chat.chat_link}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-600 hover:underline whitespace-nowrap"
-                      >
-                        Открыть ↗
-                      </a>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </details>
-
-      {/* Report message preview — hidden by default; the «Копировать отчёт»
-          button at the top already copies it. Open only to read the text. */}
-      <details className="card p-3 space-y-2">
-        <summary className="text-sm font-medium cursor-pointer select-none">
-          Текст сообщения для Telegram (отчёт)
-        </summary>
-        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
-{reportMessage}
-        </pre>
-      </details>
+      {/* Detail lives on its own pages — link instead of repeating it here. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Link href="/scoring" className="card p-3 hover:bg-gray-50 flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium">По чатам — статусы и качество</div>
+            <div className="text-xs text-gray-500">оценки по каждому чату — на странице «Оценка»</div>
+          </div>
+          <span className="text-blue-600">→</span>
+        </Link>
+        <Link href="/messages" className="card p-3 hover:bg-gray-50 flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium">Сообщение для Telegram (отчёт)</div>
+            <div className="text-xs text-gray-500">текст и копирование — на странице «Сообщения»</div>
+          </div>
+          <span className="text-blue-600">→</span>
+        </Link>
+      </div>
     </div>
   );
 }

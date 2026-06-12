@@ -34,6 +34,12 @@ export interface MonthlyStatus {
 export interface EvaluationScores {
   criteria?: CriteriaScores; // accuracy, sla (+ optional fcr, clarity)
   monthly?: Record<string, MonthlyStatus>; // keyed by MonthlyCategory.id
+  /** AI's predicted row at save time — the training pair for the learner. */
+  ai?: {
+    criteria?: CriteriaScores;
+    monthly?: Record<string, { status: string }>;
+    total?: number;
+  };
 }
 
 export interface Evaluation {

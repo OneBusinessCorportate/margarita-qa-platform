@@ -46,6 +46,12 @@ table.qa.sticky-head thead th.corner {
   z-index: 30;
 }
 
+/* AI prediction line: no divider below it, so the AI line and Margarita's
+   editable line below read as one chat. */
+table.qa tr.ai-row td {
+  border-bottom: 0;
+}
+
 .input {
   @apply border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
 }
