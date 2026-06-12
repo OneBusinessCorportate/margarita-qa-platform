@@ -14,7 +14,7 @@ export default async function AppLayout({
   return (
     <div className="min-h-screen">
       <NavBar email={session.email} />
-      <main className="max-w-7xl mx-auto px-4 py-4">{children}</main>
+      <main className="max-w-screen-2xl mx-auto px-4 py-4">{children}</main>
     </div>
   );
 }

@@ -71,8 +71,8 @@ export default function ScoringPanel({
     window.localStorage.setItem("qa_tg_client", c);
   }
 
-  // Refresh the chat/eval data every 40 minutes (item 5). With the bot feed
-  // wired in, this is how "Активные за день" stays current through the day.
+  // Refresh the chat/eval data every 40 minutes. With the bot feed wired in,
+  // this is how the day view stays current through the day.
   useEffect(() => {
     const id = setInterval(() => {
       router.refresh();
@@ -82,7 +82,7 @@ export default function ScoringPanel({
   }, [router]);
 
   // Previous status per chat per mailing = the status at the most recent
-  // evaluation BEFORE the selected date (item 6).
+  // evaluation BEFORE the selected date.
   const prevByChat = useMemo(() => {
     const latestBefore = new Map<string, Evaluation>();
     for (const e of evaluations) {
@@ -112,7 +112,6 @@ export default function ScoringPanel({
   }, [evaluations, date]);
 
   // Chats with activity on the selected date: an evaluation or a task that day.
-  // TODO(margarita): expand with the bot's daily "chats with messages" feed.
   const activeTodaySet = useMemo(() => {
     const s = new Set<string>(evalForDate.keys());
     for (const t of taskActivity) if (t.date === date) s.add(t.chat_agr_no);
@@ -137,9 +136,8 @@ export default function ScoringPanel({
     });
   }, [chats, search, accFilter, onlyUnscored, activeOnly, evalForDate, scope, activeTodaySet]);
 
-  // Most problematic chats on top (item 1). Scored chats sort by Margarita's
-  // saved total; un-scored ones are mixed in by the AI's predicted total, so a
-  // chat the AI expects to fail surfaces at the top before it's reviewed.
+  // Most problematic chats on top. Scored chats sort by Margarita's saved total;
+  // un-scored ones are mixed in by the AI's predicted total.
   const sortedChats = useMemo(() => {
     const scoreFor = (c: Chat): number => {
       const ev = evalForDate.get(c.agr_no);
@@ -272,20 +270,35 @@ export default function ScoringPanel({
         {refreshedAt && (
           <span className="text-xs text-gray-400">обновлено в {refreshedAt}</span>
         )}
-        <span className="ml-auto text-xs text-gray-400">
-          самые проблемные чаты — сверху · строка «AI» — прогноз, строка ниже — ваша оценка
+      </div>
+
+      {/* Legend — explains the two lines per chat in plain words. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block rounded bg-indigo-100 text-indigo-700 font-medium px-1.5 py-0.5">
+            AI
+          </span>
+          подсказка — что предлагает система
         </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block rounded bg-blue-600 text-white font-medium px-1.5 py-0.5">
+            Вы
+          </span>
+          ваша оценка — её и сохраняем
+        </span>
+        <span>Самые проблемные чаты — сверху.</span>
       </div>
 
       <div className="card">
-        <table className="qa dense sticky-head">
+        <table className="qa pairs sticky-head">
           <thead>
             <tr>
-              <th className="corner sticky left-0 bg-gray-100 w-[176px]">
+              <th className="corner sticky left-0 bg-gray-100 min-w-[210px]">
                 № / Чат / Бухгалтер
               </th>
+              <th className="text-center">Кто</th>
               {DAILY_CRITERIA.map((c) => (
-                <th key={c.id} title={c.name}>
+                <th key={c.id} className="text-center" title={c.name}>
                   {c.id === "accuracy" ? "Точн." : "СЛА"}
                 </th>
               ))}
@@ -294,7 +307,7 @@ export default function ScoringPanel({
                   {c.shortName}
                 </th>
               ))}
-              <th>Общая</th>
+              <th className="text-center">Общая</th>
               <th>Кач-во</th>
               <th className="w-full">Коммент.</th>
               <th></th>
@@ -303,7 +316,7 @@ export default function ScoringPanel({
           <tbody>
             {sortedChats.length === 0 && (
               <tr>
-                <td colSpan={11} className="text-center text-gray-500 py-6">
+                <td colSpan={12} className="text-center text-gray-500 py-6">
                   {scope === "day" ? (
                     <div className="space-y-2">
                       <div>За {date} нет активных чатов (оценок/задач).</div>
@@ -378,10 +391,6 @@ function ChatScoreRow({
   const [criteria, setCriteria] = useState<CriteriaScores>(
     existing?.scores.criteria ?? {}
   );
-  // Mailing statuses carry over from the previous check by default (Margarita
-  // can't re-verify each day whether e.g. primary docs were sent). For an
-  // existing eval we keep its saved statuses; for a new one we pre-fill from
-  // the previous check and she only changes what changed.
   const [monthly, setMonthly] = useState<Record<string, MonthlyStatus>>(() => {
     const base = emptyMonthly();
     if (existing?.scores.monthly) return { ...base, ...existing.scores.monthly };
@@ -409,8 +418,6 @@ function ChatScoreRow({
       ? Number(override)
       : computeOverall(criteria, monthly);
 
-  // Margarita's line shows a score once it's been reviewed today: saved, a
-  // criterion entered, or a score typed. (The AI line always shows its own.)
   const touched =
     Boolean(savedId) ||
     DAILY_CRITERIA.some((c) => typeof criteria[c.id] === "number") ||
@@ -437,7 +444,6 @@ function ChatScoreRow({
   async function save() {
     setSaving(true);
     setError(null);
-    // Record the previous-check status for each mailing automatically.
     const monthlyWithPrev: Record<string, MonthlyStatus> = {};
     for (const cat of MONTHLY_CATEGORIES) {
       monthlyWithPrev[cat.id] = {
@@ -449,8 +455,7 @@ function ChatScoreRow({
       chat_agr_no: chat.agr_no,
       checking_date: date,
       accountant: accountant || null,
-      // The AI snapshot is stored with her answer — the (AI, Margarita)
-      // training pair the model learns from on the next load.
+      // The AI snapshot is stored with her answer — the training pair.
       scores: { criteria, monthly: monthlyWithPrev, ai: toSnapshot(ai) },
       comment: comment || null,
       total_override: override.trim() !== "" ? Number(override) : null,
@@ -479,16 +484,21 @@ function ChatScoreRow({
     }
   }
 
+  // Shared cell classes: a thick top border opens each chat group; the AI row
+  // has no bottom border so the two lines read as one chat.
+  const aiCell = "ai-cell bg-indigo-50/60 text-gray-600 align-middle";
+  const youCell = "align-middle";
+
   return (
     <>
-      {/* AI line — read-only prediction of the same fields. */}
-      <tr className="ai-row bg-gray-50/80 text-gray-500">
+      {/* ---- AI suggestion line ---- */}
+      <tr className="chat-start">
         <td
           rowSpan={2}
-          className="sticky left-0 z-10 bg-white space-y-0.5 align-top w-[176px] border-b border-gray-200"
+          className="chat-info sticky left-0 z-10 bg-white align-top min-w-[210px]"
         >
           <div className="flex items-center gap-2">
-            <span className="font-medium text-gray-900">№ {chat.agr_no}</span>
+            <span className="font-semibold text-gray-900">№ {chat.agr_no}</span>
             {chat.chat_link ? (
               <a
                 href={tgHref(chat.chat_link, tgClient)}
@@ -506,11 +516,11 @@ function ChatScoreRow({
               <span className="text-xs text-gray-400">(неактивен)</span>
             )}
           </div>
-          <div className="text-gray-600 text-xs truncate" title={chat.chat_name}>
+          <div className="text-gray-600 text-xs mt-0.5 truncate max-w-[210px]" title={chat.chat_name}>
             {chat.chat_name}
           </div>
           <select
-            className="input w-full text-xs"
+            className="input w-full text-xs mt-1"
             value={accountant}
             onChange={(e) => setAccountant(e.target.value)}
           >
@@ -522,40 +532,57 @@ function ChatScoreRow({
             ))}
           </select>
         </td>
+        <td className={`${aiCell} text-center`}>
+          <span
+            className="inline-block rounded bg-indigo-100 text-indigo-700 font-semibold text-[11px] px-1.5 py-0.5"
+            title={ai.note}
+          >
+            AI
+          </span>
+        </td>
         {DAILY_CRITERIA.map((c) => (
-          <td key={c.id} className="text-center tabular-nums text-xs" title={`AI: ${c.name}`}>
+          <td key={c.id} className={`${aiCell} text-center tabular-nums`} title={c.name}>
             {ai.criteria[c.id]}
           </td>
         ))}
         {MONTHLY_CATEGORIES.map((c) => (
-          <td key={c.id} className="text-xs whitespace-nowrap" title={`AI: ${c.name}`}>
-            {ai.monthly[c.id]?.status || "—"}
+          <td key={c.id} className={`${aiCell} text-xs`}>
+            <span className="block truncate max-w-[120px]" title={ai.monthly[c.id]?.status}>
+              {ai.monthly[c.id]?.status || "—"}
+            </span>
           </td>
         ))}
-        <td className="text-center tabular-nums text-xs font-medium">{ai.total}</td>
-        <td>
+        <td className={`${aiCell} text-center tabular-nums font-semibold`}>{ai.total}</td>
+        <td className={aiCell}>
           <BandChip band={ai.band} />
         </td>
-        <td className="text-xs text-gray-400 truncate" title={ai.note}>
-          AI · {ai.note}
+        <td className={`${aiCell} text-xs italic text-gray-500`}>
+          <span className="block truncate max-w-[260px]" title={ai.note}>
+            {ai.note}
+          </span>
         </td>
-        <td className="whitespace-nowrap">
+        <td className={`${aiCell} whitespace-nowrap text-right`}>
           <button
             className="btn-secondary !px-2 !py-0.5 text-xs"
             onClick={acceptAi}
-            title="Согласиться с AI — скопировать его строку в вашу"
+            title="Согласиться с AI — перенести его оценку в вашу строку"
           >
-            Принять AI
+            Принять
           </button>
         </td>
       </tr>
 
-      {/* Margarita's line — editable; what she saves is what counts. */}
-      <tr className={savedId ? "" : "bg-blue-50/30"}>
+      {/* ---- Your editable line ---- */}
+      <tr className={savedId ? "" : "bg-blue-50/40"}>
+        <td className={`${youCell} text-center`}>
+          <span className="inline-block rounded bg-blue-600 text-white font-semibold text-[11px] px-1.5 py-0.5">
+            Вы
+          </span>
+        </td>
         {DAILY_CRITERIA.map((c) => (
-          <td key={c.id} className="border-b border-gray-200">
+          <td key={c.id} className={`${youCell} text-center`}>
             <select
-              className="input w-[42px]"
+              className="input w-[46px]"
               value={criteria[c.id] ?? ""}
               onChange={(e) => setCrit(c.id, e.target.value)}
               title={c.name}
@@ -570,9 +597,9 @@ function ChatScoreRow({
           </td>
         ))}
         {MONTHLY_CATEGORIES.map((c) => (
-          <td key={c.id} className="border-b border-gray-200">
+          <td key={c.id} className={youCell}>
             <select
-              className="input w-[86px] text-xs"
+              className="input w-full min-w-[112px] text-xs"
               value={monthly[c.id]?.status ?? ""}
               onChange={(e) => setMon(c.id, e.target.value)}
               title={c.name}
@@ -586,19 +613,19 @@ function ChatScoreRow({
             </select>
           </td>
         ))}
-        <td className="border-b border-gray-200">
+        <td className={`${youCell} text-center`}>
           <input
-            className="input w-[46px] tabular-nums text-center"
+            className="input w-[50px] tabular-nums text-center"
             value={override !== "" ? override : touched ? total : ""}
             placeholder="—"
             onChange={(e) => setOverride(e.target.value)}
             title="Авто из критериев; можно переопределить"
           />
         </td>
-        <td className="border-b border-gray-200">
+        <td className={youCell}>
           {touched ? <BandChip total={total} /> : <span className="text-gray-300">—</span>}
         </td>
-        <td className="border-b border-gray-200">
+        <td className={youCell}>
           <input
             className="input w-full"
             value={comment}
@@ -606,9 +633,9 @@ function ChatScoreRow({
             placeholder="комментарий…"
           />
         </td>
-        <td className="whitespace-nowrap border-b border-gray-200">
+        <td className={`${youCell} whitespace-nowrap text-right`}>
           <button
-            className="btn-primary !px-2 !py-1 text-xs"
+            className="btn-primary !px-3 !py-1 text-xs"
             onClick={save}
             disabled={saving}
           >

@@ -46,10 +46,23 @@ table.qa.sticky-head thead th.corner {
   z-index: 30;
 }
 
-/* AI prediction line: no divider below it, so the AI line and Margarita's
-   editable line below read as one chat. */
-table.qa tr.ai-row td {
+/* Paired-rows grid: each chat is two <tr> (AI suggestion + your input). */
+/* Drop the per-row dividers; one thick rule opens each chat group instead, so
+   the AI line and your line clearly read as a single block. */
+table.qa.pairs td {
   border-bottom: 0;
+  padding: 4px 6px;
+  vertical-align: middle;
+}
+table.qa.pairs tr.chat-start > td {
+  border-top: 2px solid #cbd5e1;
+}
+/* The chat-info cell spans both rows and gets a divider from the scores. */
+table.qa.pairs td.chat-info {
+  border-right: 1px solid #e5e7eb;
+}
+table.qa.pairs tr:hover td {
+  background: transparent;
 }
 
 .input {
