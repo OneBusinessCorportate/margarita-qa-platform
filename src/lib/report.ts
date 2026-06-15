@@ -5,6 +5,7 @@
 import type { Chat, Evaluation, Task } from "./types";
 import {
   bandFor,
+  isStaleActivity,
   isTaskLate,
   isTaskOnTime,
   isTaskOverdue,
@@ -65,9 +66,24 @@ export function buildReport(
   chats: Chat[],
   evaluations: Evaluation[],
   filters: ReportFilters,
-  tasks: Task[] = []
+  tasks: Task[] = [],
+  /** Reference day for the "is this chat still active?" check (default: today). */
+  asOf: string = new Date().toISOString().slice(0, 10)
 ): DailyReport {
   const { from, to, accountant, client } = filters;
+
+  // Last REAL activity per chat: the chat's own activity date, else the latest
+  // task touch. Used so "Активных чатов" counts chats that are genuinely live —
+  // not ones whose status flag still says "Active" but went quiet days ago.
+  const lastTaskByChat = new Map<string, string>();
+  for (const t of tasks) {
+    const d = (t.checking_date ?? t.due_date_original ?? "").slice(0, 10);
+    if (!d) continue;
+    const cur = lastTaskByChat.get(t.chat_agr_no);
+    if (!cur || d > cur) lastTaskByChat.set(t.chat_agr_no, d);
+  }
+  const lastActivityOf = (c: Chat): string | null =>
+    c.last_activity_date ?? lastTaskByChat.get(c.agr_no) ?? null;
 
   const chatById = new Map(chats.map((c) => [c.agr_no, c]));
   const matchesClient = (agrNo: string): boolean => {
@@ -166,7 +182,11 @@ export function buildReport(
   return {
     filters,
     totals: {
-      activeChats: scopedChats.filter((c) => c.status === "Active").length,
+      // Genuinely active = status flag "Active" AND real activity within the
+      // window as of `asOf` (not just the static flag).
+      activeChats: scopedChats.filter(
+        (c) => c.status === "Active" && !isStaleActivity(lastActivityOf(c), asOf)
+      ).length,
       newChats: scopedChats.filter((c) => inRange(c.created_date, from, to))
         .length,
       chatsWithoutResponsible: scopedChats.filter(

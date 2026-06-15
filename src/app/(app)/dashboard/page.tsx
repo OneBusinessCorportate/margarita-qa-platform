@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getReport, listAccountants } from "@/lib/repo";
-import { BANDS } from "@/lib/scoring";
+import { BANDS, STALE_ACTIVITY_DAYS } from "@/lib/scoring";
 import DashboardFilters from "@/components/DashboardFilters";
 
 export const dynamic = "force-dynamic";
@@ -22,10 +22,18 @@ export default async function DashboardPage({
   ]);
 
   const totals = [
-    { label: "Активных чатов", value: report.totals.activeChats },
-    { label: "Новых чатов", value: report.totals.newChats },
-    { label: "Чаты без ответственных", value: report.totals.chatsWithoutResponsible },
-    { label: "Оценено чатов всего", value: report.totals.evaluatedChats },
+    {
+      label: "Активных чатов",
+      value: report.totals.activeChats,
+      hint: `с активностью за ≤ ${STALE_ACTIVITY_DAYS} дн.`,
+    },
+    { label: "Новых чатов", value: report.totals.newChats, hint: undefined },
+    {
+      label: "Чаты без ответственных",
+      value: report.totals.chatsWithoutResponsible,
+      hint: undefined,
+    },
+    { label: "Оценено чатов всего", value: report.totals.evaluatedChats, hint: undefined },
   ];
 
   return (
@@ -48,6 +56,7 @@ export default async function DashboardPage({
           <div key={t.label} className="card p-3">
             <div className="text-xs text-gray-500">{t.label}</div>
             <div className="text-2xl font-semibold tabular-nums">{t.value}</div>
+            {t.hint && <div className="text-[11px] text-gray-400 mt-0.5">{t.hint}</div>}
           </div>
         ))}
       </div>

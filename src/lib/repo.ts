@@ -311,5 +311,7 @@ export async function getReport(filters: ReportFilters): Promise<DailyReport> {
     listEvaluations(filters), // server-side date/accountant/client filter
     listTasks(),
   ]);
-  return buildReport(chats, evaluations, filters, tasks);
+  // Judge liveness as of the end of the reported range (or today for an open range).
+  const asOf = filters.to ?? new Date().toISOString().slice(0, 10);
+  return buildReport(chats, evaluations, filters, tasks, asOf);
 }

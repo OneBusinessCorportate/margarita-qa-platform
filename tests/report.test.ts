@@ -4,12 +4,28 @@ import { buildReport } from "../src/lib/report";
 import { seedChats, seedEvaluations, seedTasks } from "../src/lib/seed-data";
 
 test("report totals reflect seed data with no filters", () => {
-  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks);
-  assert.equal(r.totals.activeChats, seedChats.filter((c) => c.status === "Active").length);
+  // As of 2026-06-15: genuinely active = status Active AND recent activity.
+  // Stale in seed: #19 (06-10), #102 (06-11), #510 (05-28), #700 (never) → 4.
+  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  assert.equal(r.totals.activeChats, 10);
   // one active chat without an accountant (700)
   assert.equal(r.totals.chatsWithoutResponsible, 1);
   // 8 evaluations across 8 distinct chats
   assert.equal(r.totals.evaluatedChats, 8);
+});
+
+test("activeChats excludes chats that went quiet (stale activity)", () => {
+  // Same day, but a chat last active on Wednesday 06-10 is NOT counted active.
+  const asOf = "2026-06-15";
+  const live = buildReport(seedChats, seedEvaluations, {}, seedTasks, asOf)
+    .totals.activeChats;
+  // Pretend everything was active today → all 14 status-Active chats count.
+  const allFresh = seedChats.map((c) => ({ ...c, last_activity_date: asOf }));
+  const fresh = buildReport(allFresh, seedEvaluations, {}, seedTasks, asOf)
+    .totals.activeChats;
+  assert.equal(fresh, 14);
+  assert.equal(live, 10);
+  assert.ok(live < fresh, "stale chats must drop out of the active count");
 });
 
 test("distribution counts add up to number of evaluations", () => {

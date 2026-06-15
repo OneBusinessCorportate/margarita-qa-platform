@@ -141,6 +141,12 @@ export default function ScoringPanel({
       c.last_activity_date ?? lastTaskByChat.get(c.agr_no) ?? null;
   }, [lastTaskByChat]);
 
+  // Liveness is a PRESENT-tense fact ("is this chat active right now?"), so it is
+  // judged against TODAY — not the review date (which only says which day's QA we
+  // are recording). A chat silent since Wednesday is stale today even if she is
+  // back-filling an earlier date.
+  const nowISO = useMemo(() => today(), []);
+
   // Today's evaluations indexed by chat for the selected date.
   const evalForDate = useMemo(() => {
     const m = new Map<string, Evaluation>();
@@ -162,7 +168,7 @@ export default function ScoringPanel({
     return chats.filter((c) => {
       if (scope === "day" && !activeTodaySet.has(c.agr_no)) return false;
       if (activeOnly && c.status !== "Active") return false;
-      if (hideStale && isStaleActivity(lastActivityFor(c), date)) return false;
+      if (hideStale && isStaleActivity(lastActivityFor(c), nowISO)) return false;
       if (accFilter && c.accountant !== accFilter) return false;
       if (onlyUnscored && evalForDate.has(c.agr_no)) return false;
       if (
@@ -174,7 +180,7 @@ export default function ScoringPanel({
         return false;
       return true;
     });
-  }, [chats, search, accFilter, onlyUnscored, activeOnly, hideStale, lastActivityFor, date, evalForDate, scope, activeTodaySet]);
+  }, [chats, search, accFilter, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet]);
 
   // Most problematic chats on top. Scored chats sort by Margarita's saved total;
   // un-scored ones are mixed in by the AI's predicted total.
@@ -420,6 +426,7 @@ export default function ScoringPanel({
                 existing={evalForDate.get(chat.agr_no) ?? null}
                 prev={prevByChat.get(chat.agr_no) ?? null}
                 lastActivity={lastActivityFor(chat)}
+                asOf={nowISO}
                 aiModel={aiModel}
                 tgClient={tgClient}
                 onSaved={onSaved}
@@ -445,6 +452,7 @@ function ChatScoreRow({
   existing,
   prev,
   lastActivity,
+  asOf,
   aiModel,
   tgClient,
   onSaved,
@@ -455,6 +463,7 @@ function ChatScoreRow({
   existing: Evaluation | null;
   prev: PrevCheck | null;
   lastActivity: string | null;
+  asOf: string;
   aiModel: AiModel;
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
@@ -489,8 +498,8 @@ function ChatScoreRow({
   const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
 
   const greetingVal: Greeting | undefined = greeting === "" ? undefined : greeting;
-  const staleDays = lastActivity ? daysBetween(lastActivity, date) : null;
-  const isStale = isStaleActivity(lastActivity, date);
+  const staleDays = lastActivity ? daysBetween(lastActivity, asOf) : null;
+  const isStale = isStaleActivity(lastActivity, asOf);
 
   // AI's row: same fields, predicted from the learned model. Re-predicts when
   // the accountant changes (the model is per-accountant).
