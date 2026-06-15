@@ -33,8 +33,12 @@ create table if not exists mqa_chats (
   accountant          text references mqa_accountants(name),
   manager             text,
   debts               text,
-  created_date        date
+  created_date        date,
+  last_activity_date  date          -- last real chat activity (bot feed / import)
 );
+
+-- If the table already exists from an earlier deploy, add the column in place.
+alter table mqa_chats add column if not exists last_activity_date date;
 
 -- Config-driven scoring criteria (model A). Seeded from src/lib/scoring.ts.
 create table if not exists mqa_criteria (

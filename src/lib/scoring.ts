@@ -10,6 +10,11 @@
 //   is in a "not done" status, the whole chat's score becomes 1 (Критично),
 //   regardless of the two criteria.
 //
+//   GREETING RULE (Margarita, June 2026): the accountant must greet the client
+//   at the very start of the chat / when answering, or answer the client's
+//   greeting. If they don't, "Точность и полнота" is capped at 4 (a small −1,
+//   NOT critical — just a mistake).
+//
 //   "Предстоящая" and "Inactive" never penalise.
 // ---------------------------------------------------------------------------
 
@@ -136,6 +141,49 @@ export const PREV_STATUS_DEFAULT = "--";
 /** Score a failing chat gets when a mandatory mailing is not done. */
 export const FAIL_SCORE = 1;
 
+// --- Greeting rule ----------------------------------------------------------
+
+/** Did the accountant greet the client / answer the greeting? */
+export type Greeting = "yes" | "no";
+
+/**
+ * Missing greeting caps "Точность и полнота" at this score — a small −1, not
+ * critical (Margarita's rule). Only the `accuracy` criterion is affected.
+ */
+export const GREETING_ACCURACY_CAP = 4;
+
+/** Apply the greeting rule to an accuracy score (no greeting → max 4). */
+export function cappedAccuracy(accuracy: number, greeting?: Greeting): number {
+  return greeting === "no" ? Math.min(accuracy, GREETING_ACCURACY_CAP) : accuracy;
+}
+
+// --- Chat activity ("active" = recently active, not just status=Active) -----
+
+/**
+ * A chat whose last real activity is older than this many days (relative to the
+ * date being reviewed) is shown as stale — it is NOT a live "active" chat even
+ * if its status flag still says "Active".
+ */
+export const STALE_ACTIVITY_DAYS = 3;
+
+/** Whole days between two ISO dates (date-only). Negative if `to` precedes `from`. */
+export function daysBetween(fromISO: string, toISO: string): number {
+  const a = Date.parse(fromISO.slice(0, 10));
+  const b = Date.parse(toISO.slice(0, 10));
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.round((b - a) / 86_400_000);
+}
+
+/** True if `lastActivity` is more than STALE_ACTIVITY_DAYS before `asOf`. */
+export function isStaleActivity(
+  lastActivity: string | null | undefined,
+  asOf: string,
+  windowDays: number = STALE_ACTIVITY_DAYS
+): boolean {
+  if (!lastActivity) return true; // never seen any activity
+  return daysBetween(lastActivity, asOf) > windowDays;
+}
+
 /** True if the monthly statuses trigger the hard gate (-> score 1). */
 export function isMailingFail(
   monthly?: Record<string, { status: string }>
@@ -219,21 +267,24 @@ export type CriteriaScores = Partial<Record<CriterionId, number>>;
 /**
  * Итоговая оценка. Hard gate first: any failing mailing -> 1. Otherwise
  * Σ(score × weight ÷ 5) over the two criteria. Un-entered criteria count as
- * full marks (a chat with everything in order defaults to 100).
+ * full marks (a chat with everything in order defaults to 100). A missing
+ * greeting caps "Точность и полнота" at GREETING_ACCURACY_CAP.
  */
 export function computeOverall(
   scores: CriteriaScores,
   monthly?: Record<string, { status: string }>,
-  criteria: Criterion[] = CRITERIA
+  criteria: Criterion[] = CRITERIA,
+  greeting?: Greeting
 ): number {
   if (isMailingFail(monthly)) return FAIL_SCORE;
   let total = 0;
   for (const c of criteria) {
     const raw = scores[c.id];
-    const value =
+    let value =
       typeof raw === "number" && !Number.isNaN(raw)
         ? Math.max(0, Math.min(c.scaleMax, raw))
         : c.scaleMax;
+    if (c.id === "accuracy") value = cappedAccuracy(value, greeting);
     total += (value * c.weight) / c.scaleMax;
   }
   return Math.round(total * 100) / 100;

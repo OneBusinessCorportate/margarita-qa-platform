@@ -34,6 +34,7 @@ export async function PUT(
     accountant: body.accountant ?? null,
     scores: {
       criteria: body.scores?.criteria,
+      greeting: body.scores?.greeting,
       monthly: body.scores?.monthly,
       ai: body.scores?.ai,
     },

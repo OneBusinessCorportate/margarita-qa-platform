@@ -6,13 +6,26 @@ import {
   DAILY_CRITERIA,
   MONTHLY_CATEGORIES,
   PREV_STATUS_DEFAULT,
+  GREETING_ACCURACY_CAP,
   computeOverall,
+  daysBetween,
+  isStaleActivity,
   type CriteriaScores,
   type CriterionId,
+  type Greeting,
 } from "@/lib/scoring";
 import { predictEvaluation, toSnapshot, type AiModel } from "@/lib/ai";
 import type { Accountant, Chat, Evaluation, MonthlyStatus } from "@/lib/types";
 import BandChip from "./BandChip";
+
+/** Everything carried forward from the most recent check before the chosen date. */
+interface PrevCheck {
+  date: string;
+  monthly: Record<string, string>;
+  criteria: CriteriaScores;
+  greeting?: Greeting;
+  comment: string;
+}
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -58,6 +71,7 @@ export default function ScoringPanel({
   const [accFilter, setAccFilter] = useState("");
   const [onlyUnscored, setOnlyUnscored] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
+  const [hideStale, setHideStale] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [tgClient, setTgClient] = useState<TgClient>("a");
 
@@ -81,8 +95,9 @@ export default function ScoringPanel({
     return () => clearInterval(id);
   }, [router]);
 
-  // Previous status per chat per mailing = the status at the most recent
-  // evaluation BEFORE the selected date.
+  // The most recent check BEFORE the selected date — carried forward in full
+  // (mailing statuses, criteria, greeting, comment) so Margarita only changes
+  // what actually changed.
   const prevByChat = useMemo(() => {
     const latestBefore = new Map<string, Evaluation>();
     for (const e of evaluations) {
@@ -90,17 +105,41 @@ export default function ScoringPanel({
       const cur = latestBefore.get(e.chat_agr_no);
       if (!cur || e.checking_date > cur.checking_date) latestBefore.set(e.chat_agr_no, e);
     }
-    const out = new Map<string, Record<string, string>>();
+    const out = new Map<string, PrevCheck>();
     for (const [chatNo, e] of latestBefore) {
-      const rec: Record<string, string> = {};
+      const monthly: Record<string, string> = {};
       for (const cat of MONTHLY_CATEGORIES) {
         const s = e.scores.monthly?.[cat.id]?.status;
-        if (s) rec[cat.id] = s;
+        if (s) monthly[cat.id] = s;
       }
-      out.set(chatNo, rec);
+      out.set(chatNo, {
+        date: e.checking_date.slice(0, 10),
+        monthly,
+        criteria: e.scores.criteria ?? {},
+        greeting: e.scores.greeting,
+        comment: e.comment ?? "",
+      });
     }
     return out;
   }, [evaluations, date]);
+
+  // Last REAL chat activity per chat: the chat's own activity date (from the bot
+  // feed / import) or, failing that, the latest task touch. Evaluations don't
+  // count — checking a chat isn't the client/accountant being active in it.
+  const lastTaskByChat = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of taskActivity) {
+      if (!t.date) continue;
+      const cur = m.get(t.chat_agr_no);
+      if (!cur || t.date > cur) m.set(t.chat_agr_no, t.date);
+    }
+    return m;
+  }, [taskActivity]);
+
+  const lastActivityFor = useMemo(() => {
+    return (c: Chat): string | null =>
+      c.last_activity_date ?? lastTaskByChat.get(c.agr_no) ?? null;
+  }, [lastTaskByChat]);
 
   // Today's evaluations indexed by chat for the selected date.
   const evalForDate = useMemo(() => {
@@ -123,6 +162,7 @@ export default function ScoringPanel({
     return chats.filter((c) => {
       if (scope === "day" && !activeTodaySet.has(c.agr_no)) return false;
       if (activeOnly && c.status !== "Active") return false;
+      if (hideStale && isStaleActivity(lastActivityFor(c), date)) return false;
       if (accFilter && c.accountant !== accFilter) return false;
       if (onlyUnscored && evalForDate.has(c.agr_no)) return false;
       if (
@@ -134,7 +174,7 @@ export default function ScoringPanel({
         return false;
       return true;
     });
-  }, [chats, search, accFilter, onlyUnscored, activeOnly, evalForDate, scope, activeTodaySet]);
+  }, [chats, search, accFilter, onlyUnscored, activeOnly, hideStale, lastActivityFor, date, evalForDate, scope, activeTodaySet]);
 
   // Most problematic chats on top. Scored chats sort by Margarita's saved total;
   // un-scored ones are mixed in by the AI's predicted total.
@@ -142,7 +182,7 @@ export default function ScoringPanel({
     const scoreFor = (c: Chat): number => {
       const ev = evalForDate.get(c.agr_no);
       if (ev) return ev.total_score;
-      return predictEvaluation(c.accountant, prevByChat.get(c.agr_no) ?? {}, aiModel)
+      return predictEvaluation(c.accountant, prevByChat.get(c.agr_no)?.monthly ?? {}, aiModel)
         .total;
     };
     return [...visibleChats].sort(
@@ -227,6 +267,17 @@ export default function ScoringPanel({
           />
           Только активные
         </label>
+        <label
+          className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5"
+          title="Скрыть чаты без свежей активности — те, что давно «молчат», даже если статус ещё «Active»"
+        >
+          <input
+            type="checkbox"
+            checked={hideStale}
+            onChange={(e) => setHideStale(e.target.checked)}
+          />
+          Скрыть без активности
+        </label>
       </div>
 
       {/* Compact action bar — Telegram + refresh only. */}
@@ -272,21 +323,35 @@ export default function ScoringPanel({
         )}
       </div>
 
-      {/* Legend — explains the two lines per chat in plain words. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block rounded bg-indigo-100 text-indigo-700 font-medium px-1.5 py-0.5">
-            AI
+      {/* How to read the grid — each chat is exactly TWO lines. Spelled out so
+          the AI line and the editable line are never mistaken for extra rows. */}
+      <div className="card border-indigo-100 bg-indigo-50/40 p-3 text-sm text-gray-700">
+        <div className="font-medium text-gray-800 mb-1.5">
+          Каждый чат — это <span className="text-indigo-700">две строки</span>:
+        </div>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block rounded bg-indigo-100 text-indigo-700 font-semibold px-1.5 py-0.5">
+              🤖 AI
+            </span>
+            анализ системы — подсказка, <span className="text-gray-500">не сохраняется</span>
           </span>
-          подсказка — что предлагает система
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block rounded bg-blue-600 text-white font-medium px-1.5 py-0.5">
-            Вы
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block rounded bg-blue-600 text-white font-semibold px-1.5 py-0.5">
+              ✍️ Вы
+            </span>
+            ваша оценка — правьте и нажмите «Оценить»
           </span>
-          ваша оценка — её и сохраняем
-        </span>
-        <span>Самые проблемные чаты — сверху.</span>
+          <span className="inline-flex items-center gap-1.5 text-gray-500">
+            <span className="inline-block rounded bg-amber-100 text-amber-700 font-medium px-1.5 py-0.5">
+              нет активности
+            </span>
+            чат давно «молчит»
+          </span>
+        </div>
+        <div className="text-xs text-gray-500 mt-1.5">
+          Значения подставлены из прошлой проверки — измените только то, что изменилось. Самые проблемные чаты — сверху.
+        </div>
       </div>
 
       <div className="card">
@@ -302,6 +367,12 @@ export default function ScoringPanel({
                   {c.id === "accuracy" ? "Точн." : "СЛА"}
                 </th>
               ))}
+              <th
+                className="text-center"
+                title="Приветствие: бухгалтер поздоровался / ответил на приветствие клиента. Если нет — «Точность и полнота» не выше 4 (не критично, но ошибка)."
+              >
+                Прив.
+              </th>
               {MONTHLY_CATEGORIES.map((c) => (
                 <th key={c.id} title={c.name}>
                   {c.shortName}
@@ -316,7 +387,7 @@ export default function ScoringPanel({
           <tbody>
             {sortedChats.length === 0 && (
               <tr>
-                <td colSpan={12} className="text-center text-gray-500 py-6">
+                <td colSpan={13} className="text-center text-gray-500 py-6">
                   {scope === "day" ? (
                     <div className="space-y-2">
                       <div>За {date} нет активных чатов (оценок/задач).</div>
@@ -347,7 +418,8 @@ export default function ScoringPanel({
                 accountants={accountants}
                 date={date}
                 existing={evalForDate.get(chat.agr_no) ?? null}
-                prevStatuses={prevByChat.get(chat.agr_no) ?? {}}
+                prev={prevByChat.get(chat.agr_no) ?? null}
+                lastActivity={lastActivityFor(chat)}
                 aiModel={aiModel}
                 tgClient={tgClient}
                 onSaved={onSaved}
@@ -371,7 +443,8 @@ function ChatScoreRow({
   accountants,
   date,
   existing,
-  prevStatuses,
+  prev,
+  lastActivity,
   aiModel,
   tgClient,
   onSaved,
@@ -380,31 +453,44 @@ function ChatScoreRow({
   accountants: Accountant[];
   date: string;
   existing: Evaluation | null;
-  prevStatuses: Record<string, string>;
+  prev: PrevCheck | null;
+  lastActivity: string | null;
   aiModel: AiModel;
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
 }) {
+  const prevStatuses = prev?.monthly ?? {};
+  // No saved check for this date yet, but a previous one exists → pre-fill from
+  // it so Margarita only edits what changed.
+  const prefilledFromPrev = !existing && !!prev;
+
   const [accountant, setAccountant] = useState(
     existing?.accountant ?? chat.accountant ?? ""
   );
   const [criteria, setCriteria] = useState<CriteriaScores>(
-    existing?.scores.criteria ?? {}
+    existing?.scores.criteria ?? prev?.criteria ?? {}
+  );
+  const [greeting, setGreeting] = useState<Greeting | "">(
+    existing?.scores.greeting ?? prev?.greeting ?? ""
   );
   const [monthly, setMonthly] = useState<Record<string, MonthlyStatus>>(() => {
     const base = emptyMonthly();
     if (existing?.scores.monthly) return { ...base, ...existing.scores.monthly };
     for (const c of MONTHLY_CATEGORIES) {
-      const prev = prevStatuses[c.id];
-      if (prev) base[c.id] = { status: prev, prev };
+      const p = prevStatuses[c.id];
+      if (p) base[c.id] = { status: p, prev: p };
     }
     return base;
   });
-  const [comment, setComment] = useState(existing?.comment ?? "");
+  const [comment, setComment] = useState(existing?.comment ?? prev?.comment ?? "");
   const [override, setOverride] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
+
+  const greetingVal: Greeting | undefined = greeting === "" ? undefined : greeting;
+  const staleDays = lastActivity ? daysBetween(lastActivity, date) : null;
+  const isStale = isStaleActivity(lastActivity, date);
 
   // AI's row: same fields, predicted from the learned model. Re-predicts when
   // the accountant changes (the model is per-accountant).
@@ -416,11 +502,13 @@ function ChatScoreRow({
   const total =
     override.trim() !== "" && !Number.isNaN(Number(override))
       ? Number(override)
-      : computeOverall(criteria, monthly);
+      : computeOverall(criteria, monthly, DAILY_CRITERIA, greetingVal);
 
   const touched =
     Boolean(savedId) ||
+    prefilledFromPrev ||
     DAILY_CRITERIA.some((c) => typeof criteria[c.id] === "number") ||
+    greeting !== "" ||
     override.trim() !== "";
 
   const setCrit = (id: CriterionId, v: string) =>
@@ -456,7 +544,12 @@ function ChatScoreRow({
       checking_date: date,
       accountant: accountant || null,
       // The AI snapshot is stored with her answer — the training pair.
-      scores: { criteria, monthly: monthlyWithPrev, ai: toSnapshot(ai) },
+      scores: {
+        criteria,
+        greeting: greetingVal,
+        monthly: monthlyWithPrev,
+        ai: toSnapshot(ai),
+      },
       comment: comment || null,
       total_override: override.trim() !== "" ? Number(override) : null,
     };
@@ -519,6 +612,21 @@ function ChatScoreRow({
           <div className="text-gray-600 text-xs mt-0.5 truncate max-w-[210px]" title={chat.chat_name}>
             {chat.chat_name}
           </div>
+          {/* Last REAL activity — a chat can read "Active" yet have gone quiet
+              days ago. Flag that so it isn't mistaken for a live chat. */}
+          <div className="text-xs mt-1">
+            {isStale ? (
+              <span
+                className="inline-block rounded bg-amber-100 text-amber-700 font-medium px-1.5 py-0.5"
+                title="Чат давно без активности — не путать с живым «активным» чатом"
+              >
+                нет активности
+                {lastActivity ? ` ${staleDays} дн. · с ${lastActivity}` : ""}
+              </span>
+            ) : (
+              <span className="text-gray-400">активность: {lastActivity}</span>
+            )}
+          </div>
           <select
             className="input w-full text-xs mt-1"
             value={accountant}
@@ -531,13 +639,21 @@ function ChatScoreRow({
               </option>
             ))}
           </select>
+          {prefilledFromPrev && !savedId && (
+            <div
+              className="text-[10px] text-gray-400 mt-1"
+              title="Значения перенесены из прошлой проверки — измените только то, что изменилось"
+            >
+              ← перенесено с {prev?.date}
+            </div>
+          )}
         </td>
         <td className={`${aiCell} text-center`}>
           <span
-            className="inline-block rounded bg-indigo-100 text-indigo-700 font-semibold text-[11px] px-1.5 py-0.5"
+            className="inline-block rounded bg-indigo-100 text-indigo-700 font-semibold text-[11px] px-1.5 py-0.5 whitespace-nowrap"
             title={ai.note}
           >
-            AI
+            🤖 AI
           </span>
         </td>
         {DAILY_CRITERIA.map((c) => (
@@ -545,6 +661,8 @@ function ChatScoreRow({
             {ai.criteria[c.id]}
           </td>
         ))}
+        {/* Greeting is read from the chat text by Margarita — AI doesn't judge it. */}
+        <td className={`${aiCell} text-center text-gray-400`}>—</td>
         {MONTHLY_CATEGORIES.map((c) => (
           <td key={c.id} className={`${aiCell} text-xs`}>
             <span className="block truncate max-w-[120px]" title={ai.monthly[c.id]?.status}>
@@ -575,8 +693,8 @@ function ChatScoreRow({
       {/* ---- Your editable line ---- */}
       <tr className={savedId ? "" : "bg-blue-50/40"}>
         <td className={`${youCell} text-center`}>
-          <span className="inline-block rounded bg-blue-600 text-white font-semibold text-[11px] px-1.5 py-0.5">
-            Вы
+          <span className="inline-block rounded bg-blue-600 text-white font-semibold text-[11px] px-1.5 py-0.5 whitespace-nowrap">
+            ✍️ Вы
           </span>
         </td>
         {DAILY_CRITERIA.map((c) => (
@@ -596,6 +714,24 @@ function ChatScoreRow({
             </select>
           </td>
         ))}
+        {/* Greeting toggle — no greeting caps Точность at 4 (small, non-critical). */}
+        <td className={`${youCell} text-center`}>
+          <select
+            className="input w-[52px]"
+            value={greeting}
+            onChange={(e) => setGreeting(e.target.value as Greeting | "")}
+            title="Поздоровался / ответил на приветствие? Если «нет» — Точность не выше 4."
+          >
+            <option value="">—</option>
+            <option value="yes">✓</option>
+            <option value="no">✗</option>
+          </select>
+          {greeting === "no" && (
+            <div className="text-[10px] text-amber-600 leading-tight mt-0.5">
+              Точн. ≤ {GREETING_ACCURACY_CAP}
+            </div>
+          )}
+        </td>
         {MONTHLY_CATEGORIES.map((c) => (
           <td key={c.id} className={youCell}>
             <select

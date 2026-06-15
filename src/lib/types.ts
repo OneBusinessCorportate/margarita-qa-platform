@@ -1,4 +1,4 @@
-import type { CriteriaScores, QualityBand } from "./scoring";
+import type { CriteriaScores, Greeting, QualityBand } from "./scoring";
 
 export type ChatStatus = "Active" | "Inactive";
 
@@ -15,6 +15,12 @@ export interface Chat {
   manager: string | null;
   debts: string | null; // amount or "нет долга" / "--"
   created_date: string | null; // Date of chat creation
+  /**
+   * Date of the last real activity in the chat (last client/accountant message),
+   * sourced from the Telegram bot feed / import. Used to tell a genuinely active
+   * chat from one whose status flag still says "Active" but went quiet days ago.
+   */
+  last_activity_date?: string | null;
 }
 
 export type AccountantRole = "accountant" | "other-specialist" | "dismissed";
@@ -33,6 +39,8 @@ export interface MonthlyStatus {
 
 export interface EvaluationScores {
   criteria?: CriteriaScores; // accuracy, sla (+ optional fcr, clarity)
+  /** Did the accountant greet / answer the greeting? Missing → accuracy ≤ 4. */
+  greeting?: Greeting;
   monthly?: Record<string, MonthlyStatus>; // keyed by MonthlyCategory.id
   /** AI's predicted row at save time — the training pair for the learner. */
   ai?: {

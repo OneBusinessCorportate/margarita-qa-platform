@@ -36,6 +36,7 @@ function chat(
   accountant: string | null,
   debts: string,
   link: string,
+  last_activity_date: string | null = "2026-06-11",
   status: "Active" | "Inactive" = "Active"
 ): Chat {
   return {
@@ -51,13 +52,14 @@ function chat(
     manager: accountant,
     debts,
     created_date: "2025-01-01",
+    last_activity_date,
   };
 }
 
 export const seedChats: Chat[] = [
   chat("59", "ИП Фролкин Владимир N B-3932 RU", "23357581", "Գայանե", "30000", "https://web.telegram.org/a/#-4983666095"),
   chat("23", "ИП Дмитрий Родичев N-23 RU", "40113062", "Լիլիթ", "нет долга", "https://web.telegram.org/a/#-4014170511"),
-  chat("19", "ИП Виталий Самарцев N-19 RU", "71064197", "Գայանե", "нет долга", "https://web.telegram.org/a/#-4018402264"),
+  chat("19", "ИП Виталий Самарцев N-19 RU", "71064197", "Գայանե", "нет долга", "https://web.telegram.org/a/#-4018402264", "2026-06-03"),
   chat("33", "ИП Тимофей Кабанов N-33 RU", "72961955", "Լիլիթ", "нет долга", "https://web.telegram.org/a/#-4199207502"),
   chat("11", "Мишт Тей OOO N-11 RU", "40130903", "Նաիրա", "нет долга", "https://web.telegram.org/a/#-4082607480"),
   chat("100", "ИП Кирилл Оболдин N-1101 RU", "10000100", "Լիլիթ", "24000", "https://web.telegram.org/a/#-4086698328"),
@@ -67,8 +69,8 @@ export const seedChats: Chat[] = [
   chat("220", "ИП Никита Капишников N-220 RU", "10000220", "Ավագ", "72000", "https://web.telegram.org/a/#-4194805297"),
   chat("336", "ИП Сурбине Арушанян N-336 RU", "10000336", "Հասմիկ", "нет долга", "https://web.telegram.org/a/#-4061368619"),
   chat("368", "Норк Вью Кондоминиум N-368 RU", "10000368", "Նաիրա", "30000", "https://web.telegram.org/a/#-4520708494"),
-  chat("510", "ИП Андрей Голубков N-510 RU", "10000510", "Լիլիթ Ք․", "нет долга", "https://web.telegram.org/a/#-4175286619"),
-  chat("700", "ООО Вектор N-700 RU", "10000700", null, "нет долга", "https://web.telegram.org/a/#-4500000700"),
+  chat("510", "ИП Андрей Голубков N-510 RU", "10000510", "Լիլիթ Ք․", "нет долга", "https://web.telegram.org/a/#-4175286619", "2026-05-28"),
+  chat("700", "ООО Вектор N-700 RU", "10000700", null, "нет долга", "https://web.telegram.org/a/#-4500000700", null),
 ];
 
 const M = (status: string, prev = "--") => ({ status, prev });

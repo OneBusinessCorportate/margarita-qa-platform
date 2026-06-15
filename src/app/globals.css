@@ -48,18 +48,22 @@ table.qa.sticky-head thead th.corner {
 
 /* Paired-rows grid: each chat is two <tr> (AI suggestion + your input). */
 /* Drop the per-row dividers; one thick rule opens each chat group instead, so
-   the AI line and your line clearly read as a single block. */
+   the AI line and your line clearly read as a single block — never as 3 rows. */
 table.qa.pairs td {
   border-bottom: 0;
   padding: 4px 6px;
   vertical-align: middle;
 }
+/* A clear gap + heavy rule separates one chat from the next. */
 table.qa.pairs tr.chat-start > td {
-  border-top: 2px solid #cbd5e1;
+  border-top: 3px solid #c7d2fe;
+  padding-top: 8px;
 }
-/* The chat-info cell spans both rows and gets a divider from the scores. */
+/* The chat-info cell spans both rows; a coloured left accent + right divider
+   visually bind its two lines (AI + you) into one block. */
 table.qa.pairs td.chat-info {
   border-right: 1px solid #e5e7eb;
+  border-left: 4px solid #818cf8;
 }
 table.qa.pairs tr:hover td {
   background: transparent;
