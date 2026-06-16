@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   DAILY_CRITERIA,
@@ -72,11 +72,15 @@ export default function ScoringPanel({
   const [date, setDate] = useState(latestActivityDate ?? today());
   const [scope, setScope] = useState<Scope>("all");
   const [search, setSearch] = useState("");
-  const [accFilter, setAccFilter] = useState("");
+  const [accFilters, setAccFilters] = useState<string[]>([]);
   const [onlyUnscored, setOnlyUnscored] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
   const [hideStale, setHideStale] = useState(false);
   const [tgClient, setTgClient] = useState<TgClient>("a");
+  // Render only a window of chats at a time so the page stays fast; "load more"
+  // grows it. Reset whenever the filtered set changes (see effect below).
+  const PAGE = 30;
+  const [visibleCount, setVisibleCount] = useState(PAGE);
 
   // Restore a previously-chosen Telegram web client, if any.
   useEffect(() => {
@@ -198,7 +202,8 @@ export default function ScoringPanel({
       if (scope === "day" && !activeTodaySet.has(c.agr_no)) return false;
       if (activeOnly && c.status !== "Active") return false;
       if (hideStale && isStaleActivity(lastActivityFor(c), nowISO)) return false;
-      if (accFilter && c.accountant !== accFilter) return false;
+      if (accFilters.length && !(c.accountant && accFilters.includes(c.accountant)))
+        return false;
       if (onlyUnscored && evalForDate.has(c.agr_no)) return false;
       if (
         n &&
@@ -209,7 +214,7 @@ export default function ScoringPanel({
         return false;
       return true;
     });
-  }, [chats, search, accFilter, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet]);
+  }, [chats, search, accFilters, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet]);
 
   // Most problematic chats on top. Scored chats sort by Margarita's saved total;
   // un-scored ones are mixed in by the AI's predicted total.
@@ -224,6 +229,14 @@ export default function ScoringPanel({
       (a, b) => scoreFor(a) - scoreFor(b) || a.agr_no.localeCompare(b.agr_no)
     );
   }, [visibleChats, evalForDate, prevByChat, aiModel]);
+
+  // Only render a window of the sorted list; "load more" grows it.
+  const shownChats = sortedChats.slice(0, visibleCount);
+
+  // When the filtered set changes, snap back to the first page.
+  useEffect(() => {
+    setVisibleCount(PAGE);
+  }, [search, accFilters, onlyUnscored, activeOnly, hideStale, scope, date]);
 
   function onSaved(saved: Evaluation) {
     setEvaluations((prev) => [saved, ...prev.filter((e) => e.id !== saved.id)]);
@@ -272,19 +285,12 @@ export default function ScoringPanel({
           />
         </div>
         <div className="space-y-1">
-          <label className="text-xs text-gray-500 block">Бухгалтер</label>
-          <select
-            className="input"
-            value={accFilter}
-            onChange={(e) => setAccFilter(e.target.value)}
-          >
-            <option value="">Все</option>
-            {accountants.map((a) => (
-              <option key={a.name} value={a.name}>
-                {a.name}
-              </option>
-            ))}
-          </select>
+          <label className="text-xs text-gray-500 block">Бухгалтеры</label>
+          <AccountantMultiSelect
+            accountants={accountants.map((a) => a.name)}
+            selected={accFilters}
+            onChange={setAccFilters}
+          />
         </div>
         <label className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5">
           <input
@@ -335,12 +341,12 @@ export default function ScoringPanel({
         </button>
       </div>
 
-      {/* Compact legend — each chat shows the accountant (AI + you) plus a
-          manager and a lawyer row. */}
+      {/* Compact legend. */}
       <p className="text-xs text-gray-500">
         Каждый чат: <span className="font-semibold text-indigo-700">🤖 AI</span> + ваша оценка
-        бухгалтера, затем строки <span className="font-semibold">👔 Менеджер</span> и{" "}
-        <span className="font-semibold">⚖️ Юрист</span>. Значения перенесены из прошлой проверки —
+        бухгалтера. Внизу строки «+ добавить оценку» можно добавить{" "}
+        <span className="font-semibold">👔 Менеджера</span> или{" "}
+        <span className="font-semibold">⚖️ Юриста</span>. Значения перенесены из прошлой проверки —
         правьте изменившееся и жмите «Оценить». Проблемные чаты — сверху.
       </p>
 
@@ -401,41 +407,39 @@ export default function ScoringPanel({
                 </td>
               </tr>
             )}
-            {sortedChats.map((chat) => (
-              <Fragment key={`${chat.agr_no}|${date}`}>
-                <ChatScoreRow
-                  chat={chat}
-                  accountants={accountants}
-                  date={date}
-                  existing={evalByChatRole.get(`${chat.agr_no}|accountant`) ?? null}
-                  prev={prevByChat.get(chat.agr_no) ?? null}
-                  lastActivity={lastActivityFor(chat)}
-                  asOf={nowISO}
-                  aiModel={aiModel}
-                  tgClient={tgClient}
-                  onSaved={onSaved}
-                />
-                <RegRoleRow
-                  chat={chat}
-                  role="manager"
-                  date={date}
-                  people={managers}
-                  existing={evalByChatRole.get(`${chat.agr_no}|manager`) ?? null}
-                  onSaved={onSaved}
-                />
-                <RegRoleRow
-                  chat={chat}
-                  role="lawyer"
-                  date={date}
-                  people={lawyers}
-                  existing={evalByChatRole.get(`${chat.agr_no}|lawyer`) ?? null}
-                  onSaved={onSaved}
-                />
-              </Fragment>
+            {shownChats.map((chat) => (
+              <ChatGroup
+                key={`${chat.agr_no}|${date}`}
+                chat={chat}
+                accountants={accountants}
+                date={date}
+                managers={managers}
+                lawyers={lawyers}
+                accountantEval={evalByChatRole.get(`${chat.agr_no}|accountant`) ?? null}
+                managerEval={evalByChatRole.get(`${chat.agr_no}|manager`) ?? null}
+                lawyerEval={evalByChatRole.get(`${chat.agr_no}|lawyer`) ?? null}
+                prev={prevByChat.get(chat.agr_no) ?? null}
+                lastActivity={lastActivityFor(chat)}
+                asOf={nowISO}
+                aiModel={aiModel}
+                tgClient={tgClient}
+                onSaved={onSaved}
+              />
             ))}
           </tbody>
         </table>
       </div>
+
+      {sortedChats.length > visibleCount && (
+        <div className="flex justify-center">
+          <button
+            className="btn-secondary"
+            onClick={() => setVisibleCount((n) => n + PAGE)}
+          >
+            Показать ещё чаты ({sortedChats.length - visibleCount})
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -598,10 +602,19 @@ function ChatScoreRow({
       <tr className="chat-start">
         <td
           rowSpan={2}
-          className="chat-info sticky left-0 z-10 bg-white align-top min-w-[210px]"
+          className="chat-info sticky left-0 z-10 bg-white align-top min-w-[280px] max-w-[340px]"
         >
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-gray-900">№ {chat.agr_no}</span>
+          {/* № + chat name + link, all on one line (name truncates). */}
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="font-semibold text-gray-900 whitespace-nowrap">
+              № {chat.agr_no}
+            </span>
+            <span
+              className="text-gray-600 text-xs truncate min-w-0 flex-1"
+              title={chat.chat_name}
+            >
+              {chat.chat_name}
+            </span>
             {chat.chat_link ? (
               <a
                 href={tgHref(chat.chat_link, tgClient)}
@@ -613,14 +626,11 @@ function ChatScoreRow({
                 Открыть ↗
               </a>
             ) : (
-              <span className="text-gray-400 text-xs">нет ссылки</span>
+              <span className="text-gray-400 text-xs whitespace-nowrap">нет ссылки</span>
             )}
             {chat.status !== "Active" && (
-              <span className="text-xs text-gray-400">(неактивен)</span>
+              <span className="text-xs text-gray-400 whitespace-nowrap">(неактивен)</span>
             )}
-          </div>
-          <div className="text-gray-600 text-xs mt-0.5 truncate max-w-[210px]" title={chat.chat_name}>
-            {chat.chat_name}
           </div>
           {/* Last REAL activity — a chat can read "Active" yet have gone quiet
               days ago. Flag that so it isn't mistaken for a live chat. */}
@@ -944,5 +954,180 @@ function RegRoleRow({
         {error && <span className="ml-1 text-[10px] text-red-600">{error}</span>}
       </td>
     </tr>
+  );
+}
+
+/**
+ * One chat's row group: the accountant rows always show; the manager and lawyer
+ * rows appear only once added (or when they already have a saved score). A thin
+ * "add person" row at the bottom lets Margarita pull in a manager or lawyer.
+ */
+function ChatGroup({
+  chat,
+  accountants,
+  date,
+  managers,
+  lawyers,
+  accountantEval,
+  managerEval,
+  lawyerEval,
+  prev,
+  lastActivity,
+  asOf,
+  aiModel,
+  tgClient,
+  onSaved,
+}: {
+  chat: Chat;
+  accountants: Accountant[];
+  date: string;
+  managers: string[];
+  lawyers: string[];
+  accountantEval: Evaluation | null;
+  managerEval: Evaluation | null;
+  lawyerEval: Evaluation | null;
+  prev: PrevCheck | null;
+  lastActivity: string | null;
+  asOf: string;
+  aiModel: AiModel;
+  tgClient: TgClient;
+  onSaved: (e: Evaluation) => void;
+}) {
+  const [showManager, setShowManager] = useState(Boolean(managerEval));
+  const [showLawyer, setShowLawyer] = useState(Boolean(lawyerEval));
+  const totalCols = DAILY_CRITERIA.length + MONTHLY_CATEGORIES.length + 7;
+
+  return (
+    <>
+      <ChatScoreRow
+        chat={chat}
+        accountants={accountants}
+        date={date}
+        existing={accountantEval}
+        prev={prev}
+        lastActivity={lastActivity}
+        asOf={asOf}
+        aiModel={aiModel}
+        tgClient={tgClient}
+        onSaved={onSaved}
+      />
+      {showManager && (
+        <RegRoleRow
+          chat={chat}
+          role="manager"
+          date={date}
+          people={managers}
+          existing={managerEval}
+          onSaved={onSaved}
+        />
+      )}
+      {showLawyer && (
+        <RegRoleRow
+          chat={chat}
+          role="lawyer"
+          date={date}
+          people={lawyers}
+          existing={lawyerEval}
+          onSaved={onSaved}
+        />
+      )}
+      {(!showManager || !showLawyer) && (
+        <tr>
+          <td colSpan={totalCols} className="py-1.5 pl-2 bg-gray-50/40">
+            <span className="text-xs text-gray-400 mr-2">+ добавить оценку:</span>
+            {!showManager && (
+              <button
+                className="btn-secondary !px-2 !py-0.5 text-xs mr-2"
+                onClick={() => setShowManager(true)}
+              >
+                👔 Менеджер
+              </button>
+            )}
+            {!showLawyer && (
+              <button
+                className="btn-secondary !px-2 !py-0.5 text-xs"
+                onClick={() => setShowLawyer(true)}
+              >
+                ⚖️ Юрист
+              </button>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+/** Filter control: pick any number of accountants via a checkbox dropdown. */
+function AccountantMultiSelect({
+  accountants,
+  selected,
+  onChange,
+}: {
+  accountants: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const toggle = (name: string) =>
+    onChange(
+      selected.includes(name)
+        ? selected.filter((x) => x !== name)
+        : [...selected, name]
+    );
+
+  const label =
+    selected.length === 0
+      ? "Все"
+      : selected.length === 1
+      ? selected[0]
+      : `${selected.length} выбрано`;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className="input flex items-center justify-between gap-2 min-w-[160px]"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="truncate">{label}</span>
+        <span className="text-gray-400">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-64 max-h-72 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg p-2">
+          {selected.length > 0 && (
+            <button
+              className="text-xs text-blue-600 mb-1 px-1"
+              onClick={() => onChange([])}
+            >
+              Сбросить (все)
+            </button>
+          )}
+          {accountants.map((name) => (
+            <label
+              key={name}
+              className="flex items-center gap-2 text-sm py-0.5 px-1 rounded hover:bg-gray-50 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(name)}
+                onChange={() => toggle(name)}
+              />
+              <span className="truncate">{name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
