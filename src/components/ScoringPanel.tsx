@@ -647,18 +647,14 @@ function ChatScoreRow({
               <span className="text-gray-400">активность: {lastActivity}</span>
             )}
           </div>
-          <select
-            className="input w-full text-xs mt-1"
-            value={accountant}
-            onChange={(e) => setAccountant(e.target.value)}
-          >
-            <option value="">— бухгалтер —</option>
-            {accountants.map((a) => (
-              <option key={a.name} value={a.name}>
-                {a.name}
-              </option>
-            ))}
-          </select>
+          <div className="mt-1">
+            <PersonPicker
+              value={accountant}
+              options={accountants.map((a) => a.name)}
+              placeholder="— бухгалтер —"
+              onChange={setAccountant}
+            />
+          </div>
           {prefilledFromPrev && !savedId && (
             <div
               className="text-[10px] text-gray-400 mt-1"
@@ -843,7 +839,6 @@ function RegRoleRow({
   // Span the accountant criteria columns (Точн/СЛА/Прив + 4 monthly) with the
   // three penalty inputs, so this role's row stays aligned with the grid.
   const critColSpan = DAILY_CRITERIA.length + 1 + MONTHLY_CATEGORIES.length;
-  const listId = `reg-people-${role}`;
 
   const setCount = (id: string, v: string) =>
     setCounts((c) => ({ ...c, [id]: v === "" ? 0 : Math.max(0, Number(v)) }));
@@ -885,21 +880,15 @@ function RegRoleRow({
   return (
     <tr className={savedId ? "" : "bg-violet-50/30"}>
       {/* Role + person — sits in the same sticky first column as the chat info. */}
-      <td className="sticky left-0 z-10 bg-white align-middle min-w-[210px]">
-        <div className="flex items-center gap-1.5">
-          <span title={info.label}>{info.icon}</span>
-          <input
-            list={listId}
-            className="input w-full text-xs"
-            placeholder={info.label.toLowerCase()}
+      <td className="sticky left-0 z-10 bg-white align-top min-w-[210px]">
+        <div className="flex items-start gap-1.5">
+          <span className="pt-1" title={info.label}>{info.icon}</span>
+          <PersonPicker
             value={person}
-            onChange={(e) => setPerson(e.target.value)}
+            options={people}
+            placeholder={`— ${info.label.toLowerCase()} —`}
+            onChange={setPerson}
           />
-          <datalist id={listId}>
-            {people.map((p) => (
-              <option key={p} value={p} />
-            ))}
-          </datalist>
         </div>
       </td>
       <td className="text-center align-middle">
@@ -1055,6 +1044,62 @@ function ChatGroup({
         </tr>
       )}
     </>
+  );
+}
+
+/**
+ * Person dropdown with a built-in "✏️ Другое…" option: pick a known name, or
+ * choose Другое to type a custom one (used for бухгалтер / менеджер / юрист).
+ */
+function PersonPicker({
+  value,
+  options,
+  placeholder,
+  onChange,
+}: {
+  value: string;
+  options: string[];
+  placeholder?: string;
+  onChange: (v: string) => void;
+}) {
+  // "Other" mode whenever the current value isn't one of the known options
+  // (covers a custom name loaded from a saved evaluation).
+  const inList = value !== "" && options.includes(value);
+  const [other, setOther] = useState(value !== "" && !inList);
+
+  return (
+    <div className="w-full space-y-1">
+      <select
+        className="input w-full text-xs"
+        value={other ? "__other__" : value}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "__other__") {
+            setOther(true);
+            onChange("");
+          } else {
+            setOther(false);
+            onChange(v);
+          }
+        }}
+      >
+        <option value="">{placeholder ?? "—"}</option>
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+        <option value="__other__">✏️ Другое…</option>
+      </select>
+      {other && (
+        <input
+          className="input w-full text-xs"
+          placeholder="впишите имя"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </div>
   );
 }
 
