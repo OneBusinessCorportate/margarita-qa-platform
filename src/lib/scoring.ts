@@ -375,6 +375,32 @@ export function schemeInfo(id: SchemeId): SchemeInfo {
   return SCHEMES.find((s) => s.id === id) ?? SCHEMES[0];
 }
 
+// --- Per-chat evaluation roles ---------------------------------------------
+//
+// A chat is graded once per role per day. The accountant uses the accounting
+// chat model; the manager and lawyer both use the registration penalty model
+// (start 100, minus penalties) — per Margarita's spreadsheets (the lawyer has
+// no dedicated sheet yet, so it mirrors the manager standards).
+
+export type EvalRole = "accountant" | "manager" | "lawyer";
+
+export interface RoleInfo {
+  id: EvalRole;
+  label: string;
+  icon: string;
+  scheme: SchemeId;
+}
+
+export const EVAL_ROLES: RoleInfo[] = [
+  { id: "accountant", label: "Бухгалтер", icon: "🧮", scheme: "accounting" },
+  { id: "manager", label: "Менеджер", icon: "👔", scheme: "registration" },
+  { id: "lawyer", label: "Юрист", icon: "⚖️", scheme: "registration" },
+];
+
+export function roleInfo(id: EvalRole): RoleInfo {
+  return EVAL_ROLES.find((r) => r.id === id) ?? EVAL_ROLES[0];
+}
+
 // --- Registration department — weekly penalty model ------------------------
 //
 // "Финансовая сводка" variant (Margarita, June 2026): the manager starts the

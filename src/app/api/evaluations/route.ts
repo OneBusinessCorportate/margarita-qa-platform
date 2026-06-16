@@ -25,10 +25,13 @@ function parseInput(body: any): NewEvaluationInput | null {
     typeof body.period === "string" && body.period
       ? body.period
       : checking_date.slice(0, 7).replace("-", "");
+  const role: "accountant" | "manager" | "lawyer" =
+    body.role === "manager" || body.role === "lawyer" ? body.role : "accountant";
   return {
     chat_agr_no: body.chat_agr_no,
     period,
     checking_date,
+    role,
     accountant: body.accountant ?? null,
     scores: {
       scheme: body.scores?.scheme,

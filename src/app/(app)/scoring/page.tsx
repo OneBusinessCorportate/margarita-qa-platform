@@ -22,8 +22,11 @@ export default async function ScoringPage() {
     activityDates.length > 0 ? activityDates.sort().at(-1)! : null;
 
   // Re-train the AI on every load from the full evaluation history in the DB —
-  // each saved Margarita row is a fresh training example.
-  const aiModel = trainAiModel(evaluations);
+  // each saved Margarita row is a fresh training example. Only accountant rows
+  // feed the accounting model; manager/lawyer rows use a different scheme.
+  const aiModel = trainAiModel(
+    evaluations.filter((e) => (e.role ?? "accountant") === "accountant")
+  );
 
   return (
     <div className="space-y-4">

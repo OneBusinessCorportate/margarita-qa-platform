@@ -7,11 +7,15 @@ import {
   MONTHLY_CATEGORIES,
   PREV_STATUS_DEFAULT,
   GREETING_ACCURACY_CAP,
+  EVAL_ROLES,
+  REGISTRATION_PENALTIES,
   computeOverall,
+  computeRegistrationScore,
   daysBetween,
   isStaleActivity,
   type CriteriaScores,
   type CriterionId,
+  type EvalRole,
   type Greeting,
 } from "@/lib/scoring";
 import { predictEvaluation, toSnapshot, type AiModel } from "@/lib/ai";
@@ -65,6 +69,7 @@ export default function ScoringPanel({
 }) {
   const router = useRouter();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
+  const [role, setRole] = useState<EvalRole>("accountant");
   const [date, setDate] = useState(latestActivityDate ?? today());
   const [scope, setScope] = useState<Scope>("all");
   const [search, setSearch] = useState("");
@@ -93,6 +98,7 @@ export default function ScoringPanel({
   const prevByChat = useMemo(() => {
     const latestBefore = new Map<string, Evaluation>();
     for (const e of evaluations) {
+      if ((e.role ?? "accountant") !== "accountant") continue;
       if (e.checking_date.slice(0, 10) >= date) continue;
       const cur = latestBefore.get(e.chat_agr_no);
       if (!cur || e.checking_date > cur.checking_date) latestBefore.set(e.chat_agr_no, e);
@@ -139,14 +145,34 @@ export default function ScoringPanel({
   // back-filling an earlier date.
   const nowISO = useMemo(() => today(), []);
 
-  // Today's evaluations indexed by chat for the selected date.
+  // The current role's evaluations on the selected date, indexed by chat.
   const evalForDate = useMemo(() => {
     const m = new Map<string, Evaluation>();
     for (const e of evaluations) {
+      if ((e.role ?? "accountant") !== role) continue;
       if (e.checking_date.slice(0, 10) === date) m.set(e.chat_agr_no, e);
     }
     return m;
-  }, [evaluations, date]);
+  }, [evaluations, date, role]);
+
+  // People suggestions for the manager / lawyer pickers. Managers come from the
+  // chats' own manager field + non-accountant specialists; both grow from names
+  // already used in saved role-evaluations.
+  const managers = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of chats) if (c.manager) s.add(c.manager);
+    for (const a of accountants) if (a.role !== "accountant") s.add(a.name);
+    for (const e of evaluations)
+      if (e.role === "manager" && e.accountant) s.add(e.accountant);
+    return [...s].sort();
+  }, [chats, accountants, evaluations]);
+
+  const lawyers = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of evaluations)
+      if (e.role === "lawyer" && e.accountant) s.add(e.accountant);
+    return [...s].sort();
+  }, [evaluations]);
 
   // Chats with activity on the selected date: an evaluation or a task that day.
   const activeTodaySet = useMemo(() => {
@@ -180,13 +206,17 @@ export default function ScoringPanel({
     const scoreFor = (c: Chat): number => {
       const ev = evalForDate.get(c.agr_no);
       if (ev) return ev.total_score;
+      // Unscored: the accountant view mixes in the AI's predicted total so
+      // likely-problem chats float up; manager/lawyer have no model, so an
+      // unscored row sits at the top (start 100) but below any low real score.
+      if (role !== "accountant") return 100;
       return predictEvaluation(c.accountant, prevByChat.get(c.agr_no)?.monthly ?? {}, aiModel)
         .total;
     };
     return [...visibleChats].sort(
       (a, b) => scoreFor(a) - scoreFor(b) || a.agr_no.localeCompare(b.agr_no)
     );
-  }, [visibleChats, evalForDate, prevByChat, aiModel]);
+  }, [visibleChats, evalForDate, prevByChat, aiModel, role]);
 
   function onSaved(saved: Evaluation) {
     setEvaluations((prev) => [saved, ...prev.filter((e) => e.id !== saved.id)]);
@@ -194,8 +224,23 @@ export default function ScoringPanel({
 
   return (
     <div className="space-y-3">
-      {/* Scope toggle */}
+      {/* Role switcher — score each chat for the бухгалтер, менеджер and юрист. */}
       <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+        {EVAL_ROLES.map((r) => (
+          <button
+            key={r.id}
+            onClick={() => setRole(r.id)}
+            className={`px-4 py-1.5 font-medium border-l first:border-l-0 border-gray-300 ${
+              role === r.id ? "bg-indigo-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            {r.icon} {r.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Scope toggle */}
+      <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm ml-2">
         <button
           onClick={() => setScope("day")}
           className={`px-3 py-1.5 font-medium ${
@@ -298,6 +343,8 @@ export default function ScoringPanel({
         </button>
       </div>
 
+      {role === "accountant" ? (
+      <>
       {/* One compact legend line — no help card. */}
       <p className="text-xs text-gray-500">
         Две строки на чат: <span className="font-semibold text-indigo-700">🤖 AI</span> — подсказка,{" "}
@@ -380,6 +427,55 @@ export default function ScoringPanel({
           </tbody>
         </table>
       </div>
+      </>
+      ) : (
+        <div className="card">
+          <table className="qa sticky-head">
+            <thead>
+              <tr>
+                <th className="corner sticky left-0 bg-gray-100 min-w-[200px]">
+                  № / Чат / {role === "manager" ? "Менеджер" : "Юрист"}
+                </th>
+                {REGISTRATION_PENALTIES.map((p) => (
+                  <th key={p.id} className="text-center" title={`${p.name} (${p.points})`}>
+                    {p.id === "critical" ? "Крит." : p.id === "speed" ? "Скор." : "ОС"}
+                    <div className="text-[10px] font-normal text-gray-400">{p.points}</div>
+                  </th>
+                ))}
+                <th className="text-center">Оценка</th>
+                <th>Кач-во</th>
+                <th className="w-full">Коммент.</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedChats.length === 0 && (
+                <tr>
+                  <td colSpan={REGISTRATION_PENALTIES.length + 5} className="text-center text-gray-500 py-6">
+                    {scope === "day"
+                      ? `За ${date} нет активных чатов.`
+                      : "Нет чатов по текущим фильтрам."}
+                  </td>
+                </tr>
+              )}
+              {sortedChats.map((chat) => (
+                <RegRoleRow
+                  key={`${chat.agr_no}|${date}|${role}`}
+                  chat={chat}
+                  role={role}
+                  date={date}
+                  people={role === "manager" ? managers : lawyers}
+                  existing={evalForDate.get(chat.agr_no) ?? null}
+                  lastActivity={lastActivityFor(chat)}
+                  asOf={nowISO}
+                  tgClient={tgClient}
+                  onSaved={onSaved}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -736,5 +832,169 @@ function ChatScoreRow({
         </td>
       </tr>
     </>
+  );
+}
+
+/**
+ * One editable row for the менеджер / юрист roles. Both grade a chat on the
+ * registration penalty model (start 100, minus penalties) — a single row, no AI
+ * suggestion. The graded person is stored in the evaluation's `accountant` field.
+ */
+function RegRoleRow({
+  chat,
+  role,
+  date,
+  people,
+  existing,
+  lastActivity,
+  asOf,
+  tgClient,
+  onSaved,
+}: {
+  chat: Chat;
+  role: EvalRole;
+  date: string;
+  people: string[];
+  existing: Evaluation | null;
+  lastActivity: string | null;
+  asOf: string;
+  tgClient: TgClient;
+  onSaved: (e: Evaluation) => void;
+}) {
+  const [person, setPerson] = useState(
+    existing?.accountant ?? (role === "manager" ? chat.manager ?? "" : "")
+  );
+  const [counts, setCounts] = useState<Record<string, number>>(
+    existing?.scores.registration ?? {}
+  );
+  const [comment, setComment] = useState(existing?.comment ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
+
+  const total = computeRegistrationScore(counts);
+  const touched =
+    Boolean(savedId) || REGISTRATION_PENALTIES.some((p) => (counts[p.id] ?? 0) > 0);
+  const isStale = isStaleActivity(lastActivity, asOf);
+  const staleDays = lastActivity ? daysBetween(lastActivity, asOf) : null;
+  const listId = `reg-people-${role}`;
+
+  const setCount = (id: string, v: string) =>
+    setCounts((c) => ({ ...c, [id]: v === "" ? 0 : Math.max(0, Number(v)) }));
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        savedId ? `/api/evaluations/${savedId}` : "/api/evaluations",
+        {
+          method: savedId ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_agr_no: chat.agr_no,
+            checking_date: date,
+            role,
+            accountant: person || null,
+            scores: { scheme: "registration", registration: counts },
+            comment: comment || null,
+          }),
+        }
+      );
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error || "Ошибка");
+        return;
+      }
+      const saved: Evaluation = await res.json();
+      setSavedId(saved.id);
+      onSaved(saved);
+    } catch {
+      setError("Сеть");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <tr className={savedId ? "" : "bg-blue-50/40"}>
+      <td className="chat-info sticky left-0 z-10 bg-white align-top min-w-[200px]">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-gray-900">№ {chat.agr_no}</span>
+          {chat.chat_link ? (
+            <a
+              href={tgHref(chat.chat_link, tgClient)}
+              target={tgWindowFor(chat.chat_link)}
+              rel="noreferrer"
+              className="text-blue-600 hover:underline text-xs whitespace-nowrap"
+            >
+              Открыть ↗
+            </a>
+          ) : (
+            <span className="text-gray-400 text-xs">нет ссылки</span>
+          )}
+        </div>
+        <div className="text-gray-600 text-xs mt-0.5 truncate max-w-[200px]" title={chat.chat_name}>
+          {chat.chat_name}
+        </div>
+        {isStale && (
+          <div className="text-xs mt-1">
+            <span className="inline-block rounded bg-amber-100 text-amber-700 font-medium px-1.5 py-0.5">
+              нет активности{lastActivity ? ` ${staleDays} дн.` : ""}
+            </span>
+          </div>
+        )}
+        <input
+          list={listId}
+          className="input w-full text-xs mt-1"
+          placeholder={role === "manager" ? "менеджер" : "юрист"}
+          value={person}
+          onChange={(e) => setPerson(e.target.value)}
+        />
+        <datalist id={listId}>
+          {people.map((p) => (
+            <option key={p} value={p} />
+          ))}
+        </datalist>
+      </td>
+      {REGISTRATION_PENALTIES.map((p) => (
+        <td key={p.id} className="text-center align-middle">
+          <input
+            type="number"
+            min={0}
+            className="input w-[52px] text-center"
+            placeholder="0"
+            value={counts[p.id] ?? ""}
+            onChange={(e) => setCount(p.id, e.target.value)}
+            title={`${p.name} — ${p.goal}`}
+          />
+        </td>
+      ))}
+      <td className="text-center align-middle tabular-nums font-semibold">
+        {touched ? total : <span className="text-gray-300">—</span>}
+      </td>
+      <td className="align-middle">
+        {touched ? <BandChip total={total} /> : <span className="text-gray-300">—</span>}
+      </td>
+      <td className="align-middle">
+        <input
+          className="input w-full"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="комментарий…"
+        />
+      </td>
+      <td className="whitespace-nowrap text-right align-middle">
+        <button
+          className="btn-primary !px-3 !py-1 text-xs"
+          onClick={save}
+          disabled={saving}
+        >
+          {saving ? "…" : savedId ? "Сохр." : "Оценить"}
+        </button>
+        {savedId && <span className="ml-1 text-[10px] text-green-600">✓</span>}
+        {error && <span className="ml-1 text-[10px] text-red-600">{error}</span>}
+      </td>
+    </tr>
   );
 }

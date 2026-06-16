@@ -1,4 +1,12 @@
-import type { CriteriaScores, Greeting, QualityBand, SchemeId } from "./scoring";
+import type {
+  CriteriaScores,
+  EvalRole,
+  Greeting,
+  QualityBand,
+  SchemeId,
+} from "./scoring";
+
+export type { EvalRole };
 
 export type ChatStatus = "Active" | "Inactive";
 
@@ -64,6 +72,9 @@ export interface Evaluation {
   chat_agr_no: string;
   period: string; // YYYYMM, e.g. "202603"
   checking_date: string; // ISO date
+  /** Which role this row grades. Absent ⇒ "accountant" (legacy rows). */
+  role: EvalRole;
+  /** The graded person's name (бухгалтер / менеджер / юрист). */
   accountant: string | null;
   scores: EvaluationScores;
   total_score: number; // Общая оценка 0..100
@@ -102,6 +113,7 @@ export interface NewEvaluationInput {
   chat_agr_no: string;
   period: string;
   checking_date: string;
+  role?: EvalRole; // defaults to "accountant"
   accountant: string | null;
   scores: EvaluationScores;
   comment: string | null;

@@ -31,6 +31,10 @@ export async function PUT(
         ? body.period
         : checking_date.slice(0, 7).replace("-", ""),
     checking_date,
+    role:
+      body.role === "manager" || body.role === "lawyer"
+        ? body.role
+        : "accountant",
     accountant: body.accountant ?? null,
     scores: {
       scheme: body.scores?.scheme,

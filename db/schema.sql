@@ -54,13 +54,20 @@ create table if not exists mqa_evaluations (
   chat_agr_no   text not null references mqa_chats(agr_no),
   period        text not null,                 -- e.g. '202603'
   checking_date date not null,
-  accountant    text,
+  -- Which role this row grades: accountant | manager | lawyer. A chat can be
+  -- scored once per role per checking_date. Legacy rows default to 'accountant'.
+  role          text not null default 'accountant'
+                check (role in ('accountant', 'manager', 'lawyer')),
+  accountant    text,                          -- graded person's name (any role)
   scores        jsonb not null default '{}'::jsonb, -- { criteria?, tasks? }
   total_score   double precision not null default 0, -- numeric would surface as string via PostgREST
   quality_band  text not null,
   comment       text,
   created_at    timestamptz not null default now()
 );
+
+-- If the table predates the per-role split, add the column in place.
+alter table mqa_evaluations add column if not exists role text not null default 'accountant';
 
 create index if not exists mqa_evaluations_checking_date_idx on mqa_evaluations (checking_date);
 create index if not exists mqa_evaluations_accountant_idx on mqa_evaluations (accountant);

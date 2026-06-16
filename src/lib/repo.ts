@@ -49,7 +49,11 @@ function overallFor(input: NewEvaluationInput): number {
 // surface as strings depending on driver/type. Normalize so downstream math
 // (report aggregation) always operates on real numbers.
 function normalizeEvaluation(row: any): Evaluation {
-  return { ...row, total_score: Number(row.total_score) } as Evaluation;
+  return {
+    ...row,
+    role: row.role ?? "accountant",
+    total_score: Number(row.total_score),
+  } as Evaluation;
 }
 
 // --- Chats -----------------------------------------------------------------
@@ -158,6 +162,7 @@ export async function createEvaluation(
     chat_agr_no: input.chat_agr_no,
     period: input.period,
     checking_date: input.checking_date,
+    role: input.role ?? "accountant",
     accountant: input.accountant,
     scores: input.scores,
     total_score: total,
@@ -189,6 +194,7 @@ export async function updateEvaluation(
     chat_agr_no: input.chat_agr_no,
     period: input.period,
     checking_date: input.checking_date,
+    role: input.role ?? "accountant",
     accountant: input.accountant,
     scores: input.scores,
     total_score: total,
@@ -429,5 +435,8 @@ export async function getReport(filters: ReportFilters): Promise<DailyReport> {
   ]);
   // Judge liveness as of the end of the reported range (or today for an open range).
   const asOf = filters.to ?? new Date().toISOString().slice(0, 10);
-  return buildReport(chats, evaluations, filters, tasks, asOf);
+  // The accounting report only counts accountant-role evaluations — manager and
+  // lawyer per-chat scores live in the same table but are reported separately.
+  const accountantEvals = evaluations.filter((e) => e.role === "accountant");
+  return buildReport(chats, accountantEvals, filters, tasks, asOf);
 }

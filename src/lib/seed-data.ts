@@ -109,6 +109,7 @@ function evalRow(
     chat_agr_no,
     period: checking_date.slice(0, 7).replace("-", ""),
     checking_date,
+    role: "accountant",
     accountant,
     scores: { criteria, monthly: monthlyMap },
     total_score: total,
