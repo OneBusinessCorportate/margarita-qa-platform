@@ -10,13 +10,17 @@ import {
   computeKpiScore,
   computeOverall,
   computeRegistrationScore,
+  isoWeekLabel,
+  mondayOf,
 } from "./scoring";
 import { buildReport, type DailyReport, type ReportFilters } from "./report";
 import type {
   Accountant,
   Chat,
   Evaluation,
+  ManagerEvaluation,
   NewEvaluationInput,
+  NewManagerEvaluationInput,
   NewTaskInput,
   NewViolationInput,
   Task,
@@ -206,6 +210,104 @@ export async function updateEvaluation(
   const rows = store().evaluations;
   const idx = rows.findIndex((e) => e.id === id);
   if (idx === -1) throw new Error(`Evaluation ${id} not found`);
+  rows[idx] = { ...rows[idx], ...patch };
+  return rows[idx];
+}
+
+// --- Manager evaluations (Регистрация — еженедельно) -----------------------
+
+function normalizeManagerEval(row: any): ManagerEvaluation {
+  return { ...row, total_score: Number(row.total_score) } as ManagerEvaluation;
+}
+
+function managerTotalFor(input: NewManagerEvaluationInput): number {
+  if (typeof input.total_override === "number") return input.total_override;
+  return computeRegistrationScore(input.scores.registration ?? {});
+}
+
+export async function listManagerEvaluations(
+  filters: { from?: string; to?: string; manager?: string } = {}
+): Promise<ManagerEvaluation[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    let q = sb.from(TABLES.managerEvaluations).select("*");
+    if (filters.from) q = q.gte("week_start", filters.from);
+    if (filters.to) q = q.lte("week_start", filters.to);
+    if (filters.manager) q = q.eq("manager", filters.manager);
+    const { data, error } = await q
+      .order("week_start", { ascending: false })
+      .limit(5000);
+    if (error) throw error;
+    return (data ?? []).map(normalizeManagerEval);
+  }
+  let rows = [...store().managerEvaluations].sort((a, b) =>
+    b.week_start.localeCompare(a.week_start)
+  );
+  if (filters.from) rows = rows.filter((r) => r.week_start >= filters.from!);
+  if (filters.to) rows = rows.filter((r) => r.week_start <= filters.to!);
+  if (filters.manager) rows = rows.filter((r) => r.manager === filters.manager);
+  return rows;
+}
+
+export async function createManagerEvaluation(
+  input: NewManagerEvaluationInput
+): Promise<ManagerEvaluation> {
+  const week_start = mondayOf(input.week_start);
+  const total = managerTotalFor(input);
+  const row: ManagerEvaluation = {
+    id: randomUUID(),
+    manager: input.manager,
+    week_start,
+    period: input.period ?? isoWeekLabel(week_start),
+    scores: input.scores,
+    total_score: total,
+    quality_band: bandFor(total),
+    comment: input.comment ?? null,
+    created_at: new Date().toISOString(),
+  };
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.managerEvaluations)
+      .insert(row)
+      .select()
+      .single();
+    if (error) throw error;
+    return normalizeManagerEval(data);
+  }
+  store().managerEvaluations.unshift(row);
+  return row;
+}
+
+export async function updateManagerEvaluation(
+  id: string,
+  input: NewManagerEvaluationInput
+): Promise<ManagerEvaluation> {
+  const week_start = mondayOf(input.week_start);
+  const total = managerTotalFor(input);
+  const patch = {
+    manager: input.manager,
+    week_start,
+    period: input.period ?? isoWeekLabel(week_start),
+    scores: input.scores,
+    total_score: total,
+    quality_band: bandFor(total),
+    comment: input.comment ?? null,
+  };
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.managerEvaluations)
+      .update(patch)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return normalizeManagerEval(data);
+  }
+  const rows = store().managerEvaluations;
+  const idx = rows.findIndex((r) => r.id === id);
+  if (idx === -1) throw new Error(`Manager evaluation ${id} not found`);
   rows[idx] = { ...rows[idx], ...patch };
   return rows[idx];
 }

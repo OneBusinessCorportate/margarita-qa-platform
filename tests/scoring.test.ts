@@ -21,7 +21,9 @@ import {
   daysBetween,
   isMailingFail,
   isStaleActivity,
+  isoWeekLabel,
   kpiBonusEligible,
+  mondayOf,
 } from "../src/lib/scoring";
 
 test("two criteria, weights 50/50 summing to 100", () => {
@@ -186,4 +188,17 @@ test("KPI bonus gate: service≥90, notifications=100, csat≥80", () => {
   assert.equal(kpiBonusEligible({ service: 89, notifications: 100, csat: 80 }), false);
   assert.equal(kpiBonusEligible({ service: 95, notifications: 90, csat: 100 }), false);
   assert.equal(kpiBonusEligible({ service: 100, notifications: 100, csat: 79 }), false);
+});
+
+test("mondayOf snaps any day to its ISO week Monday", () => {
+  assert.equal(mondayOf("2026-06-15"), "2026-06-15"); // Monday
+  assert.equal(mondayOf("2026-06-16"), "2026-06-15"); // Tuesday → Monday
+  assert.equal(mondayOf("2026-06-21"), "2026-06-15"); // Sunday → that Monday
+  assert.equal(mondayOf("2026-06-22"), "2026-06-22"); // next Monday
+});
+
+test("isoWeekLabel gives the ISO-8601 week", () => {
+  assert.equal(isoWeekLabel("2026-06-15"), "2026-W25");
+  // The Thursday rule: 2026-01-01 (Thu) is in week 1.
+  assert.equal(isoWeekLabel("2026-01-01"), "2026-W01");
 });

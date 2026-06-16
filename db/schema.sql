@@ -88,6 +88,29 @@ create table if not exists mqa_tasks (
 
 create index if not exists mqa_tasks_chat_idx on mqa_tasks (chat_agr_no);
 
+-- Registration-department weekly QA — graded per MANAGER, per WEEK on the
+-- `registration` scheme (start 100, minus penalty points). Separate from the
+-- chat-bound mqa_evaluations table.
+create table if not exists mqa_manager_evaluations (
+  id            text primary key default gen_random_uuid()::text,
+  manager       text not null,
+  week_start    date not null,                 -- Monday of the graded week
+  period        text not null,                 -- ISO week label, e.g. '2026-W25'
+  scores        jsonb not null default '{}'::jsonb, -- { registration: { critical, speed, feedback } }
+  total_score   double precision not null default 100,
+  quality_band  text not null,
+  comment       text,
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists mqa_manager_evals_week_idx
+  on mqa_manager_evaluations (week_start);
+create index if not exists mqa_manager_evals_manager_idx
+  on mqa_manager_evaluations (manager);
+-- One evaluation per manager per week.
+create unique index if not exists mqa_manager_evals_unique
+  on mqa_manager_evaluations (manager, week_start);
+
 -- App user accounts (credentials auth). Passwords are scrypt-hashed
 -- (see src/lib/users.ts): format 'scrypt$<saltHex>$<hashHex>'.
 create table if not exists mqa_users (
@@ -113,10 +136,11 @@ create table if not exists mqa_violations (
 );
 
 -- Lock down to service-role access only.
-alter table mqa_accountants enable row level security;
-alter table mqa_violations  enable row level security;
-alter table mqa_chats       enable row level security;
-alter table mqa_criteria    enable row level security;
-alter table mqa_evaluations enable row level security;
-alter table mqa_tasks       enable row level security;
-alter table mqa_users       enable row level security;
+alter table mqa_accountants         enable row level security;
+alter table mqa_violations          enable row level security;
+alter table mqa_chats               enable row level security;
+alter table mqa_criteria            enable row level security;
+alter table mqa_evaluations         enable row level security;
+alter table mqa_manager_evaluations enable row level security;
+alter table mqa_tasks               enable row level security;
+alter table mqa_users               enable row level security;

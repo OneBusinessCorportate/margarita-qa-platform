@@ -135,6 +135,32 @@ export interface NewViolationInput {
   note?: string | null;
 }
 
+/**
+ * Registration-department weekly QA — graded per MANAGER, per WEEK (not per
+ * chat), on the `registration` scheme: start 100, minus penalties.
+ */
+export interface ManagerEvaluation {
+  id: string;
+  manager: string;
+  week_start: string; // ISO Monday date, e.g. "2026-06-15"
+  period: string; // ISO week label, e.g. "2026-W25"
+  scores: { registration: Record<string, number> }; // incident counts by PenaltyRule.id
+  total_score: number; // 0..100
+  quality_band: QualityBand;
+  comment: string | null;
+  created_at: string;
+}
+
+export interface NewManagerEvaluationInput {
+  manager: string;
+  week_start: string;
+  period?: string;
+  scores: { registration: Record<string, number> };
+  comment?: string | null;
+  /** Optional manual override of the computed 0..100 total. */
+  total_override?: number | null;
+}
+
 export interface NewTaskInput {
   chat_agr_no: string;
   type?: "monthly" | "single";

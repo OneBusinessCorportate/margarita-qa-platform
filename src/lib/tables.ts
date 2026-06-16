@@ -11,6 +11,7 @@ export const TABLES = {
   chats: `${PREFIX}chats`,
   criteria: `${PREFIX}criteria`,
   evaluations: `${PREFIX}evaluations`,
+  managerEvaluations: `${PREFIX}manager_evaluations`,
   tasks: `${PREFIX}tasks`,
   users: `${PREFIX}users`,
   violations: `${PREFIX}violations`,

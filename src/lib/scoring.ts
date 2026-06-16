@@ -491,3 +491,30 @@ export function kpiBonusEligible(values: Record<string, number> = {}): boolean {
     (values.csat ?? 0) >= KPI_BONUS_THRESHOLDS.csat
   );
 }
+
+// --- Week helpers (registration journal is per-manager, per-week) -----------
+
+/** ISO date (YYYY-MM-DD) of the Monday of the week containing `iso`. */
+export function mondayOf(iso: string): string {
+  const d = new Date(iso.slice(0, 10) + "T00:00:00Z");
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  const day = d.getUTCDay(); // 0=Sun … 6=Sat
+  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return d.toISOString().slice(0, 10);
+}
+
+/** ISO-8601 week label, e.g. "2026-W25", for the week containing `iso`. */
+export function isoWeekLabel(iso: string): string {
+  const d = new Date(iso.slice(0, 10) + "T00:00:00Z");
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  // Move to the Thursday of this week — its year owns the ISO week number.
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + 3);
+  const year = d.getUTCFullYear();
+  // Thursday of ISO week 1 (the week containing Jan 4).
+  const firstThursday = new Date(Date.UTC(year, 0, 4));
+  firstThursday.setUTCDate(
+    firstThursday.getUTCDate() - ((firstThursday.getUTCDay() + 6) % 7) + 3
+  );
+  const week = 1 + Math.round((d.getTime() - firstThursday.getTime()) / 604_800_000);
+  return `${year}-W${String(week).padStart(2, "0")}`;
+}

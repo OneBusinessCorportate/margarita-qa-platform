@@ -1,6 +1,13 @@
 // In-memory store used when Supabase is not configured. Persists for the life
 // of the server process (resets on restart). Seeded from seed-data.ts.
-import type { Accountant, Chat, Evaluation, Task, Violation } from "./types";
+import type {
+  Accountant,
+  Chat,
+  Evaluation,
+  ManagerEvaluation,
+  Task,
+  Violation,
+} from "./types";
 import {
   seedAccountants,
   seedChats,
@@ -20,6 +27,7 @@ interface Store {
   tasks: Task[];
   users: StoredUser[];
   violations: Violation[];
+  managerEvaluations: ManagerEvaluation[];
 }
 
 // Use a global to survive module reloads in Next dev (HMR).
@@ -34,6 +42,7 @@ export function store(): Store {
       tasks: structuredClone(seedTasks),
       users: [],
       violations: [],
+      managerEvaluations: [],
     };
   }
   return g.__qaStore;
