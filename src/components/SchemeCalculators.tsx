@@ -88,6 +88,10 @@ function KpiCalculator() {
   const [values, setValues] = useState<Record<string, number>>({});
   const total = computeKpiScore(values);
   const eligible = kpiBonusEligible(values);
+  // An untouched form isn't a score of 0 — don't show a red "Критично" until at
+  // least one indicator is entered. (KPI starts at 0, unlike the 100-based
+  // registration model, so the empty state would otherwise look like a fail.)
+  const hasInput = Object.values(values).some((v) => v > 0);
   const set = (id: string, v: string) =>
     setValues((c) => ({
       ...c,
@@ -135,13 +139,19 @@ function KpiCalculator() {
       <div className="flex items-center justify-between border-t border-gray-200 pt-3">
         <span className="text-sm text-gray-500">Итоговая оценка</span>
         <span className="flex items-center gap-2">
-          <span className="text-2xl font-semibold tabular-nums">{total}</span>
-          <BandChip total={total} />
+          {hasInput ? (
+            <>
+              <span className="text-2xl font-semibold tabular-nums">{total}</span>
+              <BandChip total={total} />
+            </>
+          ) : (
+            <span className="text-2xl font-semibold tabular-nums text-gray-300">—</span>
+          )}
         </span>
       </div>
       <div
         className={`text-xs font-medium ${
-          eligible ? "text-green-600" : "text-gray-400"
+          hasInput && eligible ? "text-green-600" : "text-gray-400"
         }`}
       >
         {eligible
