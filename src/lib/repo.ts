@@ -4,7 +4,13 @@ import { randomUUID } from "crypto";
 import { getServiceClient } from "./supabase/server";
 import { store } from "./mock-store";
 import { TABLES } from "./tables";
-import { CRITERIA, bandFor, computeOverall } from "./scoring";
+import {
+  CRITERIA,
+  bandFor,
+  computeKpiScore,
+  computeOverall,
+  computeRegistrationScore,
+} from "./scoring";
 import { buildReport, type DailyReport, type ReportFilters } from "./report";
 import type {
   Accountant,
@@ -19,12 +25,20 @@ import type {
 
 function overallFor(input: NewEvaluationInput): number {
   if (typeof input.total_override === "number") return input.total_override;
-  return computeOverall(
-    input.scores.criteria ?? {},
-    input.scores.monthly,
-    CRITERIA,
-    input.scores.greeting
-  );
+  // Each scheme computes its 0..100 total differently; default is accounting.
+  switch (input.scores.scheme) {
+    case "registration":
+      return computeRegistrationScore(input.scores.registration ?? {});
+    case "accounting_kpi":
+      return computeKpiScore(input.scores.kpi ?? {});
+    default:
+      return computeOverall(
+        input.scores.criteria ?? {},
+        input.scores.monthly,
+        CRITERIA,
+        input.scores.greeting
+      );
+  }
 }
 
 // PostgREST returns `numeric`/`double precision` columns in ways that can

@@ -6,15 +6,22 @@ import {
   DAILY_CRITERIA,
   FAIL_SCORE,
   GREETING_ACCURACY_CAP,
+  KPI_CRITERIA,
   MONTHLY_CATEGORIES,
+  REGISTRATION_PENALTIES,
+  REGISTRATION_START,
+  SCHEMES,
   STALE_ACTIVITY_DAYS,
   bandFor,
   cappedAccuracy,
+  computeKpiScore,
   computeOverall,
+  computeRegistrationScore,
   computeWeightedTotal,
   daysBetween,
   isMailingFail,
   isStaleActivity,
+  kpiBonusEligible,
 } from "../src/lib/scoring";
 
 test("two criteria, weights 50/50 summing to 100", () => {
@@ -131,4 +138,52 @@ test("isStaleActivity flags chats quiet longer than the window", () => {
   assert.equal(isStaleActivity("2026-06-11", asOf), 4 > STALE_ACTIVITY_DAYS); // 4 days
   assert.equal(isStaleActivity("2026-05-28", asOf), true); // weeks
   assert.equal(isStaleActivity(null, asOf), true); // never any activity
+});
+
+// --- Alternate schemes -----------------------------------------------------
+
+test("three evaluation schemes are registered", () => {
+  assert.deepEqual(SCHEMES.map((s) => s.id), [
+    "accounting",
+    "accounting_kpi",
+    "registration",
+  ]);
+});
+
+test("registration: start 100, subtract penalty points per incident", () => {
+  const byId = Object.fromEntries(REGISTRATION_PENALTIES.map((p) => [p.id, p]));
+  assert.equal(REGISTRATION_START, 100);
+  assert.equal(byId.critical.points, -40);
+  assert.equal(byId.speed.points, -50);
+  assert.equal(byId.feedback.points, -10);
+  // No incidents → full 100.
+  assert.equal(computeRegistrationScore({}), 100);
+  // One critical (−40) → 60 (Плохо).
+  assert.equal(computeRegistrationScore({ critical: 1 }), 60);
+  assert.equal(bandFor(computeRegistrationScore({ critical: 1 })), "Плохо");
+  // One late answer (−50) → 50 (Критично).
+  assert.equal(computeRegistrationScore({ speed: 1 }), 50);
+  // Mixed, counts multiply: 2×−10 + 1×−40 = −60 → 40.
+  assert.equal(computeRegistrationScore({ feedback: 2, critical: 1 }), 40);
+  // Floored at 0, never negative.
+  assert.equal(computeRegistrationScore({ critical: 3 }), 0);
+});
+
+test("KPI: Уведомл×30% + CSAT×40% + Чаты×30% (sheet-verified)", () => {
+  assert.deepEqual(KPI_CRITERIA.map((c) => c.weight), [30, 40, 30]);
+  // Perfect → 100.
+  assert.equal(computeKpiScore({ notifications: 100, csat: 100, service: 100 }), 100);
+  // 0 / 100 / 100 → 70 (matches Март Արփինե in the sheet).
+  assert.equal(computeKpiScore({ notifications: 0, csat: 100, service: 100 }), 70);
+  // 92.73 / 100 / (empty=0) → 67.819 (matches Май Հասմիկ).
+  assert.equal(computeKpiScore({ notifications: 92.73, csat: 100 }), 67.819);
+  // Missing values count as 0.
+  assert.equal(computeKpiScore({}), 0);
+});
+
+test("KPI bonus gate: service≥90, notifications=100, csat≥80", () => {
+  assert.equal(kpiBonusEligible({ service: 90, notifications: 100, csat: 80 }), true);
+  assert.equal(kpiBonusEligible({ service: 89, notifications: 100, csat: 80 }), false);
+  assert.equal(kpiBonusEligible({ service: 95, notifications: 90, csat: 100 }), false);
+  assert.equal(kpiBonusEligible({ service: 100, notifications: 100, csat: 79 }), false);
 });

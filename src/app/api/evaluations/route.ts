@@ -31,9 +31,12 @@ function parseInput(body: any): NewEvaluationInput | null {
     checking_date,
     accountant: body.accountant ?? null,
     scores: {
+      scheme: body.scores?.scheme,
       criteria: body.scores?.criteria,
       greeting: body.scores?.greeting,
       monthly: body.scores?.monthly,
+      registration: body.scores?.registration,
+      kpi: body.scores?.kpi,
       ai: body.scores?.ai,
     },
     comment: body.comment ?? null,

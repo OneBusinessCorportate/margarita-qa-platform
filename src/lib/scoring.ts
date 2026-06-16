@@ -306,3 +306,188 @@ export function computeWeightedTotal(
 
 export type ScoringModel = "weighted";
 export const ACTIVE_MODEL: ScoringModel = "weighted";
+
+// ===========================================================================
+// ALTERNATE EVALUATION SCHEMES — "варианты оценки с разными баллами".
+//
+// Different roles are graded on different models with different point systems,
+// migrated here from Margarita's spreadsheets so the whole company's QA lives
+// in one place. Everything below is DATA, just like the accounting model above.
+//
+//   • accounting      — Бухгалтерия, сервис чатов (the weighted model above:
+//                        Точность + СЛА + рассылки + приветствие → 0..100).
+//   • accounting_kpi  — Бухгалтерия, месячный KPI (Уведомления / CSAT /
+//                        Чаты-Сервис, взвешенно → 0..100).
+//   • registration    — Регистрационный отдел, еженедельная оценка менеджеров
+//                        (старт 100, вычитаем штрафные баллы за нарушения).
+//
+// All three reuse the same quality BANDS (Отлично/Хорошо/Плохо/Критично).
+// ===========================================================================
+
+export type SchemeId = "accounting" | "accounting_kpi" | "registration";
+
+export type SchemeKind = "weighted" | "kpi" | "penalty";
+
+export interface SchemeInfo {
+  id: SchemeId;
+  name: string;
+  department: string;
+  /** Who is being graded. */
+  subject: string;
+  kind: SchemeKind;
+  description: string;
+}
+
+export const SCHEMES: SchemeInfo[] = [
+  {
+    id: "accounting",
+    name: "Бухгалтерия — сервис чатов",
+    department: "Бухгалтерия",
+    subject: "Бухгалтер",
+    kind: "weighted",
+    description:
+      "Ежедневная оценка чатов: Точность и полнота + Соблюдение сроков / SLA, " +
+      "статусы рассылок (налоги / ЗП / первичка / долги) и приветствие. 0–100.",
+  },
+  {
+    id: "accounting_kpi",
+    name: "Бухгалтерия — месячный KPI",
+    department: "Бухгалтерия",
+    subject: "Бухгалтер",
+    kind: "kpi",
+    description:
+      "Итоговая месячная оценка: Уведомления×30% + CSAT×40% + Чаты/Сервис×30%. " +
+      "Порог квартального бонуса: Чаты/Сервис ≥ 90, уведомления 100%, CSAT ≥ 80.",
+  },
+  {
+    id: "registration",
+    name: "Регистрационный отдел — еженедельная оценка",
+    department: "Регистрационный отдел",
+    subject: "Менеджер",
+    kind: "penalty",
+    description:
+      "Старт 100 баллов, вычитаем штрафы за нарушения недели: критические ошибки, " +
+      "скорость ответа (≤ 15 мин), обратная связь клиенту.",
+  },
+];
+
+export function schemeInfo(id: SchemeId): SchemeInfo {
+  return SCHEMES.find((s) => s.id === id) ?? SCHEMES[0];
+}
+
+// --- Registration department — weekly penalty model ------------------------
+//
+// "Финансовая сводка" variant (Margarita, June 2026): the manager starts the
+// week at 100 and loses points per incident. Critical errors are the harshest:
+// the standard is ZERO per day.
+
+/** Score every manager starts the week with before penalties. */
+export const REGISTRATION_START = 100;
+
+export interface PenaltyRule {
+  id: string;
+  name: string;
+  /** Points removed PER incident (negative). */
+  points: number;
+  goal: string;
+  consequence: string;
+  /** A critical-error rule — the "0 in a day" standard. */
+  critical?: boolean;
+}
+
+export const REGISTRATION_PENALTIES: PenaltyRule[] = [
+  {
+    id: "critical",
+    name: "Критические ошибки",
+    points: -40,
+    goal: "0 в день",
+    consequence: "Разбор с Маргаритой в тот же день",
+    critical: true,
+  },
+  {
+    id: "speed",
+    name: "Скорость ответа",
+    points: -50,
+    goal: "до 15 минут",
+    consequence: "Фиксация в журнале нарушений",
+  },
+  {
+    id: "feedback",
+    name: "Обратная связь клиенту",
+    points: -10,
+    goal: "до 19:00",
+    consequence: "Предупреждение от Маргариты",
+  },
+];
+
+/**
+ * Registration weekly score: start at 100, subtract `points × count` for each
+ * incident type. Floored to 0, capped at 100. `counts` is keyed by PenaltyRule.id.
+ */
+export function computeRegistrationScore(
+  counts: Record<string, number> = {},
+  penalties: PenaltyRule[] = REGISTRATION_PENALTIES
+): number {
+  let total = REGISTRATION_START;
+  for (const p of penalties) {
+    const n = counts[p.id];
+    if (typeof n === "number" && !Number.isNaN(n) && n > 0) {
+      total += p.points * Math.floor(n);
+    }
+  }
+  return Math.max(0, Math.min(100, Math.round(total)));
+}
+
+// --- Accounting monthly KPI model ------------------------------------------
+//
+// Decoded from the "KPI и результаты" tab: Итого = Уведомл×0.30 + CSAT×0.40 +
+// (Чаты/Сервис)×0.30 (verified: 0/100/100 → 70; 92.73/100/0 → 67.82).
+
+export interface KpiCriterion {
+  id: string;
+  name: string;
+  /** Percentage weight; the three weights sum to 100. */
+  weight: number;
+}
+
+export const KPI_CRITERIA: KpiCriterion[] = [
+  { id: "notifications", name: "Уведомления / долги", weight: 30 },
+  { id: "csat", name: "CSAT", weight: 40 },
+  { id: "service", name: "Чаты / Сервис", weight: 30 },
+];
+
+/** Quarterly-bonus gate (Условия tab): all three must hold. */
+export const KPI_BONUS_THRESHOLDS = {
+  service: 90, // Чаты/Сервис ≥ 90%
+  notifications: 100, // 100% рассылок
+  csat: 80, // CSAT ≥ 80%
+} as const;
+
+/**
+ * Monthly KPI total 0..100. Each input is a percentage 0..100; a missing value
+ * counts as 0 (matching the sheet, where an empty Чаты column lowers Итого).
+ */
+export function computeKpiScore(
+  values: Record<string, number> = {},
+  criteria: KpiCriterion[] = KPI_CRITERIA
+): number {
+  let total = 0;
+  for (const c of criteria) {
+    const raw = values[c.id];
+    const pct =
+      typeof raw === "number" && !Number.isNaN(raw)
+        ? Math.max(0, Math.min(100, raw))
+        : 0;
+    total += (pct * c.weight) / 100;
+  }
+  return Math.round(total * 1000) / 1000;
+}
+
+/** Does the bookkeeper qualify for the 10% quarterly bonus? */
+export function kpiBonusEligible(values: Record<string, number> = {}): boolean {
+  return (
+    (values.service ?? 0) >= KPI_BONUS_THRESHOLDS.service &&
+    (values.notifications ?? 0) >= KPI_BONUS_THRESHOLDS.notifications &&
+    (values.csat ?? 0) >= KPI_BONUS_THRESHOLDS.csat
+  );
+}

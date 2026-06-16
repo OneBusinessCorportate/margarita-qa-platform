@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/scoring", label: "Оценка" },
   { href: "/tasks", label: "Задачи" },
   { href: "/violations", label: "Нарушения" },
+  { href: "/handbook", label: "Регламент" },
   { href: "/dashboard", label: "Отчёт" },
   { href: "/messages", label: "Сообщения" },
 ];

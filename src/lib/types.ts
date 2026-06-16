@@ -1,4 +1,4 @@
-import type { CriteriaScores, Greeting, QualityBand } from "./scoring";
+import type { CriteriaScores, Greeting, QualityBand, SchemeId } from "./scoring";
 
 export type ChatStatus = "Active" | "Inactive";
 
@@ -38,10 +38,19 @@ export interface MonthlyStatus {
 }
 
 export interface EvaluationScores {
+  /**
+   * Which evaluation scheme produced this row. Absent ⇒ "accounting" (the
+   * original weighted chat model), so existing data keeps working unchanged.
+   */
+  scheme?: SchemeId;
   criteria?: CriteriaScores; // accuracy, sla (+ optional fcr, clarity)
   /** Did the accountant greet / answer the greeting? Missing → accuracy ≤ 4. */
   greeting?: Greeting;
   monthly?: Record<string, MonthlyStatus>; // keyed by MonthlyCategory.id
+  /** Registration scheme: incident counts keyed by PenaltyRule.id. */
+  registration?: Record<string, number>;
+  /** Accounting KPI scheme: percentages keyed by KpiCriterion.id. */
+  kpi?: Record<string, number>;
   /** AI's predicted row at save time — the training pair for the learner. */
   ai?: {
     criteria?: CriteriaScores;
