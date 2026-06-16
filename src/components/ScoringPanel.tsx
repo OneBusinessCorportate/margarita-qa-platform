@@ -1,18 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   DAILY_CRITERIA,
   MONTHLY_CATEGORIES,
   PREV_STATUS_DEFAULT,
   GREETING_ACCURACY_CAP,
-  EVAL_ROLES,
   REGISTRATION_PENALTIES,
   computeOverall,
   computeRegistrationScore,
   daysBetween,
   isStaleActivity,
+  roleInfo,
   type CriteriaScores,
   type CriterionId,
   type EvalRole,
@@ -69,7 +69,6 @@ export default function ScoringPanel({
 }) {
   const router = useRouter();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
-  const [role, setRole] = useState<EvalRole>("accountant");
   const [date, setDate] = useState(latestActivityDate ?? today());
   const [scope, setScope] = useState<Scope>("all");
   const [search, setSearch] = useState("");
@@ -145,15 +144,27 @@ export default function ScoringPanel({
   // back-filling an earlier date.
   const nowISO = useMemo(() => today(), []);
 
-  // The current role's evaluations on the selected date, indexed by chat.
+  // Accountant evaluations on the selected date, indexed by chat (drives the
+  // unscored filter, day-activity set and worst-first sort).
   const evalForDate = useMemo(() => {
     const m = new Map<string, Evaluation>();
     for (const e of evaluations) {
-      if ((e.role ?? "accountant") !== role) continue;
+      if ((e.role ?? "accountant") !== "accountant") continue;
       if (e.checking_date.slice(0, 10) === date) m.set(e.chat_agr_no, e);
     }
     return m;
-  }, [evaluations, date, role]);
+  }, [evaluations, date]);
+
+  // Every role's evaluation for the date, keyed `${chat}|${role}` — so each
+  // chat group can show the accountant, manager and lawyer rows together.
+  const evalByChatRole = useMemo(() => {
+    const m = new Map<string, Evaluation>();
+    for (const e of evaluations) {
+      if (e.checking_date.slice(0, 10) !== date) continue;
+      m.set(`${e.chat_agr_no}|${e.role ?? "accountant"}`, e);
+    }
+    return m;
+  }, [evaluations, date]);
 
   // People suggestions for the manager / lawyer pickers. Managers come from the
   // chats' own manager field + non-accountant specialists; both grow from names
@@ -206,17 +217,13 @@ export default function ScoringPanel({
     const scoreFor = (c: Chat): number => {
       const ev = evalForDate.get(c.agr_no);
       if (ev) return ev.total_score;
-      // Unscored: the accountant view mixes in the AI's predicted total so
-      // likely-problem chats float up; manager/lawyer have no model, so an
-      // unscored row sits at the top (start 100) but below any low real score.
-      if (role !== "accountant") return 100;
       return predictEvaluation(c.accountant, prevByChat.get(c.agr_no)?.monthly ?? {}, aiModel)
         .total;
     };
     return [...visibleChats].sort(
       (a, b) => scoreFor(a) - scoreFor(b) || a.agr_no.localeCompare(b.agr_no)
     );
-  }, [visibleChats, evalForDate, prevByChat, aiModel, role]);
+  }, [visibleChats, evalForDate, prevByChat, aiModel]);
 
   function onSaved(saved: Evaluation) {
     setEvaluations((prev) => [saved, ...prev.filter((e) => e.id !== saved.id)]);
@@ -224,23 +231,8 @@ export default function ScoringPanel({
 
   return (
     <div className="space-y-3">
-      {/* Role switcher — score each chat for the бухгалтер, менеджер and юрист. */}
-      <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
-        {EVAL_ROLES.map((r) => (
-          <button
-            key={r.id}
-            onClick={() => setRole(r.id)}
-            className={`px-4 py-1.5 font-medium border-l first:border-l-0 border-gray-300 ${
-              role === r.id ? "bg-indigo-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
-            }`}
-          >
-            {r.icon} {r.label}
-          </button>
-        ))}
-      </div>
-
       {/* Scope toggle */}
-      <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm ml-2">
+      <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
         <button
           onClick={() => setScope("day")}
           className={`px-3 py-1.5 font-medium ${
@@ -343,13 +335,13 @@ export default function ScoringPanel({
         </button>
       </div>
 
-      {role === "accountant" ? (
-      <>
-      {/* One compact legend line — no help card. */}
+      {/* Compact legend — each chat shows the accountant (AI + you) plus a
+          manager and a lawyer row. */}
       <p className="text-xs text-gray-500">
-        Две строки на чат: <span className="font-semibold text-indigo-700">🤖 AI</span> — подсказка,{" "}
-        <span className="font-semibold text-blue-700">✍️ Вы</span> — ваша оценка. Значения перенесены
-        из прошлой проверки — правьте изменившееся и жмите «Оценить». Проблемные чаты — сверху.
+        Каждый чат: <span className="font-semibold text-indigo-700">🤖 AI</span> + ваша оценка
+        бухгалтера, затем строки <span className="font-semibold">👔 Менеджер</span> и{" "}
+        <span className="font-semibold">⚖️ Юрист</span>. Значения перенесены из прошлой проверки —
+        правьте изменившееся и жмите «Оценить». Проблемные чаты — сверху.
       </p>
 
       <div className="card">
@@ -410,72 +402,40 @@ export default function ScoringPanel({
               </tr>
             )}
             {sortedChats.map((chat) => (
-              <ChatScoreRow
-                key={`${chat.agr_no}|${date}`}
-                chat={chat}
-                accountants={accountants}
-                date={date}
-                existing={evalForDate.get(chat.agr_no) ?? null}
-                prev={prevByChat.get(chat.agr_no) ?? null}
-                lastActivity={lastActivityFor(chat)}
-                asOf={nowISO}
-                aiModel={aiModel}
-                tgClient={tgClient}
-                onSaved={onSaved}
-              />
+              <Fragment key={`${chat.agr_no}|${date}`}>
+                <ChatScoreRow
+                  chat={chat}
+                  accountants={accountants}
+                  date={date}
+                  existing={evalByChatRole.get(`${chat.agr_no}|accountant`) ?? null}
+                  prev={prevByChat.get(chat.agr_no) ?? null}
+                  lastActivity={lastActivityFor(chat)}
+                  asOf={nowISO}
+                  aiModel={aiModel}
+                  tgClient={tgClient}
+                  onSaved={onSaved}
+                />
+                <RegRoleRow
+                  chat={chat}
+                  role="manager"
+                  date={date}
+                  people={managers}
+                  existing={evalByChatRole.get(`${chat.agr_no}|manager`) ?? null}
+                  onSaved={onSaved}
+                />
+                <RegRoleRow
+                  chat={chat}
+                  role="lawyer"
+                  date={date}
+                  people={lawyers}
+                  existing={evalByChatRole.get(`${chat.agr_no}|lawyer`) ?? null}
+                  onSaved={onSaved}
+                />
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
-      </>
-      ) : (
-        <div className="card">
-          <table className="qa sticky-head">
-            <thead>
-              <tr>
-                <th className="corner sticky left-0 bg-gray-100 min-w-[200px]">
-                  № / Чат / {role === "manager" ? "Менеджер" : "Юрист"}
-                </th>
-                {REGISTRATION_PENALTIES.map((p) => (
-                  <th key={p.id} className="text-center" title={`${p.name} (${p.points})`}>
-                    {p.id === "critical" ? "Крит." : p.id === "speed" ? "Скор." : "ОС"}
-                    <div className="text-[10px] font-normal text-gray-400">{p.points}</div>
-                  </th>
-                ))}
-                <th className="text-center">Оценка</th>
-                <th>Кач-во</th>
-                <th className="w-full">Коммент.</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedChats.length === 0 && (
-                <tr>
-                  <td colSpan={REGISTRATION_PENALTIES.length + 5} className="text-center text-gray-500 py-6">
-                    {scope === "day"
-                      ? `За ${date} нет активных чатов.`
-                      : "Нет чатов по текущим фильтрам."}
-                  </td>
-                </tr>
-              )}
-              {sortedChats.map((chat) => (
-                <RegRoleRow
-                  key={`${chat.agr_no}|${date}|${role}`}
-                  chat={chat}
-                  role={role}
-                  date={date}
-                  people={role === "manager" ? managers : lawyers}
-                  existing={evalForDate.get(chat.agr_no) ?? null}
-                  lastActivity={lastActivityFor(chat)}
-                  asOf={nowISO}
-                  tgClient={tgClient}
-                  onSaved={onSaved}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }
@@ -846,9 +806,6 @@ function RegRoleRow({
   date,
   people,
   existing,
-  lastActivity,
-  asOf,
-  tgClient,
   onSaved,
 }: {
   chat: Chat;
@@ -856,9 +813,6 @@ function RegRoleRow({
   date: string;
   people: string[];
   existing: Evaluation | null;
-  lastActivity: string | null;
-  asOf: string;
-  tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
 }) {
   const [person, setPerson] = useState(
@@ -875,8 +829,10 @@ function RegRoleRow({
   const total = computeRegistrationScore(counts);
   const touched =
     Boolean(savedId) || REGISTRATION_PENALTIES.some((p) => (counts[p.id] ?? 0) > 0);
-  const isStale = isStaleActivity(lastActivity, asOf);
-  const staleDays = lastActivity ? daysBetween(lastActivity, asOf) : null;
+  const info = roleInfo(role);
+  // Span the accountant criteria columns (Точн/СЛА/Прив + 4 monthly) with the
+  // three penalty inputs, so this role's row stays aligned with the grid.
+  const critColSpan = DAILY_CRITERIA.length + 1 + MONTHLY_CATEGORIES.length;
   const listId = `reg-people-${role}`;
 
   const setCount = (id: string, v: string) =>
@@ -917,59 +873,51 @@ function RegRoleRow({
   }
 
   return (
-    <tr className={savedId ? "" : "bg-blue-50/40"}>
-      <td className="chat-info sticky left-0 z-10 bg-white align-top min-w-[200px]">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-gray-900">№ {chat.agr_no}</span>
-          {chat.chat_link ? (
-            <a
-              href={tgHref(chat.chat_link, tgClient)}
-              target={tgWindowFor(chat.chat_link)}
-              rel="noreferrer"
-              className="text-blue-600 hover:underline text-xs whitespace-nowrap"
-            >
-              Открыть ↗
-            </a>
-          ) : (
-            <span className="text-gray-400 text-xs">нет ссылки</span>
-          )}
-        </div>
-        <div className="text-gray-600 text-xs mt-0.5 truncate max-w-[200px]" title={chat.chat_name}>
-          {chat.chat_name}
-        </div>
-        {isStale && (
-          <div className="text-xs mt-1">
-            <span className="inline-block rounded bg-amber-100 text-amber-700 font-medium px-1.5 py-0.5">
-              нет активности{lastActivity ? ` ${staleDays} дн.` : ""}
-            </span>
-          </div>
-        )}
-        <input
-          list={listId}
-          className="input w-full text-xs mt-1"
-          placeholder={role === "manager" ? "менеджер" : "юрист"}
-          value={person}
-          onChange={(e) => setPerson(e.target.value)}
-        />
-        <datalist id={listId}>
-          {people.map((p) => (
-            <option key={p} value={p} />
-          ))}
-        </datalist>
-      </td>
-      {REGISTRATION_PENALTIES.map((p) => (
-        <td key={p.id} className="text-center align-middle">
+    <tr className={savedId ? "" : "bg-violet-50/30"}>
+      {/* Role + person — sits in the same sticky first column as the chat info. */}
+      <td className="sticky left-0 z-10 bg-white align-middle min-w-[210px]">
+        <div className="flex items-center gap-1.5">
+          <span title={info.label}>{info.icon}</span>
           <input
-            type="number"
-            min={0}
-            className="input w-[52px] text-center"
-            placeholder="0"
-            value={counts[p.id] ?? ""}
-            onChange={(e) => setCount(p.id, e.target.value)}
-            title={`${p.name} — ${p.goal}`}
+            list={listId}
+            className="input w-full text-xs"
+            placeholder={info.label.toLowerCase()}
+            value={person}
+            onChange={(e) => setPerson(e.target.value)}
           />
-        </td>
-      ))}
+          <datalist id={listId}>
+            {people.map((p) => (
+              <option key={p} value={p} />
+            ))}
+          </datalist>
+        </div>
+      </td>
+      <td className="text-center align-middle">
+        <span className="inline-block rounded bg-gray-200 text-gray-700 font-semibold text-[11px] px-1.5 py-0.5">
+          {role === "manager" ? "Мен" : "Юр"}
+        </span>
+      </td>
+      <td colSpan={critColSpan} className="align-middle">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {REGISTRATION_PENALTIES.map((p) => (
+            <label
+              key={p.id}
+              className="inline-flex items-center gap-1 text-xs text-gray-600"
+              title={`${p.name} — ${p.goal} (${p.points})`}
+            >
+              {p.id === "critical" ? "Крит." : p.id === "speed" ? "Скор." : "ОС"}
+              <input
+                type="number"
+                min={0}
+                className="input w-[48px] text-center"
+                placeholder="0"
+                value={counts[p.id] ?? ""}
+                onChange={(e) => setCount(p.id, e.target.value)}
+              />
+            </label>
+          ))}
+        </div>
+      </td>
       <td className="text-center align-middle tabular-nums font-semibold">
         {touched ? total : <span className="text-gray-300">—</span>}
       </td>
