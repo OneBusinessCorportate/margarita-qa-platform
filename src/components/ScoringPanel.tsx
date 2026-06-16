@@ -72,26 +72,18 @@ export default function ScoringPanel({
   const [onlyUnscored, setOnlyUnscored] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
   const [hideStale, setHideStale] = useState(false);
-  const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [tgClient, setTgClient] = useState<TgClient>("a");
 
-  // Persist the chosen Telegram web client.
+  // Restore a previously-chosen Telegram web client, if any.
   useEffect(() => {
     const saved = window.localStorage.getItem("qa_tg_client");
     if (saved === "a" || saved === "k") setTgClient(saved);
   }, []);
-  function chooseTg(c: TgClient) {
-    setTgClient(c);
-    window.localStorage.setItem("qa_tg_client", c);
-  }
 
   // Refresh the chat/eval data every 40 minutes. With the bot feed wired in,
   // this is how the day view stays current through the day.
   useEffect(() => {
-    const id = setInterval(() => {
-      router.refresh();
-      setRefreshedAt(new Date().toLocaleTimeString("ru-RU"));
-    }, 40 * 60 * 1000);
+    const id = setInterval(() => router.refresh(), 40 * 60 * 1000);
     return () => clearInterval(id);
   }, [router]);
 
@@ -299,66 +291,19 @@ export default function ScoringPanel({
         </a>
         <button
           className="btn-secondary"
-          onClick={() => {
-            router.refresh();
-            setRefreshedAt(new Date().toLocaleTimeString("ru-RU"));
-          }}
+          onClick={() => router.refresh()}
           title="Список обновляется автоматически каждые 40 минут"
         >
           Обновить ⟳
         </button>
-        <span className="inline-flex items-center gap-1 text-xs text-gray-400">
-          клиент:
-          <button
-            className={`px-2 py-0.5 rounded ${tgClient === "a" ? "bg-blue-600 text-white" : "border border-gray-300"}`}
-            onClick={() => chooseTg("a")}
-            title="Telegram Web A (привычный)"
-          >
-            A
-          </button>
-          <button
-            className={`px-2 py-0.5 rounded ${tgClient === "k" ? "bg-blue-600 text-white" : "border border-gray-300"}`}
-            onClick={() => chooseTg("k")}
-            title="Telegram Web K — загружается заметно быстрее"
-          >
-            K
-          </button>
-        </span>
-        {refreshedAt && (
-          <span className="text-xs text-gray-400">обновлено в {refreshedAt}</span>
-        )}
       </div>
 
-      {/* How to read the grid — each chat is exactly TWO lines. Spelled out so
-          the AI line and the editable line are never mistaken for extra rows. */}
-      <div className="card border-indigo-100 bg-indigo-50/40 p-3 text-sm text-gray-700">
-        <div className="font-medium text-gray-800 mb-1.5">
-          Каждый чат — это <span className="text-indigo-700">две строки</span>:
-        </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block rounded bg-indigo-100 text-indigo-700 font-semibold px-1.5 py-0.5">
-              🤖 AI
-            </span>
-            анализ системы — подсказка, <span className="text-gray-500">не сохраняется</span>
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block rounded bg-blue-600 text-white font-semibold px-1.5 py-0.5">
-              ✍️ Вы
-            </span>
-            ваша оценка — правьте и нажмите «Оценить»
-          </span>
-          <span className="inline-flex items-center gap-1.5 text-gray-500">
-            <span className="inline-block rounded bg-amber-100 text-amber-700 font-medium px-1.5 py-0.5">
-              нет активности
-            </span>
-            чат давно «молчит»
-          </span>
-        </div>
-        <div className="text-xs text-gray-500 mt-1.5">
-          Значения подставлены из прошлой проверки — измените только то, что изменилось. Самые проблемные чаты — сверху.
-        </div>
-      </div>
+      {/* One compact legend line — no help card. */}
+      <p className="text-xs text-gray-500">
+        Две строки на чат: <span className="font-semibold text-indigo-700">🤖 AI</span> — подсказка,{" "}
+        <span className="font-semibold text-blue-700">✍️ Вы</span> — ваша оценка. Значения перенесены
+        из прошлой проверки — правьте изменившееся и жмите «Оценить». Проблемные чаты — сверху.
+      </p>
 
       <div className="card">
         <table className="qa pairs sticky-head">

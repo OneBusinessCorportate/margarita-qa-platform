@@ -14,8 +14,7 @@ export default async function TasksPage() {
       <div>
         <h1 className="text-xl font-semibold">Задачи</h1>
         <p className="text-sm text-gray-500">
-          Зафиксированные задачи от бухгалтеров (Single task). Новая задача
-          вводится в нижней строке.
+          Задачи от бухгалтеров. Новая — в нижней строке.
         </p>
       </div>
       <TasksPanel

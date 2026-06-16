@@ -14,8 +14,7 @@ export default async function ViolationsPage() {
       <div>
         <h1 className="text-xl font-semibold">Нарушения</h1>
         <p className="text-sm text-gray-500">
-          Журнал нарушений по критичным чатам: дата, бухгалтер, клиент, тип
-          нарушения, санкция и комментарий. Новая запись — в нижней строке.
+          Журнал нарушений. Новая запись — в нижней строке.
         </p>
       </div>
       <ViolationsPanel
