@@ -7,7 +7,10 @@ import { SignJWT, jwtVerify } from "jose";
 
 export const SESSION_COOKIE = "qa_session";
 const ALG = "HS256";
-const MAX_AGE_SECONDS = 60 * 60 * 12; // 12h
+// 30 days. A short (12h) window logged Margarita out mid-shift; the session is
+// now long-lived AND slid forward on every authenticated request (see
+// middleware), so she stays logged in as long as she keeps working.
+const MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 function secret(): Uint8Array {
   const s = process.env.AUTH_SECRET || "dev-insecure-secret-change-me";

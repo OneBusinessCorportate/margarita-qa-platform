@@ -58,6 +58,22 @@ function tgHref(link: string, client: TgClient): string {
 
 type Scope = "day" | "all";
 
+// How the chat list is ordered. "activity" (default) is the order Margarita
+// expects — most recently active chats first. "worst" keeps the old "problem
+// chats on top" behaviour. "number" is a stable order by contract №.
+type SortBy = "activity" | "worst" | "number";
+
+const SORT_OPTIONS: { id: SortBy; label: string }[] = [
+  { id: "activity", label: "по активности (свежие сверху)" },
+  { id: "worst", label: "проблемные сверху" },
+  { id: "number", label: "по № договора" },
+];
+
+/** Compare contract numbers numerically where possible ("59" < "118" < "B-3302"). */
+function cmpAgrNo(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
 /** Per-chat hide/restore control for the "Активные за день" view (day scope). */
 type HideControl = { hidden: boolean; onToggle: () => void } | null;
 
@@ -82,6 +98,7 @@ export default function ScoringPanel({
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
   const [date, setDate] = useState(latestActivityDate ?? today());
   const [scope, setScope] = useState<Scope>("all");
+  const [sortBy, setSortBy] = useState<SortBy>("activity");
   const [search, setSearch] = useState("");
   const [accFilters, setAccFilters] = useState<string[]>([]);
   const [onlyUnscored, setOnlyUnscored] = useState(false);
@@ -253,19 +270,71 @@ export default function ScoringPanel({
     });
   }, [chats, search, accFilters, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
 
-  // Most problematic chats on top. Scored chats sort by Margarita's saved total;
-  // un-scored ones are mixed in by the AI's predicted total.
+  // The list order. By default chats are ordered by most recent real activity
+  // (the order Margarita expects); she can switch to "problem chats on top" or
+  // contract-№ order. NOTE: data only has DATE granularity (last_activity_date),
+  // not intra-day timestamps, so chats active on the same day are tie-broken by №.
+  //
+  // Order is FROZEN against saving: once the list is laid out for a given set of
+  // filters/date/sort, saving a chat must not make it jump. The activity and №
+  // orders don't depend on scores at all, so they're stable for free. The
+  // "worst" order does depend on scores, so we snapshot it (orderRef) and reuse
+  // that snapshot until the filters/date/sort actually change.
+  const orderSig = useMemo(
+    () =>
+      JSON.stringify([
+        scope,
+        date,
+        sortBy,
+        activeOnly,
+        hideStale,
+        onlyUnscored,
+        showHidden,
+        accFilters,
+        search,
+      ]),
+    [scope, date, sortBy, activeOnly, hideStale, onlyUnscored, showHidden, accFilters, search]
+  );
+  const orderRef = useRef<{ sig: string; ids: string[] }>({ sig: "", ids: [] });
+
   const sortedChats = useMemo(() => {
+    const arr = [...visibleChats];
+    if (sortBy === "number") {
+      arr.sort((a, b) => cmpAgrNo(a.agr_no, b.agr_no));
+      return arr;
+    }
+    if (sortBy === "activity") {
+      // Most recent activity first; null activity sinks to the bottom.
+      arr.sort((a, b) => {
+        const da = lastActivityFor(a) ?? "";
+        const db = lastActivityFor(b) ?? "";
+        if (da !== db) return db.localeCompare(da);
+        return cmpAgrNo(a.agr_no, b.agr_no);
+      });
+      return arr;
+    }
+    // "worst": problem chats on top, by saved total or the AI's predicted total.
     const scoreFor = (c: Chat): number => {
       const ev = evalForDate.get(c.agr_no);
       if (ev) return ev.total_score;
       return predictEvaluation(c.accountant, prevByChat.get(c.agr_no)?.monthly ?? {}, aiModel)
         .total;
     };
-    return [...visibleChats].sort(
-      (a, b) => scoreFor(a) - scoreFor(b) || a.agr_no.localeCompare(b.agr_no)
-    );
-  }, [visibleChats, evalForDate, prevByChat, aiModel]);
+    if (orderRef.current.sig === orderSig && orderRef.current.ids.length) {
+      // Reuse the frozen order so a just-saved chat keeps its place.
+      const pos = new Map(orderRef.current.ids.map((id, i) => [id, i]));
+      arr.sort(
+        (a, b) =>
+          (pos.get(a.agr_no) ?? Number.MAX_SAFE_INTEGER) -
+            (pos.get(b.agr_no) ?? Number.MAX_SAFE_INTEGER) ||
+          cmpAgrNo(a.agr_no, b.agr_no)
+      );
+    } else {
+      arr.sort((a, b) => scoreFor(a) - scoreFor(b) || cmpAgrNo(a.agr_no, b.agr_no));
+      orderRef.current = { sig: orderSig, ids: arr.map((c) => c.agr_no) };
+    }
+    return arr;
+  }, [visibleChats, sortBy, lastActivityFor, evalForDate, prevByChat, aiModel, orderSig]);
 
   // Only render a window of the sorted list; "load more" grows it.
   const shownChats = sortedChats.slice(0, visibleCount);
@@ -273,7 +342,7 @@ export default function ScoringPanel({
   // When the filtered set changes, snap back to the first page.
   useEffect(() => {
     setVisibleCount(PAGE);
-  }, [search, accFilters, onlyUnscored, activeOnly, hideStale, scope, date]);
+  }, [search, accFilters, onlyUnscored, activeOnly, hideStale, scope, date, sortBy]);
 
   // Changing the day (or leaving the day view) re-hides hidden chats.
   useEffect(() => {
@@ -361,6 +430,21 @@ export default function ScoringPanel({
             onChange={setAccFilters}
           />
         </div>
+        <div className="space-y-1">
+          <label className="text-xs text-gray-500 block">Сортировка</label>
+          <select
+            className="input"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as SortBy)}
+            title="Порядок чатов в списке. Порядок не меняется, когда вы оцениваете чат."
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <label className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5">
           <input
             type="checkbox"
@@ -422,10 +506,13 @@ export default function ScoringPanel({
       {/* Compact legend. */}
       <p className="text-xs text-gray-500">
         Каждый чат: <span className="font-semibold text-indigo-700">🤖 AI</span> + ваша оценка
-        бухгалтера. Внизу строки «+ добавить оценку» можно добавить{" "}
-        <span className="font-semibold">👔 Менеджера</span> или{" "}
-        <span className="font-semibold">⚖️ Юриста</span>. Значения перенесены из прошлой проверки —
-        правьте изменившееся и жмите «Оценить». Проблемные чаты — сверху.
+        бухгалтера. В одном чате можно оценить и других — внизу строки нажмите{" "}
+        <span className="font-semibold">«+ оценить ещё»</span>, чтобы добавить отдельную оценку{" "}
+        <span className="font-semibold">👔 Менеджеру</span> или{" "}
+        <span className="font-semibold">⚖️ Юристу</span>. Значения перенесены из прошлой проверки —
+        правьте изменившееся и жмите «Оценить». Оценённые чаты помечаются{" "}
+        <span className="font-semibold text-green-700">✓ Оценено</span>. Порядок списка не меняется,
+        когда вы сохраняете оценку.
       </p>
 
       <div className="card">
@@ -691,13 +778,23 @@ function ChatScoreRow({
       <tr className="chat-start">
         <td
           rowSpan={2}
-          className="chat-info sticky left-0 z-10 bg-white align-top min-w-[280px] max-w-[340px]"
+          className={`chat-info sticky left-0 z-10 align-top min-w-[280px] max-w-[340px] ${
+            savedId ? "bg-green-50/70 border-l-4 border-green-500" : "bg-white"
+          }`}
         >
           {/* № + chat name + link, all on one line (name truncates). */}
           <div className="flex items-center gap-2 min-w-0">
             <span className="font-semibold text-gray-900 whitespace-nowrap">
               № {chat.agr_no}
             </span>
+            {savedId && (
+              <span
+                className="inline-flex items-center gap-0.5 rounded bg-green-600 text-white font-semibold text-[10px] px-1.5 py-0.5 whitespace-nowrap"
+                title="Этот чат уже оценён за выбранную дату"
+              >
+                ✓ Оценено
+              </span>
+            )}
             <span
               className="text-gray-600 text-xs truncate min-w-0 flex-1"
               title={chat.chat_name}
@@ -771,6 +868,25 @@ function ChatScoreRow({
               <span className="text-gray-400">активность: {lastActivity}</span>
             )}
           </div>
+          {/* Real debt from the chat record, so QA can judge the "Долги" column
+              against the actual amount instead of guessing. */}
+          {(() => {
+            const d = (chat.debts ?? "").trim();
+            if (!d || d === "--" || d === "—") return null;
+            const noDebt = /нет долга/i.test(d) || d === "0";
+            return (
+              <div className="text-xs mt-1">
+                <span
+                  className={`inline-block rounded px-1.5 py-0.5 font-medium ${
+                    noDebt ? "bg-gray-100 text-gray-500" : "bg-red-100 text-red-700"
+                  }`}
+                  title="Фактическая задолженность из карточки чата"
+                >
+                  Долг: {d}
+                </span>
+              </div>
+            );
+          })()}
           <div className="mt-1">
             <PersonPicker
               value={accountant}
@@ -831,7 +947,7 @@ function ChatScoreRow({
       </tr>
 
       {/* ---- Your editable line ---- */}
-      <tr className={savedId ? "" : "bg-blue-50/40"}>
+      <tr className={savedId ? "bg-green-50/50" : "bg-blue-50/40"}>
         <td className={`${youCell} text-center`}>
           <span className="inline-block rounded bg-blue-600 text-white font-semibold text-[11px] px-1.5 py-0.5 whitespace-nowrap">
             ✍️ Вы
@@ -911,13 +1027,14 @@ function ChatScoreRow({
         </td>
         <td className={`${youCell} whitespace-nowrap text-right`}>
           <button
-            className="btn-primary !px-3 !py-1 text-xs"
+            className={`!px-3 !py-1 text-xs ${
+              savedId ? "btn-secondary !text-green-700 !border-green-500" : "btn-primary"
+            }`}
             onClick={save}
             disabled={saving}
           >
-            {saving ? "…" : savedId ? "Сохр." : "Оценить"}
+            {saving ? "Сохраняю…" : savedId ? "✓ Сохранено · изменить" : "Оценить"}
           </button>
-          {savedId && <span className="ml-1 text-[10px] text-green-600">✓</span>}
           {error && <span className="ml-1 text-[10px] text-red-600">{error}</span>}
         </td>
       </tr>
@@ -1002,7 +1119,7 @@ function RegRoleRow({
   }
 
   return (
-    <tr className={savedId ? "" : "bg-violet-50/30"}>
+    <tr className={savedId ? "bg-green-50/50" : "bg-violet-50/30"}>
       {/* Role + person — sits in the same sticky first column as the chat info. */}
       <td className="sticky left-0 z-10 bg-white align-top min-w-[210px]">
         <div className="flex items-start gap-1.5">
@@ -1057,13 +1174,14 @@ function RegRoleRow({
       </td>
       <td className="whitespace-nowrap text-right align-middle">
         <button
-          className="btn-primary !px-3 !py-1 text-xs"
+          className={`!px-3 !py-1 text-xs ${
+            savedId ? "btn-secondary !text-green-700 !border-green-500" : "btn-primary"
+          }`}
           onClick={save}
           disabled={saving}
         >
-          {saving ? "…" : savedId ? "Сохр." : "Оценить"}
+          {saving ? "Сохраняю…" : savedId ? "✓ Сохранено · изменить" : "Оценить"}
         </button>
-        {savedId && <span className="ml-1 text-[10px] text-green-600">✓</span>}
         {error && <span className="ml-1 text-[10px] text-red-600">{error}</span>}
       </td>
     </tr>
@@ -1149,12 +1267,15 @@ function ChatGroup({
       )}
       {(!showManager || !showLawyer) && (
         <tr>
-          <td colSpan={totalCols} className="py-1.5 pl-2 bg-gray-50/40">
-            <span className="text-xs text-gray-400 mr-2">+ добавить оценку:</span>
+          <td colSpan={totalCols} className="py-1.5 pl-2 bg-amber-50/50">
+            <span className="text-xs text-gray-600 font-medium mr-2">
+              + оценить ещё в этом чате:
+            </span>
             {!showManager && (
               <button
                 className="btn-secondary !px-2 !py-0.5 text-xs mr-2"
                 onClick={() => setShowManager(true)}
+                title="Добавить отдельную оценку менеджеру в этом же чате"
               >
                 👔 Менеджер
               </button>
@@ -1163,6 +1284,7 @@ function ChatGroup({
               <button
                 className="btn-secondary !px-2 !py-0.5 text-xs"
                 onClick={() => setShowLawyer(true)}
+                title="Добавить отдельную оценку юристу в этом же чате"
               >
                 ⚖️ Юрист
               </button>

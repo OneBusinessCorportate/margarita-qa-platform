@@ -1,5 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
+import {
+  SESSION_COOKIE,
+  SESSION_MAX_AGE,
+  createSessionToken,
+  verifySessionToken,
+} from "@/lib/auth";
 
 // Public paths that never require a session.
 const PUBLIC_PATHS = [
@@ -32,7 +37,21 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  return NextResponse.next();
+  // Sliding session: re-issue the cookie on every authenticated page navigation
+  // so an active user is never logged out mid-work. Skipped for API/asset
+  // requests to avoid re-signing on every fetch.
+  const res = NextResponse.next();
+  if (req.method === "GET" && !pathname.startsWith("/api/")) {
+    const token = await createSessionToken(session.email);
+    res.cookies.set(SESSION_COOKIE, token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: SESSION_MAX_AGE,
+    });
+  }
+  return res;
 }
 
 export const config = {
