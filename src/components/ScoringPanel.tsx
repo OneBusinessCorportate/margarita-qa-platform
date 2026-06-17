@@ -732,10 +732,11 @@ function ChatScoreRow({
               ) : (
                 <button
                   onClick={hideControl.onToggle}
-                  className="text-gray-400 hover:text-red-600 hover:underline text-xs whitespace-nowrap"
+                  aria-label="Убрать чат из «Активные за день»"
+                  className="text-gray-400 hover:text-red-600 text-base leading-none whitespace-nowrap"
                   title="Убрать этот чат из списка «Активные за день» на этот день (неважный чат)"
                 >
-                  ✕ Скрыть
+                  🗑
                 </button>
               ))}
           </div>
