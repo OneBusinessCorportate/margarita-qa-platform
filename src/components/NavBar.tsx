@@ -24,7 +24,7 @@ export default function NavBar({ email }: { email: string }) {
   }
 
   return (
-    <header className="bg-white border-b border-gray-200">
+    <header className="bg-white border-b border-gray-200 no-print">
       <div className="max-w-screen-2xl mx-auto px-4 h-12 flex items-center gap-6">
         <span className="font-semibold text-gray-900">OneBusiness QA</span>
         <nav className="flex items-center gap-1">

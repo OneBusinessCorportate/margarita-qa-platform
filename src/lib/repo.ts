@@ -13,7 +13,13 @@ import {
   isoWeekLabel,
   mondayOf,
 } from "./scoring";
-import { buildReport, type DailyReport, type ReportFilters } from "./report";
+import {
+  buildReport,
+  reportSnapshotLabel,
+  type DailyReport,
+  type ReportFilters,
+  type ReportSnapshot,
+} from "./report";
 import type {
   Accountant,
   ActiveExclusion,
@@ -502,4 +508,66 @@ export async function getReport(filters: ReportFilters): Promise<DailyReport> {
   // lawyer per-chat scores live in the same table but are reported separately.
   const accountantEvals = evaluations.filter((e) => e.role === "accountant");
   return buildReport(chats, accountantEvals, filters, tasks, asOf);
+}
+
+// --- Report history (saved snapshots) --------------------------------------
+
+export async function listReportSnapshots(): Promise<ReportSnapshot[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.reportSnapshots)
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (error) throw error;
+    return (data ?? []) as ReportSnapshot[];
+  }
+  return [...store().reportSnapshots].sort((a, b) =>
+    b.created_at.localeCompare(a.created_at)
+  );
+}
+
+export async function getReportSnapshot(
+  id: string
+): Promise<ReportSnapshot | null> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.reportSnapshots)
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as ReportSnapshot) ?? null;
+  }
+  return store().reportSnapshots.find((s) => s.id === id) ?? null;
+}
+
+/** Compute the report for `filters` right now and persist it to history. */
+export async function createReportSnapshot(
+  filters: ReportFilters,
+  createdBy: string | null
+): Promise<ReportSnapshot> {
+  const report = await getReport(filters);
+  const row: ReportSnapshot = {
+    id: randomUUID(),
+    label: reportSnapshotLabel(filters),
+    filters,
+    report,
+    created_by: createdBy,
+    created_at: new Date().toISOString(),
+  };
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.reportSnapshots)
+      .insert(row)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as ReportSnapshot;
+  }
+  store().reportSnapshots.unshift(row);
+  return row;
 }

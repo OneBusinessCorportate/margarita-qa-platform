@@ -9,6 +9,7 @@ import type {
   Task,
   Violation,
 } from "./types";
+import type { ReportSnapshot } from "./report";
 import {
   seedAccountants,
   seedChats,
@@ -30,6 +31,7 @@ interface Store {
   violations: Violation[];
   managerEvaluations: ManagerEvaluation[];
   activeExclusions: ActiveExclusion[];
+  reportSnapshots: ReportSnapshot[];
 }
 
 // Use a global to survive module reloads in Next dev (HMR).
@@ -46,6 +48,7 @@ export function store(): Store {
       violations: [],
       managerEvaluations: [],
       activeExclusions: [],
+      reportSnapshots: [],
     };
   }
   return g.__qaStore;

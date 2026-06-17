@@ -84,3 +84,28 @@ table.qa.pairs tr:hover td {
 .card {
   @apply bg-white border border-gray-200 rounded-lg;
 }
+
+/* PDF export = the browser's "Save as PDF". Hide chrome (nav, filters, buttons)
+   and show only the report + the print-only header so the saved PDF is the QA
+   marks per employee, nothing else. */
+.print-only {
+  display: none;
+}
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  body {
+    @apply bg-white;
+  }
+  .card {
+    border-color: #d1d5db;
+    break-inside: avoid;
+  }
+  @page {
+    margin: 14mm;
+  }
+}

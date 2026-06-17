@@ -54,6 +54,32 @@ export interface DailyReport {
   };
 }
 
+/** A saved Отчёт, stored in history so a past period can be re-opened as-was. */
+export interface ReportSnapshot {
+  id: string;
+  label: string;
+  filters: ReportFilters;
+  report: DailyReport;
+  created_by: string | null;
+  created_at: string; // ISO timestamp
+}
+
+/** Human label for a snapshot, derived from its filters (e.g. "01.05–31.05"). */
+export function reportSnapshotLabel(filters: ReportFilters): string {
+  const fmt = (d?: string) => (d ? d.split("-").reverse().join(".") : "");
+  let range: string;
+  if (filters.from && filters.to)
+    range =
+      filters.from === filters.to
+        ? fmt(filters.from)
+        : `${fmt(filters.from)}–${fmt(filters.to)}`;
+  else if (filters.from) range = `с ${fmt(filters.from)}`;
+  else if (filters.to) range = `по ${fmt(filters.to)}`;
+  else range = "весь период";
+  const extra = [filters.accountant, filters.client].filter(Boolean).join(", ");
+  return extra ? `${range} · ${extra}` : range;
+}
+
 function inRange(date: string | null, from?: string, to?: string): boolean {
   if (!date) return false;
   const d = date.slice(0, 10);

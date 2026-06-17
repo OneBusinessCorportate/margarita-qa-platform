@@ -151,10 +151,23 @@ create table if not exists mqa_active_exclusions (
   primary key (agr_no, exclude_date)
 );
 
+-- Saved Отчёт snapshots (report history). The full computed report is stored as
+-- JSON so a past period can be re-opened as-was. See
+-- db/migrations/20260617_mqa_report_snapshots.sql.
+create table if not exists mqa_report_snapshots (
+  id         uuid primary key default gen_random_uuid(),
+  label      text not null,
+  filters    jsonb not null default '{}'::jsonb,
+  report     jsonb not null,
+  created_by text,
+  created_at timestamptz not null default now()
+);
+
 -- Lock down to service-role access only.
 alter table mqa_accountants         enable row level security;
 alter table mqa_violations          enable row level security;
 alter table mqa_active_exclusions   enable row level security;
+alter table mqa_report_snapshots    enable row level security;
 alter table mqa_chats               enable row level security;
 alter table mqa_criteria            enable row level security;
 alter table mqa_evaluations         enable row level security;
