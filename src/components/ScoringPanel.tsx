@@ -19,6 +19,12 @@ import {
   type Greeting,
 } from "@/lib/scoring";
 import { predictEvaluation, toSnapshot, type AiModel } from "@/lib/ai";
+import {
+  SORT_OPTIONS,
+  cmpAgrNo,
+  compareByActivity,
+  type SortBy,
+} from "@/lib/chat-list";
 import type {
   Accountant,
   ActiveExclusion,
@@ -57,22 +63,6 @@ function tgHref(link: string, client: TgClient): string {
 }
 
 type Scope = "day" | "all";
-
-// How the chat list is ordered. "activity" (default) is the order Margarita
-// expects — most recently active chats first. "worst" keeps the old "problem
-// chats on top" behaviour. "number" is a stable order by contract №.
-type SortBy = "activity" | "worst" | "number";
-
-const SORT_OPTIONS: { id: SortBy; label: string }[] = [
-  { id: "activity", label: "по активности (свежие сверху)" },
-  { id: "worst", label: "проблемные сверху" },
-  { id: "number", label: "по № договора" },
-];
-
-/** Compare contract numbers numerically where possible ("59" < "118" < "B-3302"). */
-function cmpAgrNo(a: string, b: string): number {
-  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
-}
 
 /** Per-chat hide/restore control for the "Активные за день" view (day scope). */
 type HideControl = { hidden: boolean; onToggle: () => void } | null;
@@ -312,15 +302,10 @@ export default function ScoringPanel({
     }
     if (sortBy === "activity") {
       // Most recent activity first, by precise timestamp when the sync has it
-      // (so 11:00 sorts above 10:30 on the same day); falls back to the date.
-      // Null activity sinks to the bottom. ISO timestamps/dates sort lexically.
+      // (so 11:00 sorts above 10:30 on the same day); falls back to the date or
+      // a task touch. Null activity sinks to the bottom.
       const key = (c: Chat) => c.last_activity_at ?? lastActivityFor(c) ?? "";
-      arr.sort((a, b) => {
-        const ka = key(a);
-        const kb = key(b);
-        if (ka !== kb) return kb.localeCompare(ka);
-        return cmpAgrNo(a.agr_no, b.agr_no);
-      });
+      arr.sort((a, b) => compareByActivity(a, b, key));
       return arr;
     }
     // "worst": problem chats on top, by saved total or the AI's predicted total.
