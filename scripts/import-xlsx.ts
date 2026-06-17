@@ -17,9 +17,15 @@
 import * as XLSX from "xlsx";
 import { createClient } from "@supabase/supabase-js";
 import { TABLES } from "../src/lib/tables";
-import { bandFor, computeOverall } from "../src/lib/scoring";
+import {
+  parseChatRow,
+  parseEvalRow,
+  toIsoDate as iso,
+  cleanStr as str,
+  type Cell,
+} from "../src/lib/import-parse";
 
-type Row = (string | number | Date | null | undefined)[];
+type Row = Cell[];
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -28,27 +34,6 @@ function arg(name: string): string | undefined {
 const DRY = process.argv.includes("--dry-run");
 const CHATS_ONLY = process.argv.includes("--chats-only");
 const FILE = arg("file") ?? "data/sheet.xlsx";
-
-const iso = (v: unknown): string | null => {
-  if (v instanceof Date) {
-    const y = v.getUTCFullYear();
-    if (Number.isNaN(v.getTime()) || y < 2000 || y > 2100) return null; // guard corrupt serials
-    return v.toISOString().slice(0, 10);
-  }
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
-  return null;
-};
-const str = (v: unknown): string | null => {
-  if (v === null || v === undefined) return null;
-  const s = String(v).trim();
-  return s === "" || s === "--" ? null : s;
-};
-const num = (v: unknown): number | undefined => {
-  if (typeof v === "number") return v;
-  if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v)))
-    return Number(v);
-  return undefined;
-};
 
 function sheetRows(wb: XLSX.WorkBook, name: string): Row[] {
   const ws = wb.Sheets[name];
@@ -60,67 +45,22 @@ function main() {
   const wb = XLSX.readFile(FILE, { cellDates: true });
 
   // --- Чаты ---------------------------------------------------------------
-  const chatRows = sheetRows(wb, "Чаты").slice(1); // skip header
-  const chats = chatRows
-    .filter((r) => str(r[0]))
-    .map((r) => ({
-      agr_no: String(r[0]).trim(),
-      hvhh: str(r[1]),
-      name_agr: str(r[2]),
-      name_tax: str(r[3]),
-      status: (str(r[4]) ?? "").startsWith("Active") ? "Active" : "Inactive",
-      tax_activation_date: iso(r[5]),
-      accountant: str(r[6]), // col 7 holds the accountant in her sheet
-      created_date: iso(r[7]),
-      chat_name: str(r[8]) ?? String(r[0]).trim(),
-      chat_link: str(r[9]),
-      // The source "Чаты" sheet has no manager column — do NOT copy the
-      // accountant here (that mislabelled every chat's manager). Managers are
-      // captured from real manager-role evaluations instead. Map a real column
-      // here if one is added to the sheet.
-      manager: null as string | null,
-      // No debt-amount column in the source sheet; the per-evaluation "Долги"
-      // status (Оценка cols 17/18) carries the debt follow-up state instead.
-      debts: null as string | null,
-    }));
+  // parseChatRow drops rows with no contract № and never fabricates
+  // manager/debts (the source sheet has neither column). See src/lib/import-parse.
+  const chats = sheetRows(wb, "Чаты")
+    .slice(1) // skip header
+    .map(parseChatRow)
+    .filter((c): c is NonNullable<typeof c> => c !== null);
   // de-dupe by agr_no (keep first)
   const chatMap = new Map(chats.map((c) => [c.agr_no, c]));
 
   // --- Оценка -> evaluations ---------------------------------------------
-  const evalRows = sheetRows(wb, "Оценка 26").slice(2); // header on row 2
-  const MONTHLY_COLS: [string, number, number][] = [
-    ["main_taxes", 11, 12],
-    ["salary", 13, 14],
-    ["primary_docs", 15, 16],
-    ["debts", 17, 18],
-  ];
-  let evaluations = evalRows
-    .filter((r) => str(r[0]) && iso(r[8]))
-    .map((r) => {
-      const criteria: Record<string, number> = {};
-      const a = num(r[9]);
-      const s = num(r[10]);
-      if (a !== undefined) criteria.accuracy = a;
-      if (s !== undefined) criteria.sla = s;
-      const monthly: Record<string, { status: string; prev: string }> = {};
-      for (const [id, sc, pc] of MONTHLY_COLS) {
-        monthly[id] = { status: str(r[sc]) ?? "", prev: str(r[pc]) ?? "--" };
-      }
-      const checking_date = iso(r[8])!;
-      const overall = num(r[19]);
-      const total =
-        overall !== undefined ? overall : computeOverall(criteria, monthly);
-      return {
-        chat_agr_no: String(r[0]).trim(),
-        period: checking_date.slice(0, 7).replace("-", ""),
-        checking_date,
-        accountant: str(r[5]),
-        scores: { criteria, monthly },
-        total_score: total,
-        quality_band: bandFor(total),
-        comment: str(r[20]),
-      };
-    });
+  // parseEvalRow requires a contract № + valid date, maps the four monthly
+  // columns, and falls back to the computed score when "Общая" is blank.
+  let evaluations = sheetRows(wb, "Оценка 26")
+    .slice(2) // header on row 2
+    .map(parseEvalRow)
+    .filter((e): e is NonNullable<typeof e> => e !== null);
 
   // --- Задачи -> tasks ----------------------------------------------------
   const taskRows = sheetRows(wb, "Задачи 26").slice(3); // data from row 4
