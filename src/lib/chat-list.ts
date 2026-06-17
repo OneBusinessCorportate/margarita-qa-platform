@@ -7,6 +7,7 @@
 // "worst-first" snapshot, the per-day task fallback); everything here is pure.
 // ---------------------------------------------------------------------------
 import type { Chat } from "./types";
+import { MONTHLY_CATEGORIES } from "./scoring";
 
 /** How the chat list is ordered. */
 export type SortBy = "activity" | "worst" | "number";
@@ -82,4 +83,23 @@ export function waitingLabel(
   if (hours < 1) return "ждёт <1 ч";
   if (hours < 24) return `ждёт ${hours} ч`;
   return `ждёт ${Math.floor(hours / 24)} дн`;
+}
+
+/**
+ * Classify a chat's "Долги" follow-up status for display:
+ *   none     — "Нет долга" (nothing owed)
+ *   fail     — a failing status ("Не написал 1/2" — client wasn't chased)
+ *   progress — any other in-flight status ("1-й написал", "1-й позвонил", …)
+ * Returns null when there's no status to show. This is the real debt signal QA
+ * tracks; the standing amount isn't in the data feed.
+ */
+export type DebtTone = "none" | "progress" | "fail";
+
+export function debtTone(status: string | null | undefined): DebtTone | null {
+  const s = (status ?? "").trim();
+  if (!s) return null;
+  if (/нет долга/i.test(s)) return "none";
+  const debtCat = MONTHLY_CATEGORIES.find((c) => c.id === "debts");
+  if (debtCat?.failStatuses.includes(s)) return "fail";
+  return "progress";
 }

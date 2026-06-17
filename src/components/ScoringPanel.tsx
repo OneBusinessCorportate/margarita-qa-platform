@@ -23,6 +23,7 @@ import {
   SORT_OPTIONS,
   cmpAgrNo,
   compareByActivity,
+  debtTone,
   isTelegramLink,
   waitingLabel,
   type SortBy,
@@ -97,7 +98,9 @@ export default function ScoringPanel({
   const [onlyUnanswered, setOnlyUnanswered] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
   const [hideStale, setHideStale] = useState(false);
-  const [tgClient, setTgClient] = useState<TgClient>("a");
+  // Default to the "K" web client — it loads much faster than "A" (helps the
+  // "chats open slowly / sometimes don't open" complaint). A saved choice wins.
+  const [tgClient, setTgClient] = useState<TgClient>("k");
   // Chats QA manually hid from "Активные за день", keyed `${agr_no}|${date}`.
   const [excluded, setExcluded] = useState<Set<string>>(
     () => new Set(initialExclusions.map((e) => `${e.chat_agr_no}|${e.exclude_date}`))
@@ -283,8 +286,9 @@ export default function ScoringPanel({
 
   // The list order. By default chats are ordered by most recent real activity
   // (the order Margarita expects); she can switch to "problem chats on top" or
-  // contract-№ order. NOTE: data only has DATE granularity (last_activity_date),
-  // not intra-day timestamps, so chats active on the same day are tie-broken by №.
+  // contract-№ order. Uses the precise last_activity_at timestamp from the sync,
+  // so chats active the same day order by real message time (11:00 above 10:30);
+  // chats with only a date (or none) are tie-broken by contract №.
   //
   // Order is FROZEN against saving: once the list is laid out for a given set of
   // filters/date/sort, saving a chat must not make it jump. The activity and №
@@ -936,21 +940,26 @@ function ChatScoreRow({
               </span>
             )}
           </div>
-          {/* Real debt from the chat record, so QA can judge the "Долги" column
-              against the actual amount instead of guessing. */}
+          {/* Debt follow-up status — the real "Долги" signal QA tracks (carried
+              from the last check). The standing amount isn't in the data feed,
+              but this status answers "did the client get chased / pay?". */}
           {(() => {
-            const d = (chat.debts ?? "").trim();
-            if (!d || d === "--" || d === "—") return null;
-            const noDebt = /нет долга/i.test(d) || d === "0";
+            const debtStatus = monthly["debts"]?.status?.trim() || "";
+            const tone = debtTone(debtStatus);
+            if (!tone) return null;
+            const cls =
+              tone === "fail"
+                ? "bg-red-100 text-red-700"
+                : tone === "none"
+                ? "bg-gray-100 text-gray-500"
+                : "bg-amber-100 text-amber-700";
             return (
               <div className="text-xs mt-1">
                 <span
-                  className={`inline-block rounded px-1.5 py-0.5 font-medium ${
-                    noDebt ? "bg-gray-100 text-gray-500" : "bg-red-100 text-red-700"
-                  }`}
-                  title="Фактическая задолженность из карточки чата"
+                  className={`inline-block rounded px-1.5 py-0.5 font-medium ${cls}`}
+                  title="Статус по долгам из последней проверки (см. колонку «Долги»)"
                 >
-                  Долг: {d}
+                  Долги: {debtStatus}
                 </span>
               </div>
             );

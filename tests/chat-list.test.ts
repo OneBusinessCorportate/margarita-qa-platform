@@ -5,6 +5,7 @@ import {
   activityKey,
   cmpAgrNo,
   compareByActivity,
+  debtTone,
   isTelegramLink,
   isUnanswered,
   waitingLabel,
@@ -118,6 +119,17 @@ test("isUnanswered is true only when the client had the last word", () => {
   assert.equal(isUnanswered(chat({ agr_no: "1", unanswered: false })), false);
   // Unknown (feed-only chat, no captured messages) is not treated as unanswered.
   assert.equal(isUnanswered(chat({ agr_no: "1", unanswered: null })), false);
+});
+
+test("debtTone classifies the Долги follow-up status", () => {
+  assert.equal(debtTone("Нет долга"), "none");
+  assert.equal(debtTone("Не написал 1"), "fail");
+  assert.equal(debtTone("Не написал 2"), "fail");
+  assert.equal(debtTone("1-й написал"), "progress");
+  assert.equal(debtTone("1-й позвонил"), "progress");
+  assert.equal(debtTone(""), null);
+  assert.equal(debtTone(null), null);
+  assert.equal(debtTone(undefined), null);
 });
 
 test("waitingLabel renders hours then days from the last message", () => {
