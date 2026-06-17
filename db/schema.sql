@@ -151,3 +151,44 @@ alter table mqa_evaluations         enable row level security;
 alter table mqa_manager_evaluations enable row level security;
 alter table mqa_tasks               enable row level security;
 alter table mqa_users               enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- Live activity sync (keeps mqa_chats.last_activity_date current)
+-- ---------------------------------------------------------------------------
+-- The importer does not set last_activity_date, so this scheduled job keeps it
+-- in sync with the live Telegram feed (public.chats) by matching the Telegram
+-- chat id embedded in chat_link. This is what makes the dashboard's
+-- "Активных чатов" (active chats today) reflect same-day activity.
+-- Runs every 15 minutes via pg_cron. Canonical definition:
+--   db/migrations/20260617_mqa_refresh_last_activity_every_15min.sql
+create extension if not exists pg_cron;
+
+create or replace function public.mqa_refresh_last_activity()
+returns void
+language sql
+security definer
+set search_path to 'public'
+as $function$
+  update mqa_chats m
+  set last_activity_date = src.last_activity
+  from (
+    select m2.agr_no,
+           max((c.last_seen_at at time zone 'Asia/Yerevan')::date) as last_activity
+    from mqa_chats m2
+    join chats c
+      on c.chat_id = (case
+                        when regexp_replace(m2.chat_link, '^.*#', '') ~ '^-?\d+$'
+                        then regexp_replace(m2.chat_link, '^.*#', '')::bigint
+                      end)
+    where c.last_seen_at is not null
+    group by m2.agr_no
+  ) src
+  where m.agr_no = src.agr_no
+    and m.last_activity_date is distinct from src.last_activity;
+$function$;
+
+select cron.schedule(
+  'mqa_refresh_last_activity',
+  '*/15 * * * *',
+  'select public.mqa_refresh_last_activity();'
+);
