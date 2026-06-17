@@ -180,15 +180,33 @@ export async function createEvaluation(
 
   const sb = getServiceClient();
   if (sb) {
+    // Upsert on (chat_agr_no, checking_date, role): one row per role per day.
+    // This makes re-scoring a chat that the page hadn't loaded (it only loads
+    // the most recent 1000 evaluations) update the existing row instead of
+    // hitting the unique constraint. id/created_at are omitted so the existing
+    // row keeps them on conflict, and the DB defaults fill them on insert.
+    const payload: Record<string, unknown> = { ...row };
+    delete payload.id;
+    delete payload.created_at;
     const { data, error } = await sb
       .from(TABLES.evaluations)
-      .insert(row)
+      .upsert(payload, { onConflict: "chat_agr_no,checking_date,role" })
       .select()
       .single();
     if (error) throw error;
     return normalizeEvaluation(data);
   }
-  store().evaluations.unshift(row);
+  // Mock store: replace any existing row for the same (chat, date, role).
+  const s = store();
+  s.evaluations = s.evaluations.filter(
+    (e) =>
+      !(
+        e.chat_agr_no === row.chat_agr_no &&
+        e.checking_date === row.checking_date &&
+        (e.role ?? "accountant") === row.role
+      )
+  );
+  s.evaluations.unshift(row);
   return row;
 }
 

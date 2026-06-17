@@ -74,7 +74,13 @@ function main() {
       created_date: iso(r[7]),
       chat_name: str(r[8]) ?? String(r[0]).trim(),
       chat_link: str(r[9]),
-      manager: str(r[6]),
+      // The source "Чаты" sheet has no manager column — do NOT copy the
+      // accountant here (that mislabelled every chat's manager). Managers are
+      // captured from real manager-role evaluations instead. Map a real column
+      // here if one is added to the sheet.
+      manager: null as string | null,
+      // No debt-amount column in the source sheet; the per-evaluation "Долги"
+      // status (Оценка cols 17/18) carries the debt follow-up state instead.
       debts: null as string | null,
     }));
   // de-dupe by agr_no (keep first)
@@ -213,8 +219,14 @@ function main() {
       console.log("Chats-only import complete (evaluations/tasks skipped).");
       return;
     }
+    // Upsert (not insert) so re-running the import updates the same row instead
+    // of creating duplicates — there is one evaluation per (chat, date, role).
     for (const part of chunk(evaluations, 500)) {
-      e = (await sb.from(TABLES.evaluations).insert(part)).error;
+      e = (
+        await sb
+          .from(TABLES.evaluations)
+          .upsert(part, { onConflict: "chat_agr_no,checking_date,role" })
+      ).error;
       if (e) throw e;
     }
     for (const part of chunk(tasks, 500)) {

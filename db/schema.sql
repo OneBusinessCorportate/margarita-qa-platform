@@ -69,7 +69,12 @@ create table if not exists mqa_evaluations (
   total_score   double precision not null default 0, -- numeric would surface as string via PostgREST
   quality_band  text not null,
   comment       text,
-  created_at    timestamptz not null default now()
+  created_at    timestamptz not null default now(),
+  -- One evaluation per chat per role per day. The app + importer upsert against
+  -- this; without it, re-imports created duplicate rows that double-counted in
+  -- the report. See db/migrations/20260617_mqa_dedupe_evaluations_and_fix_manager.sql.
+  constraint mqa_evaluations_chat_date_role_key
+    unique (chat_agr_no, checking_date, role)
 );
 
 -- If the table predates the per-role split, add the column in place.
