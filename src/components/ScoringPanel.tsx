@@ -724,7 +724,7 @@ function ChatScoreRow({
               (hideControl.hidden ? (
                 <button
                   onClick={hideControl.onToggle}
-                  className="text-emerald-600 hover:underline text-xs whitespace-nowrap"
+                  className="inline-flex items-center gap-1 text-emerald-600 hover:underline text-xs whitespace-nowrap"
                   title="Вернуть чат в список «Активные за день»"
                 >
                   ↩ Вернуть
@@ -733,10 +733,26 @@ function ChatScoreRow({
                 <button
                   onClick={hideControl.onToggle}
                   aria-label="Убрать чат из «Активные за день»"
-                  className="text-gray-400 hover:text-red-600 text-base leading-none whitespace-nowrap"
                   title="Убрать этот чат из списка «Активные за день» на этот день (неважный чат)"
+                  className="inline-flex items-center justify-center rounded p-1 text-gray-400 hover:text-red-600 hover:bg-red-50"
                 >
-                  🗑
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 6h18" />
+                    <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6" />
+                    <path d="M14 11v6" />
+                  </svg>
                 </button>
               ))}
           </div>
