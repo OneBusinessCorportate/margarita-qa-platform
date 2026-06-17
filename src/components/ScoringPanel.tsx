@@ -102,6 +102,7 @@ export default function ScoringPanel({
   const [search, setSearch] = useState("");
   const [accFilters, setAccFilters] = useState<string[]>([]);
   const [onlyUnscored, setOnlyUnscored] = useState(false);
+  const [onlyUnanswered, setOnlyUnanswered] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
   const [hideStale, setHideStale] = useState(false);
   const [tgClient, setTgClient] = useState<TgClient>("a");
@@ -254,11 +255,16 @@ export default function ScoringPanel({
       // show them (to undo). They never affect the "all active chats" view.
       if (scope === "day" && excluded.has(`${c.agr_no}|${date}`) && !showHidden)
         return false;
-      if (activeOnly && c.status !== "Active") return false;
+      // The imported `status` flag goes stale, which hid genuinely active chats.
+      // In the day view a chat IS in the list because it was really active that
+      // day, so the status flag must not filter it out there. Only the "all"
+      // scope honours the status flag.
+      if (activeOnly && scope === "all" && c.status !== "Active") return false;
       if (hideStale && isStaleActivity(lastActivityFor(c), nowISO)) return false;
       if (accFilters.length && !(c.accountant && accFilters.includes(c.accountant)))
         return false;
       if (onlyUnscored && evalForDate.has(c.agr_no)) return false;
+      if (onlyUnanswered && !c.unanswered) return false;
       if (
         n &&
         !c.agr_no.toLowerCase().includes(n) &&
@@ -268,7 +274,7 @@ export default function ScoringPanel({
         return false;
       return true;
     });
-  }, [chats, search, accFilters, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
+  }, [chats, search, accFilters, onlyUnscored, onlyUnanswered, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
 
   // The list order. By default chats are ordered by most recent real activity
   // (the order Margarita expects); she can switch to "problem chats on top" or
@@ -289,11 +295,12 @@ export default function ScoringPanel({
         activeOnly,
         hideStale,
         onlyUnscored,
+        onlyUnanswered,
         showHidden,
         accFilters,
         search,
       ]),
-    [scope, date, sortBy, activeOnly, hideStale, onlyUnscored, showHidden, accFilters, search]
+    [scope, date, sortBy, activeOnly, hideStale, onlyUnscored, onlyUnanswered, showHidden, accFilters, search]
   );
   const orderRef = useRef<{ sig: string; ids: string[] }>({ sig: "", ids: [] });
 
@@ -304,11 +311,14 @@ export default function ScoringPanel({
       return arr;
     }
     if (sortBy === "activity") {
-      // Most recent activity first; null activity sinks to the bottom.
+      // Most recent activity first, by precise timestamp when the sync has it
+      // (so 11:00 sorts above 10:30 on the same day); falls back to the date.
+      // Null activity sinks to the bottom. ISO timestamps/dates sort lexically.
+      const key = (c: Chat) => c.last_activity_at ?? lastActivityFor(c) ?? "";
       arr.sort((a, b) => {
-        const da = lastActivityFor(a) ?? "";
-        const db = lastActivityFor(b) ?? "";
-        if (da !== db) return db.localeCompare(da);
+        const ka = key(a);
+        const kb = key(b);
+        if (ka !== kb) return kb.localeCompare(ka);
         return cmpAgrNo(a.agr_no, b.agr_no);
       });
       return arr;
@@ -342,7 +352,7 @@ export default function ScoringPanel({
   // When the filtered set changes, snap back to the first page.
   useEffect(() => {
     setVisibleCount(PAGE);
-  }, [search, accFilters, onlyUnscored, activeOnly, hideStale, scope, date, sortBy]);
+  }, [search, accFilters, onlyUnscored, onlyUnanswered, activeOnly, hideStale, scope, date, sortBy]);
 
   // Changing the day (or leaving the day view) re-hides hidden chats.
   useEffect(() => {
@@ -452,6 +462,17 @@ export default function ScoringPanel({
             onChange={(e) => setOnlyUnscored(e.target.checked)}
           />
           Только неоценённые
+        </label>
+        <label
+          className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5"
+          title="Чаты, где последним написал клиент — ещё без ответа (в т.ч. со вчерашнего дня)"
+        >
+          <input
+            type="checkbox"
+            checked={onlyUnanswered}
+            onChange={(e) => setOnlyUnanswered(e.target.checked)}
+          />
+          Только без ответа
         </label>
         <label className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5">
           <input
@@ -866,6 +887,14 @@ function ChatScoreRow({
               </span>
             ) : (
               <span className="text-gray-400">активность: {lastActivity}</span>
+            )}
+            {chat.unanswered && (
+              <span
+                className="ml-1.5 inline-block rounded bg-orange-100 text-orange-700 font-medium px-1.5 py-0.5"
+                title="Последним написал клиент — чат ещё без ответа"
+              >
+                ⏳ без ответа
+              </span>
             )}
           </div>
           {/* Real debt from the chat record, so QA can judge the "Долги" column

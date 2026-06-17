@@ -29,6 +29,12 @@ export interface Chat {
    * chat from one whose status flag still says "Active" but went quiet days ago.
    */
   last_activity_date?: string | null;
+  /** Precise timestamp of the last message — orders chats correctly within a day. */
+  last_activity_at?: string | null;
+  /** Role of the last message's sender (client / accountant / manager / …). */
+  last_sender_role?: string | null;
+  /** True when the client had the last word — the chat is still awaiting a reply. */
+  unanswered?: boolean | null;
 }
 
 export type AccountantRole = "accountant" | "other-specialist" | "dismissed";

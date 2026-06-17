@@ -34,11 +34,17 @@ create table if not exists mqa_chats (
   manager             text,
   debts               text,
   created_date        date,
-  last_activity_date  date          -- last real chat activity (bot feed / import)
+  last_activity_date  date,         -- last real chat activity, date (bot feed / import)
+  last_activity_at    timestamptz,  -- last real chat activity, precise time (for intra-day order)
+  last_sender_role    text,         -- role of the last message's sender
+  unanswered          boolean       -- true when the client had the last word (still unanswered)
 );
 
--- If the table already exists from an earlier deploy, add the column in place.
+-- If the table already exists from an earlier deploy, add the columns in place.
 alter table mqa_chats add column if not exists last_activity_date date;
+alter table mqa_chats add column if not exists last_activity_at   timestamptz;
+alter table mqa_chats add column if not exists last_sender_role   text;
+alter table mqa_chats add column if not exists unanswered         boolean;
 
 -- Config-driven scoring criteria (model A). Seeded from src/lib/scoring.ts.
 create table if not exists mqa_criteria (
@@ -176,14 +182,15 @@ alter table mqa_tasks               enable row level security;
 alter table mqa_users               enable row level security;
 
 -- ---------------------------------------------------------------------------
--- Live activity sync (keeps mqa_chats.last_activity_date current)
+-- Live activity sync (keeps mqa_chats activity columns current)
 -- ---------------------------------------------------------------------------
--- The importer does not set last_activity_date, so this scheduled job keeps it
--- in sync with the live Telegram feed (public.chats) by matching the Telegram
--- chat id embedded in chat_link. This is what makes the dashboard's
--- "Активных чатов" (active chats today) reflect same-day activity.
+-- The importer does not set activity, so this scheduled job keeps it in sync
+-- with the live Telegram feed (public.chats / public.messages) by matching the
+-- Telegram chat id embedded in chat_link. It populates:
+--   • last_activity_date / last_activity_at — same-day "Активных чатов" + order
+--   • last_sender_role / unanswered          — surface chats still awaiting a reply
 -- Runs every 15 minutes via pg_cron. Canonical definition:
---   db/migrations/20260617_mqa_refresh_last_activity_every_15min.sql
+--   db/migrations/20260617_mqa_sync_activity_timestamp_and_unanswered.sql
 create extension if not exists pg_cron;
 
 create or replace function public.mqa_refresh_last_activity()
@@ -192,22 +199,46 @@ language sql
 security definer
 set search_path to 'public'
 as $function$
+  with linked as (
+    select m.agr_no,
+           case when regexp_replace(m.chat_link, '^.*#', '') ~ '^-?\d+$'
+                then regexp_replace(m.chat_link, '^.*#', '')::bigint
+           end as chat_id
+    from mqa_chats m
+  ),
+  last_msg as (
+    select distinct on (msg.chat_id)
+           msg.chat_id, msg.created_at, msg.sender_role
+    from messages msg
+    join (select distinct chat_id from linked where chat_id is not null) l
+      on l.chat_id = msg.chat_id
+    order by msg.chat_id, msg.created_at desc
+  ),
+  src as (
+    select l.agr_no,
+           coalesce(lm.created_at, c.last_seen_at) as last_at,
+           lm.sender_role                          as last_role
+    from linked l
+    left join chats c     on c.chat_id  = l.chat_id
+    left join last_msg lm on lm.chat_id = l.chat_id
+    where l.chat_id is not null
+      and coalesce(lm.created_at, c.last_seen_at) is not null
+  )
   update mqa_chats m
-  set last_activity_date = src.last_activity
-  from (
-    select m2.agr_no,
-           max((c.last_seen_at at time zone 'Asia/Yerevan')::date) as last_activity
-    from mqa_chats m2
-    join chats c
-      on c.chat_id = (case
-                        when regexp_replace(m2.chat_link, '^.*#', '') ~ '^-?\d+$'
-                        then regexp_replace(m2.chat_link, '^.*#', '')::bigint
-                      end)
-    where c.last_seen_at is not null
-    group by m2.agr_no
-  ) src
+  set last_activity_at   = src.last_at,
+      last_activity_date = (src.last_at at time zone 'Asia/Yerevan')::date,
+      last_sender_role   = src.last_role,
+      unanswered         = case when src.last_role is null then null
+                                else src.last_role = 'client' end
+  from src
   where m.agr_no = src.agr_no
-    and m.last_activity_date is distinct from src.last_activity;
+    and (
+      m.last_activity_at   is distinct from src.last_at
+      or m.last_activity_date is distinct from (src.last_at at time zone 'Asia/Yerevan')::date
+      or m.last_sender_role  is distinct from src.last_role
+      or m.unanswered        is distinct from (case when src.last_role is null then null
+                                                    else src.last_role = 'client' end)
+    );
 $function$;
 
 select cron.schedule(
