@@ -1,38 +1,11 @@
-import { BANDS, STALE_ACTIVITY_DAYS } from "@/lib/scoring";
+import { BANDS } from "@/lib/scoring";
 import type { DailyReport } from "@/lib/report";
 
-// Presentational report blocks (totals, distribution, per-accountant, tasks),
-// shared by the live dashboard and saved-snapshot views so both render the
-// exact same way.
+// Presentational report blocks (distribution, per-accountant, tasks), shared by
+// the live dashboard and saved-snapshot views so both render the exact same way.
 export default function ReportView({ report }: { report: DailyReport }) {
-  const totals = [
-    {
-      label: "Активных чатов",
-      value: report.totals.activeChats,
-      hint: `с активностью за ≤ ${STALE_ACTIVITY_DAYS} дн.`,
-    },
-    { label: "Новых чатов", value: report.totals.newChats, hint: undefined },
-    {
-      label: "Чаты без ответственных",
-      value: report.totals.chatsWithoutResponsible,
-      hint: undefined,
-    },
-    { label: "Оценено чатов всего", value: report.totals.evaluatedChats, hint: undefined },
-  ];
-
   return (
     <div className="space-y-4">
-      {/* Totals */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {totals.map((t) => (
-          <div key={t.label} className="card p-3">
-            <div className="text-xs text-gray-500">{t.label}</div>
-            <div className="text-2xl font-semibold tabular-nums">{t.value}</div>
-            {t.hint && <div className="text-[11px] text-gray-400 mt-0.5">{t.hint}</div>}
-          </div>
-        ))}
-      </div>
-
       {/* Distribution + service quality */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="card p-3 md:col-span-2">
