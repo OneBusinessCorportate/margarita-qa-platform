@@ -1,4 +1,4 @@
-import { getReport } from "@/lib/repo";
+import { getReport, listViolations } from "@/lib/repo";
 import { buildReportMessage, telegramConfigured } from "@/lib/templates";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
@@ -8,8 +8,15 @@ export const dynamic = "force-dynamic";
 // The ONE place to copy/send the daily report — the dashboard links here
 // instead of repeating the text and buttons.
 export default async function MessagesPage() {
-  const report = await getReport({});
-  const reportMessage = buildReportMessage(report);
+  const [report, violations] = await Promise.all([
+    getReport({}),
+    listViolations({}),
+  ]);
+  const reportMessage = buildReportMessage(report, {
+    violations,
+    // Set REPORT_SHEET_URL (e.g. on Render) to append the Google-Sheet link.
+    sheetUrl: process.env.REPORT_SHEET_URL,
+  });
   const botReady = telegramConfigured();
 
   return (
