@@ -23,6 +23,7 @@ import {
   SORT_OPTIONS,
   cmpAgrNo,
   compareByActivity,
+  isTelegramLink,
   type SortBy,
 } from "@/lib/chat-list";
 import type {
@@ -807,18 +808,30 @@ function ChatScoreRow({
             >
               {chat.chat_name}
             </span>
-            {chat.chat_link ? (
+            {isTelegramLink(chat.chat_link) ? (
               <a
-                href={tgHref(chat.chat_link, tgClient)}
-                target={tgWindowFor(chat.chat_link)}
+                href={tgHref(chat.chat_link!, tgClient)}
+                target={tgWindowFor(chat.chat_link!)}
                 rel="noreferrer"
                 className="text-blue-600 hover:underline text-xs whitespace-nowrap"
                 title="Открыть чат в одной вкладке Telegram (быстро)"
               >
                 Открыть ↗
               </a>
+            ) : /whatsapp/i.test(chat.chat_link ?? "") ? (
+              <span
+                className="text-gray-400 text-xs whitespace-nowrap"
+                title="Клиент в WhatsApp — бот не отслеживает этот чат, активность недоступна"
+              >
+                WhatsApp
+              </span>
             ) : (
-              <span className="text-gray-400 text-xs whitespace-nowrap">нет ссылки</span>
+              <span
+                className="text-gray-400 text-xs whitespace-nowrap"
+                title="Нет рабочей ссылки на Telegram-чат — проверьте ссылку в карточке"
+              >
+                нет ссылки
+              </span>
             )}
             {chat.status !== "Active" && (
               <span className="text-xs text-gray-400 whitespace-nowrap">(неактивен)</span>

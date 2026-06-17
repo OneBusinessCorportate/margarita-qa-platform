@@ -52,3 +52,15 @@ export function compareByActivity(
 export function isUnanswered(chat: Chat): boolean {
   return chat.unanswered === true;
 }
+
+/**
+ * Is `link` a usable Telegram chat link we can actually open? Many mqa_chats
+ * carry a non-Telegram value in chat_link — a WhatsApp URL, placeholder text
+ * ("не работаем"), or a chat name someone pasted by mistake. Rendering an
+ * "Открыть" button for those just sends QA to a dead page, so we gate on a real
+ * web.telegram.org / t.me link.
+ */
+export function isTelegramLink(link?: string | null): boolean {
+  if (!link) return false;
+  return /(^|\/\/)(web\.telegram\.org|t\.me)\//.test(link.trim());
+}

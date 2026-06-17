@@ -5,6 +5,7 @@ import {
   activityKey,
   cmpAgrNo,
   compareByActivity,
+  isTelegramLink,
   isUnanswered,
 } from "../src/lib/chat-list";
 import type { Chat } from "../src/lib/types";
@@ -95,6 +96,20 @@ test("compareByActivity honours a custom key (task-touch fallback)", () => {
   const key = (c: Chat) => activityKey(c, taskDate[c.agr_no]);
   const sorted = [a, b].sort((x, y) => compareByActivity(x, y, key));
   assert.deepEqual(sorted.map((c) => c.agr_no), ["2", "1"]);
+});
+
+test("isTelegramLink accepts only real Telegram links", () => {
+  assert.equal(isTelegramLink("https://web.telegram.org/a/#-4838549046"), true);
+  assert.equal(isTelegramLink("https://web.telegram.org/k/#-4838549046"), true);
+  assert.equal(isTelegramLink("https://t.me/+ajvcAOzUVsNkMzVi"), true);
+  assert.equal(isTelegramLink("web.telegram.org/a/#-1"), true);
+  // Junk values seen in real data must NOT render an "Открыть" button.
+  assert.equal(isTelegramLink("https://web.whatsapp.com"), false);
+  assert.equal(isTelegramLink("Հով Խաչ N-1579 AM (telegram.org)"), false);
+  assert.equal(isTelegramLink("не работаем"), false);
+  assert.equal(isTelegramLink(""), false);
+  assert.equal(isTelegramLink(null), false);
+  assert.equal(isTelegramLink(undefined), false);
 });
 
 test("isUnanswered is true only when the client had the last word", () => {
