@@ -4,7 +4,6 @@ import {
   CRITICAL_ACCUMULATION,
   CRITICAL_ERROR_RULES,
   GRADE_LADDERS,
-  STAR_RULES,
   fmtDram,
 } from "@/lib/handbook";
 import { SANCTION_CAP_PCT, SANCTION_RULES } from "@/lib/violations";
@@ -163,20 +162,6 @@ export default function HandbookPage() {
               </ul>
             </div>
           ))}
-        </div>
-        <div className="card p-3">
-          <div className="font-medium text-gray-900 mb-2 text-sm">
-            Система звёзд
-          </div>
-          <div className="grid gap-2 sm:grid-cols-3 text-sm">
-            {STAR_RULES.map((s) => (
-              <div key={s.name} className="rounded border border-gray-100 p-2">
-                <div className="font-medium">⭐ {s.name}</div>
-                <div className="text-xs text-gray-600">{s.reward}</div>
-                <div className="text-[11px] text-gray-400">{s.condition}</div>
-              </div>
-            ))}
-          </div>
         </div>
       </Section>
 

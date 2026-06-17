@@ -129,18 +129,6 @@ export const BONUS_RULES: BonusRule[] = [
   },
 ];
 
-export interface StarRule {
-  name: string;
-  reward: string;
-  condition: string;
-}
-
-export const STAR_RULES: StarRule[] = [
-  { name: "Звезда дня", reward: "Звезда дня", condition: "Сервис > 95%" },
-  { name: "Звезда недели", reward: "Торт / Пиво", condition: "5 звёзд дня" },
-  { name: "Звезда месяца", reward: "Day Off", condition: "2 звезды недели / 10 звёзд" },
-];
-
 // --- Critical errors (Регистрационный отдел) --------------------------------
 // These hit the KPI bonus (variable pay), separate from the weekly point score.
 
