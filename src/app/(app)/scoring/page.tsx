@@ -1,15 +1,22 @@
 import ScoringPanel from "@/components/ScoringPanel";
-import { listAccountants, listChats, listEvaluations, listTasks } from "@/lib/repo";
+import {
+  listAccountants,
+  listActiveExclusions,
+  listChats,
+  listEvaluations,
+  listTasks,
+} from "@/lib/repo";
 import { trainAiModel } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
 
 export default async function ScoringPage() {
-  const [chats, accountants, evaluations, tasks] = await Promise.all([
+  const [chats, accountants, evaluations, tasks, exclusions] = await Promise.all([
     listChats(),
     listAccountants(),
     listEvaluations({}),
     listTasks(),
+    listActiveExclusions(),
   ]);
 
   // Default the day view to the most recent day chats were ACTUALLY active
@@ -40,6 +47,7 @@ export default async function ScoringPage() {
         initialEvaluations={evaluations.slice(0, 1000)}
         aiModel={aiModel}
         latestActivityDate={latestActivityDate}
+        initialExclusions={exclusions}
         taskActivity={tasks.map((t) => ({
           chat_agr_no: t.chat_agr_no,
           date: (t.checking_date ?? t.due_date_original ?? "").slice(0, 10),

@@ -187,3 +187,13 @@ export interface NewTaskInput {
   accountant?: string | null;
   checking_date?: string | null;
 }
+
+/**
+ * A chat manually hidden from the scoring page's "Активные за день" list for a
+ * specific day (QA decided it isn't worth reviewing). Per-(chat, day): hiding a
+ * chat one day never affects another day.
+ */
+export interface ActiveExclusion {
+  chat_agr_no: string;
+  exclude_date: string; // ISO date
+}

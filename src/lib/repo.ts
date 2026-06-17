@@ -16,6 +16,7 @@ import {
 import { buildReport, type DailyReport, type ReportFilters } from "./report";
 import type {
   Accountant,
+  ActiveExclusion,
   Chat,
   Evaluation,
   ManagerEvaluation,
@@ -366,6 +367,68 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
   }
   store().tasks.unshift(row);
   return row;
+}
+
+// --- Active-list exclusions ("Скрыть из активных за день") ------------------
+
+/** Chats QA manually hid from the "Активные за день" list, per (chat, day). */
+export async function listActiveExclusions(): Promise<ActiveExclusion[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.activeExclusions)
+      .select("agr_no, exclude_date");
+    if (error) throw error;
+    return (data ?? []).map((r: any) => ({
+      chat_agr_no: r.agr_no,
+      exclude_date: String(r.exclude_date).slice(0, 10),
+    }));
+  }
+  return store().activeExclusions;
+}
+
+export async function addActiveExclusion(
+  chatAgrNo: string,
+  excludeDate: string
+): Promise<void> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { error } = await sb
+      .from(TABLES.activeExclusions)
+      .upsert(
+        { agr_no: chatAgrNo, exclude_date: excludeDate },
+        { onConflict: "agr_no,exclude_date" }
+      );
+    if (error) throw error;
+    return;
+  }
+  const rows = store().activeExclusions;
+  if (
+    !rows.some(
+      (r) => r.chat_agr_no === chatAgrNo && r.exclude_date === excludeDate
+    )
+  )
+    rows.push({ chat_agr_no: chatAgrNo, exclude_date: excludeDate });
+}
+
+export async function removeActiveExclusion(
+  chatAgrNo: string,
+  excludeDate: string
+): Promise<void> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { error } = await sb
+      .from(TABLES.activeExclusions)
+      .delete()
+      .eq("agr_no", chatAgrNo)
+      .eq("exclude_date", excludeDate);
+    if (error) throw error;
+    return;
+  }
+  const s = store();
+  s.activeExclusions = s.activeExclusions.filter(
+    (r) => !(r.chat_agr_no === chatAgrNo && r.exclude_date === excludeDate)
+  );
 }
 
 // --- Violations (Нарушения) ------------------------------------------------

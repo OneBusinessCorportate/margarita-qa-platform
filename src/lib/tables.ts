@@ -15,4 +15,5 @@ export const TABLES = {
   tasks: `${PREFIX}tasks`,
   users: `${PREFIX}users`,
   violations: `${PREFIX}violations`,
+  activeExclusions: `${PREFIX}active_exclusions`,
 } as const;

@@ -2,6 +2,7 @@
 // of the server process (resets on restart). Seeded from seed-data.ts.
 import type {
   Accountant,
+  ActiveExclusion,
   Chat,
   Evaluation,
   ManagerEvaluation,
@@ -28,6 +29,7 @@ interface Store {
   users: StoredUser[];
   violations: Violation[];
   managerEvaluations: ManagerEvaluation[];
+  activeExclusions: ActiveExclusion[];
 }
 
 // Use a global to survive module reloads in Next dev (HMR).
@@ -43,6 +45,7 @@ export function store(): Store {
       users: [],
       violations: [],
       managerEvaluations: [],
+      activeExclusions: [],
     };
   }
   return g.__qaStore;

@@ -19,7 +19,13 @@ import {
   type Greeting,
 } from "@/lib/scoring";
 import { predictEvaluation, toSnapshot, type AiModel } from "@/lib/ai";
-import type { Accountant, Chat, Evaluation, MonthlyStatus } from "@/lib/types";
+import type {
+  Accountant,
+  ActiveExclusion,
+  Chat,
+  Evaluation,
+  MonthlyStatus,
+} from "@/lib/types";
 import BandChip from "./BandChip";
 
 /** Everything carried forward from the most recent check before the chosen date. */
@@ -52,6 +58,9 @@ function tgHref(link: string, client: TgClient): string {
 
 type Scope = "day" | "all";
 
+/** Per-chat hide/restore control for the "Активные за день" view (day scope). */
+type HideControl = { hidden: boolean; onToggle: () => void } | null;
+
 export default function ScoringPanel({
   chats,
   accountants,
@@ -59,6 +68,7 @@ export default function ScoringPanel({
   aiModel,
   taskActivity = [],
   latestActivityDate = null,
+  initialExclusions = [],
 }: {
   chats: Chat[];
   accountants: Accountant[];
@@ -66,6 +76,7 @@ export default function ScoringPanel({
   aiModel: AiModel;
   taskActivity?: { chat_agr_no: string; date: string }[];
   latestActivityDate?: string | null;
+  initialExclusions?: ActiveExclusion[];
 }) {
   const router = useRouter();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
@@ -77,6 +88,13 @@ export default function ScoringPanel({
   const [activeOnly, setActiveOnly] = useState(true);
   const [hideStale, setHideStale] = useState(false);
   const [tgClient, setTgClient] = useState<TgClient>("a");
+  // Chats QA manually hid from "Активные за день", keyed `${agr_no}|${date}`.
+  const [excluded, setExcluded] = useState<Set<string>>(
+    () => new Set(initialExclusions.map((e) => `${e.chat_agr_no}|${e.exclude_date}`))
+  );
+  // When on, hidden chats are shown again (with a "Вернуть" button) so QA can
+  // review/undo what was hidden for the day.
+  const [showHidden, setShowHidden] = useState(false);
   // Render only a window of chats at a time so the page stays fast; "load more"
   // grows it. Reset whenever the filtered set changes (see effect below).
   const PAGE = 30;
@@ -201,10 +219,24 @@ export default function ScoringPanel({
     return s;
   }, [chats, lastActivityFor, taskActivity, date]);
 
+  const isHidden = (agrNo: string) => excluded.has(`${agrNo}|${date}`);
+
+  // How many of the day's active chats QA has hidden (drives the "Скрытые (N)"
+  // toggle). Only meaningful in the day view.
+  const hiddenCount = useMemo(() => {
+    let n = 0;
+    for (const agr of activeTodaySet) if (excluded.has(`${agr}|${date}`)) n += 1;
+    return n;
+  }, [activeTodaySet, excluded, date]);
+
   const visibleChats = useMemo(() => {
     const n = search.trim().toLowerCase();
     return chats.filter((c) => {
       if (scope === "day" && !activeTodaySet.has(c.agr_no)) return false;
+      // Hidden-for-this-day chats drop out of the day view unless QA chose to
+      // show them (to undo). They never affect the "all active chats" view.
+      if (scope === "day" && excluded.has(`${c.agr_no}|${date}`) && !showHidden)
+        return false;
       if (activeOnly && c.status !== "Active") return false;
       if (hideStale && isStaleActivity(lastActivityFor(c), nowISO)) return false;
       if (accFilters.length && !(c.accountant && accFilters.includes(c.accountant)))
@@ -219,7 +251,7 @@ export default function ScoringPanel({
         return false;
       return true;
     });
-  }, [chats, search, accFilters, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet]);
+  }, [chats, search, accFilters, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
 
   // Most problematic chats on top. Scored chats sort by Margarita's saved total;
   // un-scored ones are mixed in by the AI's predicted total.
@@ -243,8 +275,40 @@ export default function ScoringPanel({
     setVisibleCount(PAGE);
   }, [search, accFilters, onlyUnscored, activeOnly, hideStale, scope, date]);
 
+  // Changing the day (or leaving the day view) re-hides hidden chats.
+  useEffect(() => {
+    setShowHidden(false);
+  }, [date, scope]);
+
   function onSaved(saved: Evaluation) {
     setEvaluations((prev) => [saved, ...prev.filter((e) => e.id !== saved.id)]);
+  }
+
+  // Hide / restore a chat for the selected day. Optimistic: update the set
+  // immediately, persist in the background, and revert if the request fails.
+  async function setChatHidden(agrNo: string, hidden: boolean) {
+    const key = `${agrNo}|${date}`;
+    setExcluded((s) => {
+      const next = new Set(s);
+      if (hidden) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+    try {
+      const res = await fetch("/api/active-exclusions", {
+        method: hidden ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agr_no: agrNo, date }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+    } catch {
+      setExcluded((s) => {
+        const next = new Set(s);
+        if (hidden) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+    }
   }
 
   return (
@@ -344,6 +408,15 @@ export default function ScoringPanel({
         >
           Обновить ⟳
         </button>
+        {scope === "day" && (hiddenCount > 0 || showHidden) && (
+          <button
+            className="btn-secondary"
+            onClick={() => setShowHidden((v) => !v)}
+            title="Чаты, вручную скрытые из списка «Активные за день». Нажмите, чтобы показать и при необходимости вернуть."
+          >
+            {showHidden ? "Скрыть скрытые" : `Скрытые за день (${hiddenCount})`}
+          </button>
+        )}
       </div>
 
       {/* Compact legend. */}
@@ -429,6 +502,15 @@ export default function ScoringPanel({
                 aiModel={aiModel}
                 tgClient={tgClient}
                 onSaved={onSaved}
+                hideControl={
+                  scope === "day"
+                    ? {
+                        hidden: isHidden(chat.agr_no),
+                        onToggle: () =>
+                          setChatHidden(chat.agr_no, !isHidden(chat.agr_no)),
+                      }
+                    : null
+                }
               />
             ))}
           </tbody>
@@ -466,6 +548,7 @@ function ChatScoreRow({
   aiModel,
   tgClient,
   onSaved,
+  hideControl = null,
 }: {
   chat: Chat;
   accountants: Accountant[];
@@ -477,6 +560,7 @@ function ChatScoreRow({
   aiModel: AiModel;
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
+  hideControl?: HideControl;
 }) {
   const prevStatuses = prev?.monthly ?? {};
   // No saved check for this date yet, but a previous one exists → pre-fill from
@@ -636,6 +720,24 @@ function ChatScoreRow({
             {chat.status !== "Active" && (
               <span className="text-xs text-gray-400 whitespace-nowrap">(неактивен)</span>
             )}
+            {hideControl &&
+              (hideControl.hidden ? (
+                <button
+                  onClick={hideControl.onToggle}
+                  className="text-emerald-600 hover:underline text-xs whitespace-nowrap"
+                  title="Вернуть чат в список «Активные за день»"
+                >
+                  ↩ Вернуть
+                </button>
+              ) : (
+                <button
+                  onClick={hideControl.onToggle}
+                  className="text-gray-400 hover:text-red-600 hover:underline text-xs whitespace-nowrap"
+                  title="Убрать этот чат из списка «Активные за день» на этот день (неважный чат)"
+                >
+                  ✕ Скрыть
+                </button>
+              ))}
           </div>
           {/* Last REAL activity — a chat can read "Active" yet have gone quiet
               days ago. Flag that so it isn't mistaken for a live chat. */}
@@ -971,6 +1073,7 @@ function ChatGroup({
   aiModel,
   tgClient,
   onSaved,
+  hideControl = null,
 }: {
   chat: Chat;
   accountants: Accountant[];
@@ -986,6 +1089,7 @@ function ChatGroup({
   aiModel: AiModel;
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
+  hideControl?: HideControl;
 }) {
   const [showManager, setShowManager] = useState(Boolean(managerEval));
   const [showLawyer, setShowLawyer] = useState(Boolean(lawyerEval));
@@ -1004,6 +1108,7 @@ function ChatGroup({
         aiModel={aiModel}
         tgClient={tgClient}
         onSaved={onSaved}
+        hideControl={hideControl}
       />
       {showManager && (
         <RegRoleRow

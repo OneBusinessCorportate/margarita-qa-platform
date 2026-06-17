@@ -142,9 +142,19 @@ create table if not exists mqa_violations (
   created_at     timestamptz not null default now()
 );
 
+-- Chats manually hidden from the scoring "Активные за день" list, per (chat,
+-- day). See db/migrations/20260617_mqa_active_exclusions.sql.
+create table if not exists mqa_active_exclusions (
+  agr_no       text not null,
+  exclude_date date not null,
+  created_at   timestamptz not null default now(),
+  primary key (agr_no, exclude_date)
+);
+
 -- Lock down to service-role access only.
 alter table mqa_accountants         enable row level security;
 alter table mqa_violations          enable row level security;
+alter table mqa_active_exclusions   enable row level security;
 alter table mqa_chats               enable row level security;
 alter table mqa_criteria            enable row level security;
 alter table mqa_evaluations         enable row level security;
