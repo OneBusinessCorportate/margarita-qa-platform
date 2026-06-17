@@ -23,6 +23,7 @@ import {
   SORT_OPTIONS,
   cmpAgrNo,
   compareByActivity,
+  debtAmountLabel,
   debtTone,
   isTelegramLink,
   waitingLabel,
@@ -943,24 +944,39 @@ function ChatScoreRow({
           {/* Debt follow-up status — the real "Долги" signal QA tracks (carried
               from the last check). The standing amount isn't in the data feed,
               but this status answers "did the client get chased / pay?". */}
+          {/* Debt: the actual amount owed (from the Import Debts feed) so QA can
+              see whether the client paid, plus the "Долги" follow-up status. */}
           {(() => {
-            const debtStatus = monthly["debts"]?.status?.trim() || "";
-            const tone = debtTone(debtStatus);
-            if (!tone) return null;
-            const cls =
+            const amount = debtAmountLabel(chat.debts);
+            const status = monthly["debts"]?.status?.trim() || "";
+            const tone = debtTone(status);
+            if (!amount && !tone) return null;
+            const toneCls =
               tone === "fail"
                 ? "bg-red-100 text-red-700"
                 : tone === "none"
                 ? "bg-gray-100 text-gray-500"
                 : "bg-amber-100 text-amber-700";
             return (
-              <div className="text-xs mt-1">
-                <span
-                  className={`inline-block rounded px-1.5 py-0.5 font-medium ${cls}`}
-                  title="Статус по долгам из последней проверки (см. колонку «Долги»)"
-                >
-                  Долги: {debtStatus}
-                </span>
+              <div className="text-xs mt-1 flex flex-wrap items-center gap-1">
+                {amount && (
+                  <span
+                    className={`inline-block rounded px-1.5 py-0.5 font-medium ${
+                      amount.owed ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-500"
+                    }`}
+                    title="Фактическая задолженность клиента (из таблицы долгов)"
+                  >
+                    {amount.text}
+                  </span>
+                )}
+                {tone && (
+                  <span
+                    className={`inline-block rounded px-1.5 py-0.5 font-medium ${toneCls}`}
+                    title="Статус по долгам из последней проверки (см. колонку «Долги»)"
+                  >
+                    Долги: {status}
+                  </span>
+                )}
               </div>
             );
           })()}

@@ -5,6 +5,7 @@ import {
   activityKey,
   cmpAgrNo,
   compareByActivity,
+  debtAmountLabel,
   debtTone,
   isTelegramLink,
   isUnanswered,
@@ -130,6 +131,18 @@ test("debtTone classifies the Долги follow-up status", () => {
   assert.equal(debtTone(""), null);
   assert.equal(debtTone(null), null);
   assert.equal(debtTone(undefined), null);
+});
+
+test("debtAmountLabel formats the standing debt amount", () => {
+  const owed = debtAmountLabel("24000")!;
+  assert.equal(owed.owed, true);
+  // Grouped with the locale separator (NBSP) — assert digits + currency, not the exact space.
+  assert.match(owed.text, /долг.*24.*000.*֏/);
+  assert.deepEqual(debtAmountLabel("Нет долга"), { text: "нет долга", owed: false });
+  assert.deepEqual(debtAmountLabel("0"), { text: "нет долга", owed: false });
+  assert.equal(debtAmountLabel(null), null);
+  assert.equal(debtAmountLabel("--"), null);
+  assert.equal(debtAmountLabel(""), null);
 });
 
 test("waitingLabel renders hours then days from the last message", () => {

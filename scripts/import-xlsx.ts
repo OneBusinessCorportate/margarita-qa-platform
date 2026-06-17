@@ -19,6 +19,7 @@ import { createClient } from "@supabase/supabase-js";
 import { TABLES } from "../src/lib/tables";
 import {
   parseChatRow,
+  parseDebtAmount,
   parseEvalRow,
   toIsoDate as iso,
   cleanStr as str,
@@ -53,6 +54,16 @@ function main() {
     .filter((c): c is NonNullable<typeof c> => c !== null);
   // de-dupe by agr_no (keep first)
   const chatMap = new Map(chats.map((c) => [c.agr_no, c]));
+
+  // --- Import Debts -> chats.debts ---------------------------------------
+  // The actual outstanding amount per contract (ИТОГО ДОЛГ, col 7), so QA can
+  // see whether the client has paid. Keyed by № договора (col 0).
+  for (const r of sheetRows(wb, "Import Debts").slice(1)) {
+    const agr = str(r[0]);
+    if (!agr) continue;
+    const chat = chatMap.get(agr);
+    if (chat) chat.debts = parseDebtAmount(r[7]);
+  }
 
   // --- Оценка -> evaluations ---------------------------------------------
   // parseEvalRow requires a contract № + valid date, maps the four monthly

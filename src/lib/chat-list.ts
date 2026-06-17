@@ -103,3 +103,20 @@ export function debtTone(status: string | null | undefined): DebtTone | null {
   if (debtCat?.failStatuses.includes(s)) return "fail";
   return "progress";
 }
+
+/**
+ * Format the chat's standing debt (mqa_chats.debts, sourced from the "Import
+ * Debts" sheet) for display: the actual amount owed, so QA can see at a glance
+ * whether the client has paid. Returns null when there's nothing to show.
+ */
+export function debtAmountLabel(
+  debts: string | null | undefined
+): { text: string; owed: boolean } | null {
+  const s = (debts ?? "").trim();
+  if (!s || s === "--" || s === "—") return null;
+  if (/нет долга/i.test(s) || s === "0") return { text: "нет долга", owed: false };
+  const n = Number(s.replace(/[\s,]/g, ""));
+  if (Number.isFinite(n) && n > 0)
+    return { text: `долг ${n.toLocaleString("ru-RU")} ֏`, owed: true };
+  return { text: `долг: ${s}`, owed: true }; // legacy free-text
+}

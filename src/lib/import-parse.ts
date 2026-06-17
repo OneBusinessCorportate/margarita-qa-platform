@@ -54,6 +54,17 @@ export const MONTHLY_COLS: [string, number, number][] = [
   ["debts", 17, 18],
 ];
 
+/**
+ * Normalize a debt amount from the "Import Debts" sheet (the "ИТОГО ДОЛГ"
+ * column): a positive amount becomes its rounded string; zero/negative/blank
+ * becomes "Нет долга" (paid up). Returns null when the cell isn't a number.
+ */
+export function parseDebtAmount(itogoDolg: Cell): string | null {
+  const n = toNum(itogoDolg);
+  if (n === undefined) return null;
+  return n > 0 ? String(Math.round(n)) : "Нет долга";
+}
+
 export interface ParsedChat {
   agr_no: string;
   hvhh: string | null;

@@ -4,6 +4,7 @@ import {
   chatStatus,
   cleanStr,
   parseChatRow,
+  parseDebtAmount,
   parseEvalRow,
   periodOf,
   toIsoDate,
@@ -125,6 +126,16 @@ test("parseEvalRow reads criteria, monthly columns and the Общая override",
   assert.equal(e.total_score, 88); // explicit Общая wins
   assert.equal(e.quality_band, "Хорошо");
   assert.equal(e.comment, "ок");
+});
+
+test("parseDebtAmount keeps positive amounts and marks the rest paid", () => {
+  assert.equal(parseDebtAmount(24000), "24000");
+  assert.equal(parseDebtAmount("86000"), "86000");
+  assert.equal(parseDebtAmount(89600.4), "89600"); // rounded
+  assert.equal(parseDebtAmount(0), "Нет долга");
+  assert.equal(parseDebtAmount(-500), "Нет долга");
+  assert.equal(parseDebtAmount(null), null); // not in the debts sheet
+  assert.equal(parseDebtAmount("x"), null);
 });
 
 test("parseEvalRow falls back to the hard-gate score when Общая is blank", () => {
