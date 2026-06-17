@@ -7,6 +7,7 @@ import {
   compareByActivity,
   isTelegramLink,
   isUnanswered,
+  waitingLabel,
 } from "../src/lib/chat-list";
 import type { Chat } from "../src/lib/types";
 
@@ -117,4 +118,14 @@ test("isUnanswered is true only when the client had the last word", () => {
   assert.equal(isUnanswered(chat({ agr_no: "1", unanswered: false })), false);
   // Unknown (feed-only chat, no captured messages) is not treated as unanswered.
   assert.equal(isUnanswered(chat({ agr_no: "1", unanswered: null })), false);
+});
+
+test("waitingLabel renders hours then days from the last message", () => {
+  const now = "2026-06-17T12:00:00Z";
+  assert.equal(waitingLabel("2026-06-17T11:40:00Z", now), "ждёт <1 ч");
+  assert.equal(waitingLabel("2026-06-17T09:00:00Z", now), "ждёт 3 ч");
+  assert.equal(waitingLabel("2026-06-15T12:00:00Z", now), "ждёт 2 дн");
+  // No timestamp, or a future time, yields no label.
+  assert.equal(waitingLabel(null, now), null);
+  assert.equal(waitingLabel("2026-06-17T13:00:00Z", now), null);
 });

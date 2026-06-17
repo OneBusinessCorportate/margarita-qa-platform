@@ -24,6 +24,7 @@ import {
   cmpAgrNo,
   compareByActivity,
   isTelegramLink,
+  waitingLabel,
   type SortBy,
 } from "@/lib/chat-list";
 import type {
@@ -174,6 +175,8 @@ export default function ScoringPanel({
   // are recording). A chat silent since Wednesday is stale today even if she is
   // back-filling an earlier date.
   const nowISO = useMemo(() => today(), []);
+  // Precise current time, for "how long has this chat been waiting" labels.
+  const nowTs = useMemo(() => new Date().toISOString(), []);
 
   // Accountant evaluations on the selected date, indexed by chat (drives the
   // unscored filter, day-activity set and worst-first sort).
@@ -228,6 +231,13 @@ export default function ScoringPanel({
     return s;
   }, [chats, lastActivityFor, taskActivity, date]);
 
+  // Backlog of chats still awaiting a reply (the client had the last word),
+  // across all days — the number QA most wants at a glance.
+  const unansweredCount = useMemo(
+    () => chats.filter((c) => c.unanswered).length,
+    [chats]
+  );
+
   const isHidden = (agrNo: string) => excluded.has(`${agrNo}|${date}`);
 
   // How many of the day's active chats QA has hidden (drives the "Скрытые (N)"
@@ -241,7 +251,11 @@ export default function ScoringPanel({
   const visibleChats = useMemo(() => {
     const n = search.trim().toLowerCase();
     return chats.filter((c) => {
-      if (scope === "day" && !activeTodaySet.has(c.agr_no)) return false;
+      // Day view = chats active that day. EXCEPTION: when filtering for
+      // unanswered chats, bypass the day gate so the still-waiting backlog from
+      // earlier days shows up too (so QA can finally catch yesterday's chats).
+      if (scope === "day" && !onlyUnanswered && !activeTodaySet.has(c.agr_no))
+        return false;
       // Hidden-for-this-day chats drop out of the day view unless QA chose to
       // show them (to undo). They never affect the "all active chats" view.
       if (scope === "day" && excluded.has(`${c.agr_no}|${date}`) && !showHidden)
@@ -510,6 +524,30 @@ export default function ScoringPanel({
         )}
       </div>
 
+      {/* At-a-glance counts. "Без ответа" doubles as a quick filter toggle. */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="inline-block rounded bg-blue-50 text-blue-700 font-medium px-2 py-1">
+          Активных за {date}: {Math.max(0, activeTodaySet.size - hiddenCount)}
+        </span>
+        <button
+          onClick={() => setOnlyUnanswered((v) => !v)}
+          className={`inline-block rounded px-2 py-1 font-medium ${
+            onlyUnanswered
+              ? "bg-orange-600 text-white"
+              : "bg-orange-100 text-orange-700 hover:bg-orange-200"
+          }`}
+          title="Чаты, где последним написал клиент — ещё без ответа (вкл./выкл. фильтр)"
+        >
+          ⏳ Без ответа: {unansweredCount}
+        </button>
+        <span className="inline-block rounded bg-green-50 text-green-700 font-medium px-2 py-1">
+          ✓ Оценено за {date}: {evalForDate.size}
+        </span>
+        <span className="inline-block rounded bg-gray-100 text-gray-600 font-medium px-2 py-1">
+          Показано: {sortedChats.length}
+        </span>
+      </div>
+
       {/* Compact legend. */}
       <p className="text-xs text-gray-500">
         Каждый чат: <span className="font-semibold text-indigo-700">🤖 AI</span> + ваша оценка
@@ -592,7 +630,7 @@ export default function ScoringPanel({
                 lawyerEval={evalByChatRole.get(`${chat.agr_no}|lawyer`) ?? null}
                 prev={prevByChat.get(chat.agr_no) ?? null}
                 lastActivity={lastActivityFor(chat)}
-                asOf={nowISO}
+                asOf={nowTs}
                 aiModel={aiModel}
                 tgClient={tgClient}
                 onSaved={onSaved}
@@ -892,6 +930,9 @@ function ChatScoreRow({
                 title="Последним написал клиент — чат ещё без ответа"
               >
                 ⏳ без ответа
+                {waitingLabel(chat.last_activity_at, asOf)
+                  ? ` · ${waitingLabel(chat.last_activity_at, asOf)}`
+                  : ""}
               </span>
             )}
           </div>

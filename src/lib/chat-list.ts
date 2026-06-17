@@ -64,3 +64,22 @@ export function isTelegramLink(link?: string | null): boolean {
   if (!link) return false;
   return /(^|\/\/)(web\.telegram\.org|t\.me)\//.test(link.trim());
 }
+
+/**
+ * How long a chat has been waiting for a reply, as a short Russian label
+ * ("ждёт 3 ч", "ждёт 2 дн"), measured from the last message time to `now`.
+ * Returns null when there's no timestamp or the time is in the future. Lets QA
+ * triage the backlog oldest-first without doing the arithmetic in their head.
+ */
+export function waitingLabel(
+  sinceISO: string | null | undefined,
+  nowISO: string
+): string | null {
+  if (!sinceISO) return null;
+  const ms = Date.parse(nowISO) - Date.parse(sinceISO);
+  if (Number.isNaN(ms) || ms < 0) return null;
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 1) return "ждёт <1 ч";
+  if (hours < 24) return `ждёт ${hours} ч`;
+  return `ждёт ${Math.floor(hours / 24)} дн`;
+}
