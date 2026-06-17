@@ -189,12 +189,17 @@ export default function ScoringPanel({
     return [...s].sort();
   }, [evaluations]);
 
-  // Chats with activity on the selected date: an evaluation or a task that day.
+  // Chats genuinely active on the selected date: REAL chat activity that day
+  // (the live feed's last_activity_date) or a task touched that day. An
+  // evaluation does NOT count — scoring a chat isn't the client/accountant
+  // being active in it, so a chat last active 7 days ago must not show up in
+  // "Активные за день" just because it was reviewed on that date.
   const activeTodaySet = useMemo(() => {
-    const s = new Set<string>(evalForDate.keys());
+    const s = new Set<string>();
+    for (const c of chats) if (lastActivityFor(c) === date) s.add(c.agr_no);
     for (const t of taskActivity) if (t.date === date) s.add(t.chat_agr_no);
     return s;
-  }, [evalForDate, taskActivity, date]);
+  }, [chats, lastActivityFor, taskActivity, date]);
 
   const visibleChats = useMemo(() => {
     const n = search.trim().toLowerCase();

@@ -12,10 +12,13 @@ export default async function ScoringPage() {
     listTasks(),
   ]);
 
-  // Most recent date that actually has activity, so the day view isn't empty
-  // on load (with the bot feed, this will naturally be "today").
+  // Default the day view to the most recent day chats were ACTUALLY active
+  // (real chat activity from the live feed, kept current by the sync — normally
+  // "today"), or a task touch. Evaluations are deliberately excluded: a QA
+  // review isn't chat activity, and counting it made the day view default to
+  // the last day something was reviewed and surface stale chats.
   const activityDates = [
-    ...evaluations.map((e) => e.checking_date.slice(0, 10)),
+    ...chats.map((c) => c.last_activity_date ?? ""),
     ...tasks.map((t) => (t.checking_date ?? t.due_date_original ?? "").slice(0, 10)),
   ].filter(Boolean);
   const latestActivityDate =
