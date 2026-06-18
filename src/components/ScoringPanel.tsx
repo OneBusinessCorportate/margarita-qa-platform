@@ -695,7 +695,11 @@ function ChatScoreRow({
     const aiInit = predictEvaluation(accountant || null, prevStatuses, aiModel);
     for (const c of MONTHLY_CATEGORIES) {
       const prevVal = canonicalMonthlyStatus(c, prevStatuses[c.id]);
+      // «Долги» is fully derived from the OneBusiness debts system (overdue +
+      // contact log) and wins over the carried/AI value — that's the column the
+      // user wants filled automatically end-to-end.
       const status =
+        (c.id === "debts" ? canonicalMonthlyStatus(c, chat.debt_status) : "") ||
         prevVal ||
         autoMonthlyStatus(c, chat.status, chat.debts, date) ||
         canonicalMonthlyStatus(c, aiInit.monthly[c.id]?.status);
@@ -748,9 +752,12 @@ function ChatScoreRow({
           status: canonicalMonthlyStatus(c, ai.monthly[c.id]?.status),
         };
       }
-      // Real debt data wins over the AI's guess for the "Долги" status.
-      const autoDebt = autoDebtStatus(chat.debts);
-      if (autoDebt) next["debts"] = { ...next["debts"], status: autoDebt };
+      // The OneBusiness-derived debt status wins over the AI's guess.
+      const debtCat = MONTHLY_CATEGORIES.find((c) => c.id === "debts")!;
+      const debtStatus =
+        canonicalMonthlyStatus(debtCat, chat.debt_status) ||
+        autoDebtStatus(chat.debts);
+      if (debtStatus) next["debts"] = { ...next["debts"], status: debtStatus };
       return next;
     });
     setOverride(String(ai.total));

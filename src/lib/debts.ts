@@ -78,3 +78,25 @@ export function debtsCellValue(totals: DebtTotals | undefined): string {
   if (totals && totals.overdue > 0) return String(Math.round(totals.overdue));
   return "Нет долга";
 }
+
+/**
+ * The «Долги» follow-up status (a MONTHLY_CATEGORIES["debts"] option), derived
+ * fully from the OneBusiness debts system: the overdue amount + the contact log
+ * (ob_app.communications, this month). No overdue → «Нет долга»; with overdue,
+ * the status reflects how the accountant followed up:
+ *   call logged        → «1-й позвонил»
+ *   ≥2 messages logged → «2-й написал»
+ *   1 message logged   → «1-й написал»
+ *   nothing logged     → «Не написал 1» (not contacted — a failing status)
+ */
+export function debtFollowupStatus(
+  overdue: number,
+  messages: number,
+  calls: number
+): string {
+  if (!(overdue > 0)) return "Нет долга";
+  if (calls > 0) return "1-й позвонил";
+  if (messages >= 2) return "2-й написал";
+  if (messages >= 1) return "1-й написал";
+  return "Не написал 1";
+}

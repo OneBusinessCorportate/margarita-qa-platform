@@ -22,6 +22,9 @@ export interface Chat {
   accountant: string | null;
   manager: string | null;
   debts: string | null; // amount or "нет долга" / "--"
+  /** «Долги» follow-up status derived from the OneBusiness debts system
+   * (overdue + contact log) — auto-fills the scoring grid's «Долги» column. */
+  debt_status?: string | null;
   created_date: string | null; // Date of chat creation
   /**
    * Date of the last real activity in the chat (last client/accountant message),

@@ -975,13 +975,15 @@ export async function recordUnansweredLabel(
 // --- Debts ("Долги") — automatic sync from the OneBusiness system -----------
 
 /**
- * Mirror aggregated debts into mqa_debts and refresh mqa_chats.debts (the field
- * the scoring UI already reads). `byNorm` maps a normalized agreement key →
- * totals; we match it against each chat's normalized agr_no.
+ * Mirror aggregated debts into mqa_debts and refresh mqa_chats.debts (amount) +
+ * mqa_chats.debt_status (the «Долги» follow-up status — auto-fills the scoring
+ * grid). `byNorm`/`statusByNorm` map a normalized agreement key → totals/status;
+ * matched against each chat's normalized agr_no.
  */
 export async function syncDebts(
   byNorm: Map<string, DebtTotals>,
-  normalize: (s: string) => string
+  normalize: (s: string) => string,
+  statusByNorm: Map<string, string> = new Map()
 ): Promise<{ updated: number; withDebt: number }> {
   const sb = getServiceClient();
   if (!sb) return { updated: 0, withDebt: 0 };
@@ -994,19 +996,22 @@ export async function syncDebts(
   if (error) throw error;
 
   const debtRows: any[] = [];
-  const chatUpdates: { agr_no: string; debts: string }[] = [];
+  const chatUpdates: { agr_no: string; debts: string; debt_status: string }[] = [];
   let withDebt = 0;
   for (const c of (chats ?? []) as any[]) {
-    const totals = byNorm.get(normalize(c.agr_no));
+    const norm = normalize(c.agr_no);
+    const totals = byNorm.get(norm);
+    const debt_status = statusByNorm.get(norm) ?? "Нет долга";
     debtRows.push({
       agr_no: c.agr_no,
       overdue: totals?.overdue ?? 0,
       upcoming: totals?.upcoming ?? 0,
       total: totals?.total ?? 0,
+      debt_status,
       as_of: now,
     });
     if (totals && totals.overdue > 0) withDebt++;
-    chatUpdates.push({ agr_no: c.agr_no, debts: debtsCellValue(totals) });
+    chatUpdates.push({ agr_no: c.agr_no, debts: debtsCellValue(totals), debt_status });
   }
 
   if (debtRows.length > 0) {
@@ -1015,11 +1020,11 @@ export async function syncDebts(
       .upsert(debtRows, { onConflict: "agr_no" });
     if (de) throw de;
   }
-  // Refresh the UI-consumed string per chat.
+  // Refresh the UI-consumed amount + follow-up status per chat.
   for (const u of chatUpdates) {
     const { error: ce } = await sb
       .from(TABLES.chats)
-      .update({ debts: u.debts })
+      .update({ debts: u.debts, debt_status: u.debt_status })
       .eq("agr_no", u.agr_no);
     if (ce) throw ce;
   }

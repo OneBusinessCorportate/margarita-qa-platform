@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getOneBusinessClient } from "@/lib/supabase/onebusiness";
-import { aggregateDebts, normalizeAgrNo, type DebtRow } from "@/lib/debts";
+import {
+  aggregateDebts,
+  debtFollowupStatus,
+  normalizeAgrNo,
+  type DebtRow,
+} from "@/lib/debts";
 import { syncDebts } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +50,37 @@ export async function POST() {
 
   const asOf = new Date().toISOString().slice(0, 10);
   const byNorm = aggregateDebts(rows, asOf);
-  const { updated, withDebt } = await syncDebts(byNorm, normalizeAgrNo);
+
+  // Contact log for the current month → per-agreement message/call counts, so we
+  // can derive the «Долги» follow-up status (1-й написал / позвонил / Не написал).
+  const monthStart = asOf.slice(0, 8) + "01";
+  const contacts = new Map<string, { messages: number; calls: number }>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await ob
+      .from("communications")
+      .select("agr_id, contact_type, event_date, created_at")
+      .gte("event_date", monthStart)
+      .range(from, from + PAGE - 1);
+    if (error) break; // contact log is best-effort; debts still sync without it
+    const batch = (data ?? []) as any[];
+    for (const r of batch) {
+      const key = normalizeAgrNo(r.agr_id);
+      if (!key) continue;
+      const cur = contacts.get(key) ?? { messages: 0, calls: 0 };
+      if (r.contact_type === "call") cur.calls++;
+      else if (r.contact_type === "message") cur.messages++;
+      contacts.set(key, cur);
+    }
+    if (batch.length < PAGE) break;
+  }
+
+  const statusByNorm = new Map<string, string>();
+  for (const [norm, totals] of byNorm) {
+    const c = contacts.get(norm) ?? { messages: 0, calls: 0 };
+    statusByNorm.set(norm, debtFollowupStatus(totals.overdue, c.messages, c.calls));
+  }
+
+  const { updated, withDebt } = await syncDebts(byNorm, normalizeAgrNo, statusByNorm);
 
   return NextResponse.json({
     source_rows: rows.length,

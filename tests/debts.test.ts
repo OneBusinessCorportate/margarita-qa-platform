@@ -36,3 +36,13 @@ test("debtsCellValue matches the UI's expected format", () => {
   assert.equal(debtsCellValue({ overdue: 0, upcoming: 5000, total: 5000 }), "Нет долга");
   assert.equal(debtsCellValue(undefined), "Нет долга");
 });
+
+import { debtFollowupStatus } from "../src/lib/debts";
+test("debtFollowupStatus derives the «Долги» status from overdue + contacts", () => {
+  assert.equal(debtFollowupStatus(0, 0, 0), "Нет долга");
+  assert.equal(debtFollowupStatus(0, 5, 5), "Нет долга"); // no overdue wins
+  assert.equal(debtFollowupStatus(50000, 0, 1), "1-й позвонил");
+  assert.equal(debtFollowupStatus(50000, 2, 0), "2-й написал");
+  assert.equal(debtFollowupStatus(50000, 1, 0), "1-й написал");
+  assert.equal(debtFollowupStatus(50000, 0, 0), "Не написал 1");
+});
