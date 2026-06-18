@@ -23,10 +23,8 @@ import {
   SORT_OPTIONS,
   cmpAgrNo,
   compareByActivity,
-  debtAmountLabel,
   debtTone,
   isTelegramLink,
-  waitingLabel,
   type SortBy,
 } from "@/lib/chat-list";
 import type {
@@ -96,7 +94,6 @@ export default function ScoringPanel({
   const [search, setSearch] = useState("");
   const [accFilters, setAccFilters] = useState<string[]>([]);
   const [onlyUnscored, setOnlyUnscored] = useState(false);
-  const [onlyUnanswered, setOnlyUnanswered] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
   const [hideStale, setHideStale] = useState(false);
   // Default to the "K" web client — it loads much faster than "A" (helps the
@@ -235,13 +232,6 @@ export default function ScoringPanel({
     return s;
   }, [chats, lastActivityFor, taskActivity, date]);
 
-  // Backlog of chats still awaiting a reply (the client had the last word),
-  // across all days — the number QA most wants at a glance.
-  const unansweredCount = useMemo(
-    () => chats.filter((c) => c.unanswered).length,
-    [chats]
-  );
-
   const isHidden = (agrNo: string) => excluded.has(`${agrNo}|${date}`);
 
   // How many of the day's active chats QA has hidden (drives the "Скрытые (N)"
@@ -255,10 +245,8 @@ export default function ScoringPanel({
   const visibleChats = useMemo(() => {
     const n = search.trim().toLowerCase();
     return chats.filter((c) => {
-      // Day view = chats active that day. EXCEPTION: when filtering for
-      // unanswered chats, bypass the day gate so the still-waiting backlog from
-      // earlier days shows up too (so QA can finally catch yesterday's chats).
-      if (scope === "day" && !onlyUnanswered && !activeTodaySet.has(c.agr_no))
+      // Day view = chats active that day.
+      if (scope === "day" && !activeTodaySet.has(c.agr_no))
         return false;
       // Hidden-for-this-day chats drop out of the day view unless QA chose to
       // show them (to undo). They never affect the "all active chats" view.
@@ -273,7 +261,6 @@ export default function ScoringPanel({
       if (accFilters.length && !(c.accountant && accFilters.includes(c.accountant)))
         return false;
       if (onlyUnscored && evalForDate.has(c.agr_no)) return false;
-      if (onlyUnanswered && !c.unanswered) return false;
       if (
         n &&
         !c.agr_no.toLowerCase().includes(n) &&
@@ -283,7 +270,7 @@ export default function ScoringPanel({
         return false;
       return true;
     });
-  }, [chats, search, accFilters, onlyUnscored, onlyUnanswered, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
+  }, [chats, search, accFilters, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
 
   // The list order. By default chats are ordered by most recent real activity
   // (the order Margarita expects); she can switch to "problem chats on top" or
@@ -305,12 +292,11 @@ export default function ScoringPanel({
         activeOnly,
         hideStale,
         onlyUnscored,
-        onlyUnanswered,
         showHidden,
         accFilters,
         search,
       ]),
-    [scope, date, sortBy, activeOnly, hideStale, onlyUnscored, onlyUnanswered, showHidden, accFilters, search]
+    [scope, date, sortBy, activeOnly, hideStale, onlyUnscored, showHidden, accFilters, search]
   );
   const orderRef = useRef<{ sig: string; ids: string[] }>({ sig: "", ids: [] });
 
@@ -357,7 +343,7 @@ export default function ScoringPanel({
   // When the filtered set changes, snap back to the first page.
   useEffect(() => {
     setVisibleCount(PAGE);
-  }, [search, accFilters, onlyUnscored, onlyUnanswered, activeOnly, hideStale, scope, date, sortBy]);
+  }, [search, accFilters, onlyUnscored, activeOnly, hideStale, scope, date, sortBy]);
 
   // Changing the day (or leaving the day view) re-hides hidden chats.
   useEffect(() => {
@@ -468,17 +454,6 @@ export default function ScoringPanel({
           />
           Только неоценённые
         </label>
-        <label
-          className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5"
-          title="Чаты, где последним написал клиент — ещё без ответа (в т.ч. со вчерашнего дня)"
-        >
-          <input
-            type="checkbox"
-            checked={onlyUnanswered}
-            onChange={(e) => setOnlyUnanswered(e.target.checked)}
-          />
-          Только без ответа
-        </label>
         <label className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5">
           <input
             type="checkbox"
@@ -529,22 +504,11 @@ export default function ScoringPanel({
         )}
       </div>
 
-      {/* At-a-glance counts. "Без ответа" doubles as a quick filter toggle. */}
+      {/* At-a-glance counts. */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="inline-block rounded bg-blue-50 text-blue-700 font-medium px-2 py-1">
           Активных за {date}: {Math.max(0, activeTodaySet.size - hiddenCount)}
         </span>
-        <button
-          onClick={() => setOnlyUnanswered((v) => !v)}
-          className={`inline-block rounded px-2 py-1 font-medium ${
-            onlyUnanswered
-              ? "bg-orange-600 text-white"
-              : "bg-orange-100 text-orange-700 hover:bg-orange-200"
-          }`}
-          title="Чаты, где последним написал клиент — ещё без ответа (вкл./выкл. фильтр)"
-        >
-          ⏳ Без ответа: {unansweredCount}
-        </button>
         <span className="inline-block rounded bg-green-50 text-green-700 font-medium px-2 py-1">
           ✓ Оценено за {date}: {evalForDate.size}
         </span>
@@ -929,28 +893,14 @@ function ChatScoreRow({
             ) : (
               <span className="text-gray-400">активность: {lastActivity}</span>
             )}
-            {chat.unanswered && (
-              <span
-                className="ml-1.5 inline-block rounded bg-orange-100 text-orange-700 font-medium px-1.5 py-0.5"
-                title="Последним написал клиент — чат ещё без ответа"
-              >
-                ⏳ без ответа
-                {waitingLabel(chat.last_activity_at, asOf)
-                  ? ` · ${waitingLabel(chat.last_activity_at, asOf)}`
-                  : ""}
-              </span>
-            )}
           </div>
-          {/* Debt follow-up status — the real "Долги" signal QA tracks (carried
-              from the last check). The standing amount isn't in the data feed,
-              but this status answers "did the client get chased / pay?". */}
-          {/* Debt: the actual amount owed (from the Import Debts feed) so QA can
-              see whether the client paid, plus the "Долги" follow-up status. */}
+          {/* Debt follow-up status — the "Долги" signal QA actually fills in
+              (carried from the last check). Shown only when Margarita recorded a
+              status; the standing amount is no longer surfaced automatically. */}
           {(() => {
-            const amount = debtAmountLabel(chat.debts);
             const status = monthly["debts"]?.status?.trim() || "";
             const tone = debtTone(status);
-            if (!amount && !tone) return null;
+            if (!tone) return null;
             const toneCls =
               tone === "fail"
                 ? "bg-red-100 text-red-700"
@@ -959,24 +909,12 @@ function ChatScoreRow({
                 : "bg-amber-100 text-amber-700";
             return (
               <div className="text-xs mt-1 flex flex-wrap items-center gap-1">
-                {amount && (
-                  <span
-                    className={`inline-block rounded px-1.5 py-0.5 font-medium ${
-                      amount.owed ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-500"
-                    }`}
-                    title="Фактическая задолженность клиента (из таблицы долгов)"
-                  >
-                    {amount.text}
-                  </span>
-                )}
-                {tone && (
-                  <span
-                    className={`inline-block rounded px-1.5 py-0.5 font-medium ${toneCls}`}
-                    title="Статус по долгам из последней проверки (см. колонку «Долги»)"
-                  >
-                    Долги: {status}
-                  </span>
-                )}
+                <span
+                  className={`inline-block rounded px-1.5 py-0.5 font-medium ${toneCls}`}
+                  title="Статус по долгам из последней проверки (см. колонку «Долги»)"
+                >
+                  Долги: {status}
+                </span>
               </div>
             );
           })()}
