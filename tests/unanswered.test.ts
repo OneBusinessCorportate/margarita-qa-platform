@@ -6,6 +6,7 @@ import {
   formatTranscript,
   isResolvedWatched,
   parseVerdicts,
+  sameInstant,
   selectFewShot,
   type UnansweredLabel,
 } from "../src/lib/unanswered";
@@ -85,6 +86,26 @@ test("effectiveWaitingOn precedence: human → AI → rule", () => {
   // nothing → none
   assert.equal(effectiveWaitingOn(undefined, false), "none");
   assert.equal(effectiveWaitingOn({ ai_waiting_on: "garbage" }, false), "none");
+});
+
+test("effectiveWaitingOn: a stale verdict (new message after QA) re-opens the chat", () => {
+  // She marked it «решено», but a NEW message arrived since → verdict is stale →
+  // must fall back to the rule and re-open, exactly like her unread-again flow.
+  assert.equal(
+    effectiveWaitingOn({ human_unanswered: false }, true, /*verdictIsCurrent*/ false),
+    "staff"
+  );
+  // Stale AI "none" with no rule hit → none (nothing to show).
+  assert.equal(effectiveWaitingOn({ ai_waiting_on: "none" }, false, false), "none");
+  // Verdict current again (same message) → her dismissal holds.
+  assert.equal(effectiveWaitingOn({ human_unanswered: false }, true, true), "none");
+});
+
+test("sameInstant compares timestamps tolerant of formatting", () => {
+  assert.equal(sameInstant("2026-06-18T10:18:02+00:00", "2026-06-18 10:18:02+00"), true);
+  assert.equal(sameInstant("2026-06-18T10:18:02Z", "2026-06-18T10:18:03Z"), false);
+  assert.equal(sameInstant(null, "2026-06-18T10:18:02Z"), false);
+  assert.equal(sameInstant("x", "y"), false);
 });
 
 test("isResolvedWatched only for watched chats no longer waiting on us", () => {

@@ -49,23 +49,44 @@ export interface UnansweredRecord {
  *   1. Margarita's ✔/✘ (human_unanswered): ✔ → staff, ✘ → none
  *   2. the AI verdict (ai_waiting_on)
  *   3. the rule fallback (mqa_chats.unanswered: client wrote last & not closing)
+ *
+ * `verdictIsCurrent` says whether the stored human/AI verdict was made about the
+ * chat's CURRENT last message. This is how Margarita actually worked: a verdict
+ * only counts for the message it was made on — once a NEW message arrives after
+ * the QA check, the old "решено"/AI verdict no longer applies and the chat falls
+ * back to the rule (re-opening it). When false, only the rule is used.
+ *
  * Kept pure so the precedence Margarita relies on is unit-tested, not buried in
  * the data layer.
  */
 export function effectiveWaitingOn(
   rec: UnansweredRecord | undefined | null,
-  ruleUnanswered: boolean | null | undefined
+  ruleUnanswered: boolean | null | undefined,
+  verdictIsCurrent = true
 ): WaitingOn {
-  if (rec?.human_unanswered === true) return "staff";
-  if (rec?.human_unanswered === false) return "none";
-  if (
-    rec?.ai_waiting_on === "staff" ||
-    rec?.ai_waiting_on === "client" ||
-    rec?.ai_waiting_on === "none"
-  )
-    return rec.ai_waiting_on;
+  if (verdictIsCurrent) {
+    if (rec?.human_unanswered === true) return "staff";
+    if (rec?.human_unanswered === false) return "none";
+    if (
+      rec?.ai_waiting_on === "staff" ||
+      rec?.ai_waiting_on === "client" ||
+      rec?.ai_waiting_on === "none"
+    )
+      return rec.ai_waiting_on;
+  }
   if (ruleUnanswered === true) return "staff";
   return "none";
+}
+
+/** True when two timestamps refer to the same instant (tolerant of formatting). */
+export function sameInstant(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  if (!a || !b) return false;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  return !Number.isNaN(ta) && ta === tb;
 }
 
 /**

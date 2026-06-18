@@ -23,6 +23,7 @@ import {
 } from "./report";
 import {
   effectiveWaitingOn,
+  sameInstant,
   type Candidate,
   type UnansweredLabel,
   type Verdict,
@@ -756,7 +757,7 @@ export async function listUnansweredQueue(
     sb
       .from(TABLES.unanswered)
       .select(
-        "agr_no, last_msg_text, ai_unanswered, ai_waiting_on, ai_reason, ai_confidence, human_unanswered, watched, analyzed_at"
+        "agr_no, last_msg_at, last_msg_text, ai_unanswered, ai_waiting_on, ai_reason, ai_confidence, human_unanswered, watched, analyzed_at"
       )
       .limit(20000),
   ]);
@@ -768,8 +769,15 @@ export async function listUnansweredQueue(
   const all: UnansweredQueueItem[] = [];
   for (const c of (chats ?? []) as any[]) {
     const m = byAgr.get(c.agr_no);
-    // Effective waiting state: human confirmation wins, then AI, then rule.
-    const waiting_on = effectiveWaitingOn(m, c.unanswered) as QueueWaitingOn;
+    // A stored verdict only counts for the message it was made on. If a newer
+    // message has arrived since (her "new message after the QA" case), the verdict
+    // is stale → fall back to the rule, re-opening the chat.
+    const verdictIsCurrent = m ? sameInstant(m.last_msg_at, c.last_activity_at) : false;
+    const waiting_on = effectiveWaitingOn(
+      m,
+      c.unanswered,
+      verdictIsCurrent
+    ) as QueueWaitingOn;
     const watched = m?.watched === true;
     if (waiting_on === "none" && !watched) continue; // nothing to show
 
@@ -921,11 +929,18 @@ export async function recordUnansweredLabel(
   const sb = getServiceClient();
   if (!sb) throw new Error("Supabase not configured");
 
-  const { data: cur } = await sb
-    .from(TABLES.unanswered)
-    .select("chat_id, last_msg_text, ai_unanswered, ai_reason")
-    .eq("agr_no", agrNo)
-    .maybeSingle();
+  const [{ data: cur }, { data: chat }] = await Promise.all([
+    sb
+      .from(TABLES.unanswered)
+      .select("chat_id, last_msg_at, last_msg_text, ai_unanswered, ai_reason")
+      .eq("agr_no", agrNo)
+      .maybeSingle(),
+    sb
+      .from(TABLES.chats)
+      .select("last_activity_at")
+      .eq("agr_no", agrNo)
+      .maybeSingle(),
+  ]);
 
   const { error: le } = await sb.from(TABLES.unansweredLabels).insert({
     agr_no: agrNo,
@@ -939,11 +954,13 @@ export async function recordUnansweredLabel(
   if (le) throw le;
 
   const now = new Date().toISOString();
-  // Pin the human verdict (create the row if analysis never ran for this chat).
+  // Pin the human verdict, scoped to the chat's CURRENT message, so a later
+  // message after the QA re-opens the chat instead of the verdict sticking.
   const { error: ue } = await sb.from(TABLES.unanswered).upsert(
     {
       agr_no: agrNo,
       chat_id: cur?.chat_id ?? null,
+      last_msg_at: chat?.last_activity_at ?? cur?.last_msg_at ?? null,
       human_unanswered: humanUnanswered,
       human_at: now,
     },
