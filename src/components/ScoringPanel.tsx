@@ -794,11 +794,11 @@ function ChatScoreRow({
   return (
     <>
       {/* ---- AI suggestion line ---- */}
-      <tr className="chat-start">
+      <tr className={`chat-start ${savedId ? "bg-green-100" : ""}`}>
         <td
           rowSpan={2}
           className={`chat-info sticky left-0 z-10 align-top min-w-[280px] max-w-[340px] ${
-            savedId ? "bg-green-50 border-l-4 border-green-500" : "bg-white"
+            savedId ? "bg-green-100 border-l-8 border-green-600" : "bg-white"
           }`}
         >
           {/* № + chat name + link, all on one line (name truncates). */}
@@ -808,10 +808,10 @@ function ChatScoreRow({
             </span>
             {savedId && (
               <span
-                className="inline-flex items-center gap-0.5 rounded bg-green-600 text-white font-semibold text-[10px] px-1.5 py-0.5 whitespace-nowrap"
+                className="inline-flex items-center gap-1 rounded bg-green-600 text-white font-bold text-xs px-2 py-1 whitespace-nowrap shadow-sm"
                 title="Этот чат уже оценён за выбранную дату"
               >
-                ✓ Оценено
+                ✓ ОЦЕНЕНО
               </span>
             )}
             <span
@@ -996,7 +996,7 @@ function ChatScoreRow({
       </tr>
 
       {/* ---- Your editable line ---- */}
-      <tr className={savedId ? "bg-green-50/50" : "bg-blue-50/40"}>
+      <tr className={savedId ? "bg-green-100" : "bg-blue-50/40"}>
         <td className={`${youCell} text-center`}>
           <span className="inline-block rounded bg-blue-600 text-white font-semibold text-[11px] px-1.5 py-0.5 whitespace-nowrap">
             ✍️ Вы
