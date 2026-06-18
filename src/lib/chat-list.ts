@@ -120,3 +120,19 @@ export function debtAmountLabel(
     return { text: `долг ${n.toLocaleString("ru-RU")} ֏`, owed: true };
   return { text: `долг: ${s}`, owed: true }; // legacy free-text
 }
+
+/**
+ * Auto-fill for the monthly "Долги" status from the real debt data
+ * (mqa_chats.debts, sourced from the "Import Debts" sheet, which lists only
+ * clients who actually owe something):
+ *   - an outstanding positive amount → null: there IS a debt, so the follow-up
+ *     status ("1-й написал" / "Не написал 1" …) is Margarita's judgement to make.
+ *   - anything else (not listed, blank, "Нет долга", "0") → "Нет долга": nothing
+ *     is owed, so the status is unambiguous and shouldn't need manual entry.
+ */
+export function autoDebtStatus(debts: string | null | undefined): string | null {
+  const s = (debts ?? "").trim();
+  const n = Number(s.replace(/[\s,]/g, ""));
+  if (Number.isFinite(n) && n > 0) return null;
+  return "Нет долга";
+}

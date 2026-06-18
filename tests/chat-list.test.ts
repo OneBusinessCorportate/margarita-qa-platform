@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   SORT_OPTIONS,
   activityKey,
+  autoDebtStatus,
   cmpAgrNo,
   compareByActivity,
   debtAmountLabel,
@@ -143,6 +144,17 @@ test("debtAmountLabel formats the standing debt amount", () => {
   assert.equal(debtAmountLabel(null), null);
   assert.equal(debtAmountLabel("--"), null);
   assert.equal(debtAmountLabel(""), null);
+});
+
+test("autoDebtStatus fills «Нет долга» unless a real amount is owed", () => {
+  // No recorded debt (not in the debt sheet, blank, or explicit) -> auto-fill.
+  assert.equal(autoDebtStatus(null), "Нет долга");
+  assert.equal(autoDebtStatus(""), "Нет долга");
+  assert.equal(autoDebtStatus("Нет долга"), "Нет долга");
+  assert.equal(autoDebtStatus("0"), "Нет долга");
+  // An outstanding amount -> no auto-fill (Margarita assesses the follow-up).
+  assert.equal(autoDebtStatus("24000"), null);
+  assert.equal(autoDebtStatus("24 000"), null);
 });
 
 test("waitingLabel renders hours then days from the last message", () => {

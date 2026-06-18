@@ -21,8 +21,10 @@ import {
 import { predictEvaluation, toSnapshot, type AiModel } from "@/lib/ai";
 import {
   SORT_OPTIONS,
+  autoDebtStatus,
   cmpAgrNo,
   compareByActivity,
+  debtAmountLabel,
   debtTone,
   isTelegramLink,
   type SortBy,
@@ -519,7 +521,10 @@ export default function ScoringPanel({
         </span>
       </div>
 
-      <div className="card">
+      {/* Scroll the wide grid inside its own box so the sticky header row and
+          sticky first column pin relative to THIS container — otherwise the
+          first column floated over the rest of the page while scrolling. */}
+      <div className="card overflow-auto max-h-[78vh]">
         <table className="qa pairs sticky-head">
           <thead>
             <tr>
@@ -674,6 +679,13 @@ function ChatScoreRow({
       const p = prevStatuses[c.id];
       if (p) base[c.id] = { status: p, prev: p };
     }
+    // Auto-fill the "Долги" status from the real debt data: when nothing is
+    // owed (per the Import Debts feed) the status is unambiguously "Нет долга",
+    // so Margarita doesn't set it by hand. Clients with an outstanding amount
+    // are left for her to assess the follow-up. Editable like any prefill.
+    const autoDebt = autoDebtStatus(chat.debts);
+    if (autoDebt)
+      base["debts"] = { status: autoDebt, prev: prevStatuses["debts"] ?? PREV_STATUS_DEFAULT };
     return base;
   });
   const [comment, setComment] = useState(existing?.comment ?? prev?.comment ?? "");
@@ -718,6 +730,9 @@ function ChatScoreRow({
       for (const c of MONTHLY_CATEGORIES) {
         next[c.id] = { ...next[c.id], status: ai.monthly[c.id]?.status ?? "" };
       }
+      // Real debt data wins over the AI's guess for the "Долги" status.
+      const autoDebt = autoDebtStatus(chat.debts);
+      if (autoDebt) next["debts"] = { ...next["debts"], status: autoDebt };
       return next;
     });
     setOverride(String(ai.total));
@@ -783,7 +798,7 @@ function ChatScoreRow({
         <td
           rowSpan={2}
           className={`chat-info sticky left-0 z-10 align-top min-w-[280px] max-w-[340px] ${
-            savedId ? "bg-green-50/70 border-l-4 border-green-500" : "bg-white"
+            savedId ? "bg-green-50 border-l-4 border-green-500" : "bg-white"
           }`}
         >
           {/* № + chat name + link, all on one line (name truncates). */}
@@ -884,13 +899,16 @@ function ChatScoreRow({
               <span className="text-gray-400">активность: {lastActivity}</span>
             )}
           </div>
-          {/* Debt follow-up status — the "Долги" signal QA actually fills in
-              (carried from the last check). Shown only when Margarita recorded a
-              status; the standing amount is no longer surfaced automatically. */}
+          {/* Debt signal. The payment state is filled AUTOMATICALLY from the
+              Import Debts feed so Margarita never maintains it by hand: a client
+              who still owes shows a red «Не уплачено» + amount; a client with
+              nothing outstanding gets the auto «Нет долга» status. She only
+              judges the follow-up («1-й написал» …) from the chat itself. */}
           {(() => {
+            const amount = debtAmountLabel(chat.debts);
             const status = monthly["debts"]?.status?.trim() || "";
             const tone = debtTone(status);
-            if (!tone) return null;
+            if (!amount?.owed && !tone) return null;
             const toneCls =
               tone === "fail"
                 ? "bg-red-100 text-red-700"
@@ -899,12 +917,22 @@ function ChatScoreRow({
                 : "bg-amber-100 text-amber-700";
             return (
               <div className="text-xs mt-1 flex flex-wrap items-center gap-1">
-                <span
-                  className={`inline-block rounded px-1.5 py-0.5 font-medium ${toneCls}`}
-                  title="Статус по долгам из последней проверки (см. колонку «Долги»)"
-                >
-                  Долги: {status}
-                </span>
+                {amount?.owed && (
+                  <span
+                    className="inline-block rounded px-1.5 py-0.5 font-medium bg-red-100 text-red-700"
+                    title="Долг по данным импорта — клиент ещё не оплатил (обновляется из таблицы долгов)"
+                  >
+                    Не уплачено: {amount.text.replace(/^долг\s*/i, "")}
+                  </span>
+                )}
+                {tone && (
+                  <span
+                    className={`inline-block rounded px-1.5 py-0.5 font-medium ${toneCls}`}
+                    title="Статус по долгам из последней проверки (см. колонку «Долги»)"
+                  >
+                    Долги: {status}
+                  </span>
+                )}
               </div>
             );
           })()}
