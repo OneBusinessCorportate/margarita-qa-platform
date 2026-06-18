@@ -512,22 +512,7 @@ export default function ScoringPanel({
         <span className="inline-block rounded bg-green-50 text-green-700 font-medium px-2 py-1">
           ✓ Оценено за {date}: {evalForDate.size}
         </span>
-        <span className="inline-block rounded bg-gray-100 text-gray-600 font-medium px-2 py-1">
-          Показано: {sortedChats.length}
-        </span>
       </div>
-
-      {/* Compact legend. */}
-      <p className="text-xs text-gray-500">
-        Каждый чат: <span className="font-semibold text-indigo-700">🤖 AI</span> + ваша оценка
-        бухгалтера. В одном чате можно оценить и других — внизу строки нажмите{" "}
-        <span className="font-semibold">«+ оценить ещё»</span>, чтобы добавить отдельную оценку{" "}
-        <span className="font-semibold">👔 Менеджеру</span> или{" "}
-        <span className="font-semibold">⚖️ Юристу</span>. Значения перенесены из прошлой проверки —
-        правьте изменившееся и жмите «Оценить». Оценённые чаты помечаются{" "}
-        <span className="font-semibold text-green-700">✓ Оценено</span>. Порядок списка не меняется,
-        когда вы сохраняете оценку.
-      </p>
 
       <div className="card">
         <table className="qa pairs sticky-head">
