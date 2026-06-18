@@ -102,7 +102,6 @@ export function buildReportMessage(
     perAccountant,
     needsAttention = [],
     criticalChats = [],
-    unansweredChats = [],
     tasks,
     filters,
   } = report;
@@ -131,7 +130,6 @@ export function buildReportMessage(
   lines.push(`Новых чатов: ${totals.newChats}`);
   lines.push(`Чаты без ответственных: ${totals.chatsWithoutResponsible}`);
   lines.push(`Оценено чатов всего: ${totals.evaluatedChats}`);
-  lines.push(`Без ответа клиенту: ${totals.unansweredChats}`);
   lines.push("");
 
   const evalCount = scoredCount(report);
@@ -164,21 +162,6 @@ export function buildReportMessage(
       lines.push(`• ${chatLabel(c.chat_agr_no, c.chat_name)}${who}${why}`);
     }
     overflow(lines, criticalChats.length, maxList);
-  }
-
-  // ── 📭 Без ответа клиенту — the live service backlog (longest wait first) ─
-  if (unansweredChats.length) {
-    lines.push("");
-    lines.push(`📭 Без ответа клиенту (${unansweredChats.length}) — дольше всех ждут:`);
-    for (const c of unansweredChats.slice(0, maxList)) {
-      const who = c.accountant ? ` — ${c.accountant}` : "";
-      const wait =
-        typeof c.waitingDays === "number" && c.waitingDays > 0
-          ? ` · ${c.waitingDays} дн.`
-          : "";
-      lines.push(`• ${chatLabel(c.chat_agr_no, c.chat_name)}${who}${wait}`);
-    }
-    overflow(lines, unansweredChats.length, maxList);
   }
 
   // ── ⭐ Звёзды дня — perfect scorers (fallback: top scorer) ───────────────

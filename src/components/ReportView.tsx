@@ -6,8 +6,6 @@ import type { DailyReport } from "@/lib/report";
 export default function ReportView({ report }: { report: DailyReport }) {
   // Guards for snapshots saved before these blocks existed.
   const needsAttention = report.needsAttention ?? [];
-  const criticalChats = report.criticalChats ?? [];
-  const unansweredChats = report.unansweredChats ?? [];
   return (
     <div className="space-y-4">
       {/* Требует внимания — the coaching to-do list, shown only when non-empty. */}
@@ -58,63 +56,8 @@ export default function ReportView({ report }: { report: DailyReport }) {
               {report.coveragePct}%)
             </div>
           )}
-          {typeof report.totals.unansweredChats === "number" && (
-            <div className="text-xs text-gray-500">
-              Без ответа клиенту: {report.totals.unansweredChats}
-            </div>
-          )}
         </div>
       </div>
-
-      {/* Критичные чаты + Без ответа — the actionable lists, side by side. */}
-      {(criticalChats.length > 0 || unansweredChats.length > 0) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {criticalChats.length > 0 && (
-            <div className="card p-3">
-              <div className="text-sm font-medium mb-2 text-red-700">
-                ⛔️ Критичные чаты ({criticalChats.length})
-              </div>
-              <ul className="space-y-1">
-                {criticalChats.slice(0, 12).map((c) => (
-                  <li key={c.chat_agr_no} className="text-sm flex flex-wrap gap-x-2">
-                    <span className="font-medium">№{c.chat_agr_no}</span>
-                    {c.chat_name && <span className="text-gray-600">{c.chat_name}</span>}
-                    {c.accountant && <span className="text-gray-500">— {c.accountant}</span>}
-                    {c.reasons.length > 0 && (
-                      <span className="text-red-700">: {c.reasons.join("; ")}</span>
-                    )}
-                  </li>
-                ))}
-                {criticalChats.length > 12 && (
-                  <li className="text-xs text-gray-400">+ ещё {criticalChats.length - 12}</li>
-                )}
-              </ul>
-            </div>
-          )}
-          {unansweredChats.length > 0 && (
-            <div className="card p-3">
-              <div className="text-sm font-medium mb-2 text-amber-700">
-                📭 Без ответа клиенту ({unansweredChats.length})
-              </div>
-              <ul className="space-y-1">
-                {unansweredChats.slice(0, 12).map((c) => (
-                  <li key={c.chat_agr_no} className="text-sm flex flex-wrap gap-x-2">
-                    <span className="font-medium">№{c.chat_agr_no}</span>
-                    {c.chat_name && <span className="text-gray-600">{c.chat_name}</span>}
-                    {c.accountant && <span className="text-gray-500">— {c.accountant}</span>}
-                    {typeof c.waitingDays === "number" && c.waitingDays > 0 && (
-                      <span className="text-amber-700">· {c.waitingDays} дн.</span>
-                    )}
-                  </li>
-                ))}
-                {unansweredChats.length > 12 && (
-                  <li className="text-xs text-gray-400">+ ещё {unansweredChats.length - 12}</li>
-                )}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Per-accountant: Сервис Бухгалтерии */}
       <div className="card overflow-x-auto">

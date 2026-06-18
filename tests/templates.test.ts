@@ -21,12 +21,11 @@ test("report message contains the sheet metrics + both blocks", () => {
   assert.match(msg, /Отлично:/);
 });
 
-test("report message leads with coverage, unanswered and critical chats", () => {
+test("report message leads with coverage and critical chats, no «без ответа»", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report);
   assert.match(msg, /👁 Охват:/);
-  assert.match(msg, /Без ответа клиенту:/); // the count metric
-  assert.match(msg, /📭 Без ответа клиенту \(2\)/); // the detail block
+  assert.doesNotMatch(msg, /Без ответа клиенту/); // unreliable signal removed
   assert.match(msg, /⛔️ Критичные чаты \(2\)/);
   assert.match(msg, /проблемных:/); // distribution problem share
   // The two gated chats appear by contract number.
