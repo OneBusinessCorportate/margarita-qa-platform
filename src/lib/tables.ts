@@ -17,4 +17,5 @@ export const TABLES = {
   violations: `${PREFIX}violations`,
   activeExclusions: `${PREFIX}active_exclusions`,
   reportSnapshots: `${PREFIX}report_snapshots`,
+  chatActivity: `${PREFIX}chat_activity`,
 } as const;

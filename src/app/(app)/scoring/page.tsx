@@ -2,6 +2,7 @@ import ScoringPanel from "@/components/ScoringPanel";
 import {
   listAccountants,
   listActiveExclusions,
+  listChatActivity,
   listChats,
   listEvaluations,
   listTasks,
@@ -11,13 +12,20 @@ import { trainAiModel } from "@/lib/ai";
 export const dynamic = "force-dynamic";
 
 export default async function ScoringPage() {
-  const [chats, accountants, evaluations, tasks, exclusions] = await Promise.all([
-    listChats(),
-    listAccountants(),
-    listEvaluations({}),
-    listTasks(),
-    listActiveExclusions(),
-  ]);
+  // Only the recent window of per-day activity is needed to drive the day view;
+  // bound it so the payload stays small (QA reviews recent days).
+  const activityFrom = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const [chats, accountants, evaluations, tasks, exclusions, chatActivity] =
+    await Promise.all([
+      listChats(),
+      listAccountants(),
+      listEvaluations({}),
+      listTasks(),
+      listActiveExclusions(),
+      listChatActivity(activityFrom),
+    ]);
 
   // Default the day view to the most recent day chats were ACTUALLY active
   // (real chat activity from the live feed, kept current by the sync — normally
@@ -48,6 +56,7 @@ export default async function ScoringPage() {
         aiModel={aiModel}
         latestActivityDate={latestActivityDate}
         initialExclusions={exclusions}
+        chatActivity={chatActivity}
         taskActivity={tasks.map((t) => ({
           chat_agr_no: t.chat_agr_no,
           date: (t.checking_date ?? t.due_date_original ?? "").slice(0, 10),

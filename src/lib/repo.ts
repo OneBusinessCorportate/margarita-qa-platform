@@ -91,6 +91,36 @@ function filterChats(rows: Chat[], search: string): Chat[] {
   );
 }
 
+/**
+ * Per-day chat activity (one row per chat per day it was active), so the scoring
+ * day view can show EVERY chat active on a day — not just chats whose most recent
+ * activity was that day. Sourced from mqa_chat_activity (messages + feed). `from`
+ * bounds the window so the payload stays small. Falls back to each chat's single
+ * last_activity_date in the in-memory store (dev/seed) where the table is absent.
+ */
+export async function listChatActivity(
+  from?: string
+): Promise<{ chat_agr_no: string; date: string }[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    let q = sb
+      .from(TABLES.chatActivity)
+      .select("agr_no, active_date")
+      .order("active_date", { ascending: false })
+      .limit(20000);
+    if (from) q = q.gte("active_date", from);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []).map((r) => ({
+      chat_agr_no: r.agr_no as string,
+      date: String(r.active_date).slice(0, 10),
+    }));
+  }
+  return store()
+    .chats.filter((c) => c.last_activity_date)
+    .map((c) => ({ chat_agr_no: c.agr_no, date: c.last_activity_date!.slice(0, 10) }));
+}
+
 export async function getChat(agrNo: string): Promise<Chat | null> {
   const sb = getServiceClient();
   if (sb) {

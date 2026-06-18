@@ -75,6 +75,7 @@ export default function ScoringPanel({
   initialEvaluations,
   aiModel,
   taskActivity = [],
+  chatActivity = [],
   latestActivityDate = null,
   initialExclusions = [],
 }: {
@@ -83,6 +84,7 @@ export default function ScoringPanel({
   initialEvaluations: Evaluation[];
   aiModel: AiModel;
   taskActivity?: { chat_agr_no: string; date: string }[];
+  chatActivity?: { chat_agr_no: string; date: string }[];
   latestActivityDate?: string | null;
   initialExclusions?: ActiveExclusion[];
 }) {
@@ -220,17 +222,20 @@ export default function ScoringPanel({
     return [...s].sort();
   }, [evaluations]);
 
-  // Chats genuinely active on the selected date: REAL chat activity that day
-  // (the live feed's last_activity_date) or a task touched that day. An
-  // evaluation does NOT count — scoring a chat isn't the client/accountant
-  // being active in it, so a chat last active 7 days ago must not show up in
-  // "Активные за день" just because it was reviewed on that date.
+  // Chats genuinely active on the selected date. Primary source is the per-day
+  // activity feed (mqa_chat_activity): EVERY chat that had a message that day,
+  // so a chat active on several days shows on each of them — not only its most
+  // recent day (the old single-last_activity_date behaviour hid 30–60% of a
+  // day's active chats). The chat's own last_activity_date and a same-day task
+  // are kept as fallbacks. An evaluation does NOT count — scoring a chat isn't
+  // the client/accountant being active in it.
   const activeTodaySet = useMemo(() => {
     const s = new Set<string>();
+    for (const a of chatActivity) if (a.date === date) s.add(a.chat_agr_no);
     for (const c of chats) if (lastActivityFor(c) === date) s.add(c.agr_no);
     for (const t of taskActivity) if (t.date === date) s.add(t.chat_agr_no);
     return s;
-  }, [chats, lastActivityFor, taskActivity, date]);
+  }, [chatActivity, chats, lastActivityFor, taskActivity, date]);
 
   const isHidden = (agrNo: string) => excluded.has(`${agrNo}|${date}`);
 
