@@ -21,6 +21,10 @@ create table if not exists mqa_chat_activity (
 );
 create index if not exists mqa_chat_activity_date_idx on mqa_chat_activity (active_date);
 
+-- Match the other mqa_ tables: RLS on with no policies => only the service role
+-- (used by the app server-side) can read/write; anon/publishable keys are denied.
+alter table mqa_chat_activity enable row level security;
+
 -- Link mqa_chats -> live chat id (embedded in chat_link after '#'), then record
 -- one row per (contract, active day). Real message days come from `messages`;
 -- chats the message store hasn't captured still get their single known active
