@@ -718,6 +718,7 @@ export interface UnansweredQueueItem {
   classification: string; // unanswered | problematic_not_critical | needs_human_review | answered
   flag_reason: string | null;
   human_unanswered: boolean | null;
+  human_status: string | null;
   watched: boolean;
 }
 
@@ -757,6 +758,7 @@ export async function listUnansweredQueue(
     classification: r.classification,
     flag_reason: r.flag_reason ?? null,
     human_unanswered: r.human_unanswered ?? null,
+    human_status: r.human_status ?? null,
     watched: r.watched === true,
   }));
 
@@ -874,18 +876,26 @@ export async function recordUnansweredVerdicts(
   return rows.length;
 }
 
+/** The status Margarita picks per chat (her dropdown). */
+export type HumanStatus = "waiting" | "warned" | "answered";
+
 /**
- * Record Margarita's ✔/✘ for a chat: append a training label (with whatever the
- * AI had said, for learning), pin the human verdict on mqa_unanswered, and set
- * the consumed mqa_chats.unanswered signal to her decision.
+ * Record Margarita's per-row status (her dropdown habit from «КК Сопровождение»):
+ *   waiting  — ждёт ответа (we still owe a reply)
+ *   warned   — предупредила бухгалтера (warned the accountant; still ours)
+ *   answered — ответили (resolved)
+ * human_unanswered (the badge signal) is derived: answered → false, else true.
+ * Appends a training label, pins the verdict scoped to the current message, and
+ * sets mqa_chats.unanswered.
  */
 export async function recordUnansweredLabel(
   agrNo: string,
-  humanUnanswered: boolean,
+  status: HumanStatus,
   createdBy: string | null
 ): Promise<void> {
   const sb = getServiceClient();
   if (!sb) throw new Error("Supabase not configured");
+  const humanUnanswered = status !== "answered";
 
   const [{ data: cur }, { data: chat }] = await Promise.all([
     sb
@@ -912,7 +922,7 @@ export async function recordUnansweredLabel(
   if (le) throw le;
 
   const now = new Date().toISOString();
-  // Pin the human verdict, scoped to the chat's CURRENT message, so a later
+  // Pin the verdict + status, scoped to the chat's CURRENT message, so a later
   // message after the QA re-opens the chat instead of the verdict sticking.
   const { error: ue } = await sb.from(TABLES.unanswered).upsert(
     {
@@ -920,6 +930,7 @@ export async function recordUnansweredLabel(
       chat_id: cur?.chat_id ?? null,
       last_msg_at: chat?.last_activity_at ?? cur?.last_msg_at ?? null,
       human_unanswered: humanUnanswered,
+      human_status: status,
       human_at: now,
     },
     { onConflict: "agr_no" }

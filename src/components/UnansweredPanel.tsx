@@ -57,10 +57,21 @@ export default function UnansweredPanel({
     }
   }
 
-  const label = (agr_no: string, unanswered: boolean) =>
-    call("/api/unanswered/label", { agr_no, unanswered }, agr_no);
+  const setStatus = (agr_no: string, status: string) =>
+    call("/api/unanswered/label", { agr_no, status }, agr_no);
   const watch = (agr_no: string, watched: boolean) =>
     call("/api/unanswered/watch", { agr_no, watched }, agr_no);
+
+  // Her dropdown style: colored chip per chosen status (like the green cells in
+  // «КК Сопровождение»). Empty = not yet reviewed.
+  const statusClass = (s: string | null) =>
+    s === "answered"
+      ? "bg-green-100 text-green-800 border-green-300"
+      : s === "warned"
+      ? "bg-blue-100 text-blue-800 border-blue-300"
+      : s === "waiting"
+      ? "bg-orange-100 text-orange-800 border-orange-300"
+      : "bg-white text-gray-500 border-gray-300";
 
   const th = "border border-gray-300 bg-gray-100 px-2 py-1 text-left font-semibold text-gray-700";
   const td = "border border-gray-200 px-2 py-1 align-top";
@@ -110,12 +121,11 @@ export default function UnansweredPanel({
                 <th className={`${th} text-right`}>Долг</th>
                 <th className={`${th} whitespace-nowrap`}>Сколько</th>
                 <th className={th}>Сообщение клиента</th>
-                <th className={`${th} text-center`}>Решение</th>
+                <th className={`${th} text-center`}>Статус</th>
               </tr>
             </thead>
             <tbody>
               {items.map((it, i) => {
-                const confirmed = it.human_unanswered === true;
                 const debt = debtAmountLabel(it.debts);
                 const tag = CLASS_LABEL[it.classification];
                 return (
@@ -174,25 +184,22 @@ export default function UnansweredPanel({
                       <div className="line-clamp-3">{it.problem_text ?? "—"}</div>
                     </td>
                     <td className={`${td} text-center whitespace-nowrap`}>
-                      {confirmed && (
-                        <span className="mr-1 text-[11px] text-green-700">✔</span>
-                      )}
-                      <button
-                        onClick={() => label(it.agr_no, true)}
+                      <select
+                        value={it.human_status ?? ""}
                         disabled={busy === it.agr_no}
-                        className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 hover:bg-orange-200 disabled:opacity-50"
-                        title="Подтвердить: ждёт нашего ответа"
+                        onChange={(e) => setStatus(it.agr_no, e.target.value)}
+                        className={`rounded border px-1.5 py-0.5 text-xs ${statusClass(
+                          it.human_status
+                        )} disabled:opacity-50`}
+                        title="Статус (как в таблице)"
                       >
-                        ждёт
-                      </button>
-                      <button
-                        onClick={() => label(it.agr_no, false)}
-                        disabled={busy === it.agr_no}
-                        className="ml-1 px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
-                        title="Отклонить: ответа от нас не требуется"
-                      >
-                        решено
-                      </button>
+                        <option value="" disabled>
+                          —
+                        </option>
+                        <option value="waiting">Ждёт ответа</option>
+                        <option value="warned">Предупредила</option>
+                        <option value="answered">Ответили</option>
+                      </select>
                     </td>
                   </tr>
                 );
