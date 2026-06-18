@@ -21,6 +21,33 @@ test("report message contains the sheet metrics + both blocks", () => {
   assert.match(msg, /Отлично:/);
 });
 
+test("report message leads with coverage, unanswered and critical chats", () => {
+  const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  const msg = buildReportMessage(report);
+  assert.match(msg, /👁 Охват:/);
+  assert.match(msg, /Без ответа клиенту:/); // the count metric
+  assert.match(msg, /📭 Без ответа клиенту \(2\)/); // the detail block
+  assert.match(msg, /⛔️ Критичные чаты \(2\)/);
+  assert.match(msg, /проблемных:/); // distribution problem share
+  // The two gated chats appear by contract number.
+  assert.match(msg, /№180/);
+  assert.match(msg, /№28/);
+});
+
+test("report message shows ▲/▼ trend vs the previous period", () => {
+  const cur = buildReport(seedChats, seedEvaluations, {}, seedTasks);
+  // Fabricate a weaker previous period so the trend is upward.
+  const previous = { ...cur, serviceQualityPct: cur.serviceQualityPct - 5, filters: { from: "2026-06-09", to: "2026-06-09" } };
+  const msg = buildReportMessage(cur, { previous });
+  assert.match(msg, /▲ \+5 п\.п\. к 09\.06/);
+});
+
+test("report message has no trend when there is no previous period", () => {
+  const cur = buildReport(seedChats, seedEvaluations, {}, seedTasks);
+  const msg = buildReportMessage(cur, { previous: null });
+  assert.doesNotMatch(msg, /▲|▼/);
+});
+
 test("score message includes overall, band, monthly statuses and link", () => {
   const ev = seedEvaluations[0];
   const chat = seedChats.find((c) => c.agr_no === ev.chat_agr_no) ?? null;

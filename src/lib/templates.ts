@@ -49,20 +49,64 @@ export interface ReportMessageOptions {
   sheetUrl?: string;
   /** ISO date shown in the header; defaults to the filter's `to`, else today. */
   date?: string;
+  /**
+   * The preceding comparable period, for the ▲/▼ trend on the service line.
+   * Supplied by getDailyAnalytics; omit to skip the trend.
+   */
+  previous?: DailyReport | null;
+  /** Cap on how many rows each detail list prints before "+ ещё N". */
+  maxList?: number;
+}
+
+/** "▲ +0.6 п.п. к 10.06" / "▼ −1.2 п.п." / "→ без изменений" vs the previous period. */
+function fmtTrend(cur: number, prev: DailyReport | null | undefined): string {
+  if (!prev) return "";
+  const prevPct = prev.serviceQualityPct;
+  const d = Math.round((cur - prevPct) * 10) / 10;
+  const label = fmtDay(prev.filters.to ?? prev.filters.from ?? "");
+  const to = label ? ` к ${label}` : "";
+  if (d > 0) return `  ▲ +${d} п.п.${to}`;
+  if (d < 0) return `  ▼ ${d} п.п.${to}`; // d already carries the minus sign
+  return `  → без изменений${to}`;
+}
+
+/** Period label for the header: a single day, or "DD.MM — DD.MM" for a range. */
+function periodHeader(report: DailyReport, dateISO: string): string {
+  const { from, to } = report.filters;
+  if (from && to && from !== to) return `${fmtDay(from)} — ${fmtDay(to)}`;
+  return fmtDay(to ?? from ?? dateISO);
+}
+
+/** Pretty contract label "№123 Имя" (name trimmed for Telegram width). */
+function chatLabel(agrNo: string, name: string | null): string {
+  if (!name) return `№${agrNo}`;
+  const short = name.length > 42 ? `${name.slice(0, 39)}…` : name;
+  return `№${agrNo} ${short}`;
 }
 
 /**
- * Daily accounting report message, in Margarita's Telegram style:
- * header + дата + overall service + ⭐ stars of the day + a mark for EVERY
- * accountant + tasks + нарушения + link.
+ * Daily accounting analytics message, redesigned to lead with what Margarita
+ * must ACT on — trend, coverage, who needs attention, which chats failed, who
+ * is still waiting on a reply — before the full per-accountant roster. Backwards
+ * compatible: the sheet metric labels and the per-accountant block are kept.
  */
 export function buildReportMessage(
   report: DailyReport,
   options: ReportMessageOptions = {}
 ): string {
-  const { totals, distribution, serviceQualityPct, perAccountant, tasks, filters } =
-    report;
-  const { violations = [], sheetUrl } = options;
+  const {
+    totals,
+    distribution,
+    serviceQualityPct,
+    coveragePct,
+    perAccountant,
+    needsAttention = [],
+    criticalChats = [],
+    unansweredChats = [],
+    tasks,
+    filters,
+  } = report;
+  const { violations = [], sheetUrl, previous, maxList = 8 } = options;
   const dateISO =
     options.date ??
     filters.to ??
@@ -70,24 +114,74 @@ export function buildReportMessage(
     new Date().toISOString().slice(0, 10);
   const lines: string[] = [];
 
-  lines.push("📊 Ежедневный отчёт бухгалтерии");
-  lines.push(`Дата: ${fmtDay(dateISO)}`);
+  lines.push("📊 Аналитика качества бухгалтерии");
+  lines.push(`🗓 ${periodHeader(report, dateISO)}`);
   if (filters.accountant) lines.push(`Бухгалтер: ${filters.accountant}`);
   lines.push("");
-  lines.push(`Общий уровень сервиса: ${serviceQualityPct}% по отделу`);
+
+  // ── Headline: service %, trend, coverage ───────────────────────────────
+  lines.push(`🏆 Сервис Бухгалтерии: ${serviceQualityPct}%${fmtTrend(serviceQualityPct, previous)}`);
+  lines.push(
+    `👁 Охват: оценено ${totals.evaluatedChats} из ${totals.activeChats} активных (${coveragePct}%)`
+  );
   lines.push("");
 
-  // Chat metrics (kept from the sheet).
+  // ── Sheet metrics (kept) ───────────────────────────────────────────────
   lines.push(`Активных чатов: ${totals.activeChats}`);
   lines.push(`Новых чатов: ${totals.newChats}`);
   lines.push(`Чаты без ответственных: ${totals.chatsWithoutResponsible}`);
   lines.push(`Оценено чатов всего: ${totals.evaluatedChats}`);
+  lines.push(`Без ответа клиенту: ${totals.unansweredChats}`);
   lines.push("");
+
+  const evalCount = scoredCount(report);
+  const lowShare =
+    evalCount > 0
+      ? Math.round(((distribution.Плохо + distribution.Критично) / evalCount) * 100)
+      : 0;
   lines.push(
-    `Отлично: ${distribution.Отлично} | Хорошо: ${distribution.Хорошо} | Плохо: ${distribution.Плохо} | Критично: ${distribution.Критично}`
+    `Отлично: ${distribution.Отлично} | Хорошо: ${distribution.Хорошо} | Плохо: ${distribution.Плохо} | Критично: ${distribution.Критично} (проблемных: ${lowShare}%)`
   );
 
-  // ⭐ Stars of the day — perfect scorers (fallback: the top scorer).
+  // ── 🚨 Требует внимания — the coaching to-do list (most urgent first) ────
+  if (needsAttention.length) {
+    lines.push("");
+    lines.push(`🚨 Требует внимания (${needsAttention.length})`);
+    for (const a of needsAttention.slice(0, maxList)) {
+      const emoji = a.band ? BAND_EMOJI[a.band] : "🔴";
+      lines.push(`${emoji} ${a.accountant} — ${a.reasons.join("; ")}`);
+    }
+    overflow(lines, needsAttention.length, maxList);
+  }
+
+  // ── ⛔️ Критичные чаты — what actually went wrong, openable per chat ──────
+  if (criticalChats.length) {
+    lines.push("");
+    lines.push(`⛔️ Критичные чаты (${criticalChats.length})`);
+    for (const c of criticalChats.slice(0, maxList)) {
+      const who = c.accountant ? ` — ${c.accountant}` : "";
+      const why = c.reasons.length ? `: ${c.reasons.join("; ")}` : ` (оценка ${c.score}%)`;
+      lines.push(`• ${chatLabel(c.chat_agr_no, c.chat_name)}${who}${why}`);
+    }
+    overflow(lines, criticalChats.length, maxList);
+  }
+
+  // ── 📭 Без ответа клиенту — the live service backlog (longest wait first) ─
+  if (unansweredChats.length) {
+    lines.push("");
+    lines.push(`📭 Без ответа клиенту (${unansweredChats.length}) — дольше всех ждут:`);
+    for (const c of unansweredChats.slice(0, maxList)) {
+      const who = c.accountant ? ` — ${c.accountant}` : "";
+      const wait =
+        typeof c.waitingDays === "number" && c.waitingDays > 0
+          ? ` · ${c.waitingDays} дн.`
+          : "";
+      lines.push(`• ${chatLabel(c.chat_agr_no, c.chat_name)}${who}${wait}`);
+    }
+    overflow(lines, unansweredChats.length, maxList);
+  }
+
+  // ── ⭐ Звёзды дня — perfect scorers (fallback: top scorer) ───────────────
   const scored = perAccountant.filter((a) => a.count > 0 && a.avgScore >= 0);
   const topScore = scored.reduce((m, a) => Math.max(m, a.avgScore), 0);
   const perfect = scored.filter((a) => a.avgScore === 100);
@@ -98,23 +192,25 @@ export function buildReportMessage(
       : [];
   if (stars.length) {
     lines.push("");
-    lines.push("⭐ Звезда дня");
-    for (const a of stars) lines.push(`🌟 ${a.accountant} — ${a.avgScore}%`);
+    lines.push("⭐ Звёзды дня");
+    for (const a of stars)
+      lines.push(`🌟 ${a.accountant} — ${a.avgScore}% (чатов: ${a.count})`);
   }
 
-  // 🧮 Сервис Бухгалтерии — a mark for EVERY accountant (the "all people" part).
+  // ── 🧮 Сервис Бухгалтерии — full roster, worst first so problems lead ────
   lines.push("");
-  lines.push(`🧮 Сервис Бухгалтерии: ${serviceQualityPct}%`);
+  lines.push(`🧮 Сервис Бухгалтерии: ${serviceQualityPct}% (по бухгалтерам)`);
   if (scored.length === 0) {
     lines.push("— нет оценок за период —");
   }
-  for (const a of scored) {
+  const roster = [...scored].sort((a, b) => a.avgScore - b.avgScore);
+  for (const a of roster) {
     const emoji = BAND_EMOJI[bandFor(a.avgScore)];
     const low = a.lowCount > 0 ? `, низких: ${a.lowCount}` : "";
     lines.push(`${emoji} ${a.accountant} — ${a.avgScore}% (оценено: ${a.count}${low})`);
   }
 
-  // ✅ Задачи Бухгалтерии.
+  // ── ✅ Задачи Бухгалтерии (only when there are tasks) ────────────────────
   if (tasks.total > 0) {
     lines.push("");
     lines.push(
@@ -127,7 +223,7 @@ export function buildReportMessage(
     }
   }
 
-  // ⚠️ Нарушения — grouped per accountant, counted by severity.
+  // ── ⚠️ Нарушения — grouped per accountant, counted by severity ───────────
   const withAcc = violations.filter((v) => v.accountant);
   if (withAcc.length) {
     const byAcc = new Map<string, Map<string, number>>();
@@ -150,10 +246,21 @@ export function buildReportMessage(
 
   if (sheetUrl) {
     lines.push("");
-    lines.push(sheetUrl);
+    lines.push(`🔗 ${sheetUrl}`);
   }
 
   return lines.join("\n");
+}
+
+/** Append "    + ещё N" when a list was truncated to `shown`. */
+function overflow(lines: string[], total: number, shown: number): void {
+  if (total > shown) lines.push(`    + ещё ${total - shown}`);
+}
+
+/** How many evaluations the distribution covers (for the "problem share"). */
+function scoredCount(report: DailyReport): number {
+  const d = report.distribution;
+  return d.Отлично + d.Хорошо + d.Плохо + d.Критично;
 }
 
 /** Per-chat / per-accountant score message. */

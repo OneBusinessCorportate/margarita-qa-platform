@@ -15,6 +15,7 @@ import {
 } from "./scoring";
 import {
   buildReport,
+  precedingWindow,
   reportSnapshotLabel,
   type DailyReport,
   type ReportFilters,
@@ -526,6 +527,70 @@ export async function getReport(filters: ReportFilters): Promise<DailyReport> {
   // lawyer per-chat scores live in the same table but are reported separately.
   const accountantEvals = evaluations.filter((e) => e.role === "accountant");
   return buildReport(chats, accountantEvals, filters, tasks, asOf);
+}
+
+export interface DailyAnalytics {
+  /** The report for the resolved window. */
+  report: DailyReport;
+  /** The immediately-preceding comparable window, for trend (null if no data). */
+  previous: DailyReport | null;
+  /** The window the report actually covers (resolved when no dates were given). */
+  resolved: { from: string; to: string };
+}
+
+/**
+ * The Telegram "analitika" report: a correctly-scoped daily report PLUS the
+ * preceding window for trend. The old /messages page called getReport({}) with
+ * NO dates, which silently aggregated the entire history under a "Ежедневный
+ * отчёт" header. Here, an empty filter resolves to the latest day that actually
+ * has evaluations — a true daily — and we compute the previous day for ▲/▼.
+ */
+export async function getDailyAnalytics(
+  filters: ReportFilters = {}
+): Promise<DailyAnalytics> {
+  const today = new Date().toISOString().slice(0, 10);
+  const [chats, evaluations, tasks] = await Promise.all([
+    listChats(),
+    // Pull the accountant/client slice across ALL dates so we can both resolve
+    // the default window and aggregate the comparison period from one fetch.
+    listEvaluations({ accountant: filters.accountant, client: filters.client }),
+    listTasks(),
+  ]);
+  const accountantEvals = evaluations.filter((e) => e.role === "accountant");
+  const evalDates = [
+    ...new Set(accountantEvals.map((e) => e.checking_date.slice(0, 10))),
+  ].sort();
+
+  // Resolve the window: explicit dates win; otherwise the latest evaluated day.
+  let from = filters.from;
+  let to = filters.to;
+  if (!from && !to) {
+    const latest = evalDates[evalDates.length - 1] ?? today;
+    from = latest;
+    to = latest;
+  } else {
+    from ??= to;
+    to ??= from;
+  }
+
+  const curFilters: ReportFilters = { ...filters, from, to };
+  const report = buildReport(chats, accountantEvals, curFilters, tasks, to ?? today);
+
+  const pw = precedingWindow(from!, to!, evalDates);
+  let previous: DailyReport | null = null;
+  if (pw) {
+    const prevReport = buildReport(
+      chats,
+      accountantEvals,
+      { ...filters, from: pw.from, to: pw.to },
+      tasks,
+      pw.to
+    );
+    // Only a baseline if it actually has evaluations to compare against.
+    if (prevReport.totals.evaluatedChats > 0) previous = prevReport;
+  }
+
+  return { report, previous, resolved: { from: from!, to: to! } };
 }
 
 // --- Report history (saved snapshots) --------------------------------------

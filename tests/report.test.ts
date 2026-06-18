@@ -76,3 +76,32 @@ test("tasks block aggregates by status", () => {
   assert.equal(r.tasks.late, 2); // t1, t3
   assert.equal(r.tasks.overdue, 1); // t4
 });
+
+test("coverage = evaluated chats ÷ active chats", () => {
+  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  // 8 evaluated of 10 active = 80%.
+  assert.equal(r.totals.activeChats, 10);
+  assert.equal(r.totals.evaluatedChats, 8);
+  assert.equal(r.coveragePct, 80);
+});
+
+test("criticalChats lists gated chats worst-first with reasons", () => {
+  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks);
+  // e5 (chat 180, salary not requested) and e8 (chat 28, taxes not sent) are gated to 1.
+  const ids = r.criticalChats.map((c) => c.chat_agr_no).sort();
+  assert.deepEqual(ids, ["180", "28"]);
+  for (const c of r.criticalChats) {
+    assert.equal(c.score, 1);
+    assert.ok(c.reasons.length > 0, "a gated chat must carry a failing-mailing reason");
+  }
+});
+
+test("unansweredChats surfaces active chats where the client had the last word", () => {
+  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  const ids = r.unansweredChats.map((c) => c.chat_agr_no).sort();
+  assert.deepEqual(ids, ["100", "11"]);
+  assert.equal(r.totals.unansweredChats, 2);
+  // Longest wait first: chat 100 (06-12) waited longer than chat 11 (06-13).
+  assert.equal(r.unansweredChats[0].chat_agr_no, "100");
+  assert.equal(r.unansweredChats[0].waitingDays, 3);
+});

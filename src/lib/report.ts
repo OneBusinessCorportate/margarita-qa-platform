@@ -5,6 +5,8 @@
 import type { Chat, Evaluation, Task } from "./types";
 import {
   bandFor,
+  daysBetween,
+  failingMailings,
   isStaleActivity,
   isTaskLate,
   isTaskOnTime,
@@ -49,6 +51,31 @@ export interface AttentionItem {
   reasons: string[]; // short human-readable Russian reasons
 }
 
+/**
+ * A single chat that scored Критично in the period — the actionable list of
+ * "what actually went wrong today", with a short reason (failing mailing, weak
+ * criterion, or the reviewer's comment) so Margarita can open it and coach.
+ */
+export interface CriticalChat {
+  chat_agr_no: string;
+  chat_name: string | null;
+  accountant: string | null;
+  score: number; // 0..100
+  reasons: string[]; // short Russian reasons, most specific first
+}
+
+/**
+ * A live chat still awaiting a reply (the client had the last word). This is a
+ * current-state service signal — it is NOT tied to the report's date window.
+ */
+export interface UnansweredChat {
+  chat_agr_no: string;
+  chat_name: string | null;
+  accountant: string | null;
+  /** Whole days the client has been waiting, relative to `asOf` (null if unknown). */
+  waitingDays: number | null;
+}
+
 export interface DailyReport {
   filters: ReportFilters;
   totals: {
@@ -56,12 +83,24 @@ export interface DailyReport {
     newChats: number;
     chatsWithoutResponsible: number;
     evaluatedChats: number;
+    /** Live chats where the client had the last word (still unanswered). */
+    unansweredChats: number;
   };
+  /**
+   * Share of the live book that was actually reviewed in the window:
+   * evaluatedChats ÷ activeChats × 100. Surfaces "we only checked N% of active
+   * chats today" — a blind-spot metric the old report never showed.
+   */
+  coveragePct: number;
   distribution: Record<QualityBand, number>;
   serviceQualityPct: number; // "Сервис Бухгалтерии" %
   perAccountant: AccountantScore[];
   /** Who Margarita should follow up with, most urgent first. May be empty. */
   needsAttention: AttentionItem[];
+  /** Chats that scored Критично in the window, worst score first. May be empty. */
+  criticalChats: CriticalChat[];
+  /** Live chats still awaiting a reply, longest wait first. May be empty. */
+  unansweredChats: UnansweredChat[];
   tasks: {
     total: number;
     onTime: number;
@@ -97,12 +136,68 @@ export function reportSnapshotLabel(filters: ReportFilters): string {
   return extra ? `${range} · ${extra}` : range;
 }
 
+/** ISO date `iso` shifted by `delta` days (negative = earlier). */
+export function addDays(iso: string, delta: number): string {
+  const d = new Date(iso.slice(0, 10) + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The comparison window immediately preceding [from, to], used for trend (▲/▼).
+ * For a single day, snap to the previous day that actually has data (`evalDates`,
+ * ascending) so the trend isn't lost to weekends/gaps. For a range, take the
+ * equally-long block ending the day before `from`.
+ */
+export function precedingWindow(
+  from: string,
+  to: string,
+  evalDates: string[] = []
+): { from: string; to: string } | null {
+  if (from === to) {
+    const prev = evalDates.filter((d) => d < from).pop();
+    return prev ? { from: prev, to: prev } : { from: addDays(from, -1), to: addDays(from, -1) };
+  }
+  const span = daysBetween(from, to); // inclusive length − 1
+  const pto = addDays(from, -1);
+  return { from: addDays(pto, -span), to: pto };
+}
+
 function inRange(date: string | null, from?: string, to?: string): boolean {
   if (!date) return false;
   const d = date.slice(0, 10);
   if (from && d < from) return false;
   if (to && d > to) return false;
   return true;
+}
+
+/**
+ * Short, human reasons why a chat scored Критично, most specific first:
+ *   1. a failing mandatory mailing (the hard gate) — "Первичка: Не запросил 1";
+ *   2. weak criteria below full marks — "Точность 3/5";
+ *   3. the reviewer's comment (trimmed);
+ * Falls back to an empty list (the caller still shows the score). Imported rows
+ * can carry a low total with none of the above, so every branch is optional.
+ */
+function criticalReasons(ev: Evaluation): string[] {
+  const reasons: string[] = [];
+  for (const f of failingMailings(ev.scores?.monthly)) {
+    reasons.push(`${f.category}: ${f.status}`);
+  }
+  if (reasons.length === 0) {
+    const crit = ev.scores?.criteria;
+    if (crit) {
+      if (typeof crit.accuracy === "number" && crit.accuracy < 5)
+        reasons.push(`Точность ${crit.accuracy}/5`);
+      if (typeof crit.sla === "number" && crit.sla < 5)
+        reasons.push(`SLA ${crit.sla}/5`);
+    }
+  }
+  if (reasons.length === 0 && ev.comment?.trim()) {
+    const c = ev.comment.trim();
+    reasons.push(c.length > 80 ? `${c.slice(0, 77)}…` : c);
+  }
+  return reasons;
 }
 
 export function buildReport(
@@ -191,6 +286,43 @@ export function buildReport(
     ? Math.round((totalScoreSum / evals.length) * 10) / 10
     : 0;
 
+  // Critical chats — the actionable "what went wrong" list. One row per chat
+  // (its worst evaluation in the window), worst score first.
+  const worstByChat = new Map<string, Evaluation>();
+  for (const e of evals) {
+    if (bandFor(e.total_score) !== "Критично") continue;
+    const cur = worstByChat.get(e.chat_agr_no);
+    if (!cur || e.total_score < cur.total_score) worstByChat.set(e.chat_agr_no, e);
+  }
+  const criticalChats: CriticalChat[] = [...worstByChat.values()]
+    .map((e) => ({
+      chat_agr_no: e.chat_agr_no,
+      chat_name: chatById.get(e.chat_agr_no)?.chat_name ?? null,
+      accountant: e.accountant,
+      score: e.total_score,
+      reasons: criticalReasons(e),
+    }))
+    .sort((a, b) => a.score - b.score || a.chat_agr_no.localeCompare(b.chat_agr_no));
+
+  // Unanswered chats — current-state service backlog (client had the last word).
+  // Independent of the date window: it is "who is waiting right now".
+  const unansweredChats: UnansweredChat[] = scopedChats
+    .filter((c) => c.status === "Active" && c.unanswered === true)
+    .map((c) => {
+      const last = lastActivityOf(c);
+      return {
+        chat_agr_no: c.agr_no,
+        chat_name: c.chat_name ?? null,
+        accountant: c.accountant,
+        waitingDays: last ? Math.max(0, daysBetween(last, asOf)) : null,
+      };
+    })
+    .sort(
+      (a, b) =>
+        (b.waitingDays ?? -1) - (a.waitingDays ?? -1) ||
+        a.chat_agr_no.localeCompare(b.chat_agr_no)
+    );
+
   // Tasks block.
   const scopedTasks = tasks.filter((t) => {
     const d = t.checking_date ?? t.completed_at ?? t.due_date_original;
@@ -262,25 +394,34 @@ export function buildReport(
       return ax - ay;
     });
 
+  // Genuinely active = status flag "Active" AND real activity within the window
+  // as of `asOf` (not just the static flag).
+  const activeChats = scopedChats.filter(
+    (c) => c.status === "Active" && !isStaleActivity(lastActivityOf(c), asOf)
+  ).length;
+  const coveragePct = activeChats
+    ? Math.round((evaluatedChats / activeChats) * 1000) / 10
+    : 0;
+
   return {
     filters,
     totals: {
-      // Genuinely active = status flag "Active" AND real activity within the
-      // window as of `asOf` (not just the static flag).
-      activeChats: scopedChats.filter(
-        (c) => c.status === "Active" && !isStaleActivity(lastActivityOf(c), asOf)
-      ).length,
+      activeChats,
       newChats: scopedChats.filter((c) => inRange(c.created_date, from, to))
         .length,
       chatsWithoutResponsible: scopedChats.filter(
         (c) => c.status === "Active" && !c.accountant
       ).length,
       evaluatedChats,
+      unansweredChats: unansweredChats.length,
     },
+    coveragePct,
     distribution,
     serviceQualityPct,
     perAccountant,
     needsAttention,
+    criticalChats,
+    unansweredChats,
     tasks: {
       total: scopedTasks.length,
       onTime: tOnTime,

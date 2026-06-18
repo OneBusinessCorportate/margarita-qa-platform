@@ -37,7 +37,8 @@ function chat(
   debts: string,
   link: string,
   last_activity_date: string | null = "2026-06-11",
-  status: "Active" | "Inactive" = "Active"
+  status: "Active" | "Inactive" = "Active",
+  unanswered = false
 ): Chat {
   return {
     agr_no,
@@ -53,6 +54,8 @@ function chat(
     debts,
     created_date: "2025-01-01",
     last_activity_date,
+    last_sender_role: unanswered ? "client" : null,
+    unanswered,
   };
 }
 
@@ -65,8 +68,8 @@ export const seedChats: Chat[] = [
   chat("23", "ИП Дмитрий Родичев N-23 RU", "40113062", "Լիլիթ", "нет долга", "https://web.telegram.org/a/#-4014170511", "2026-06-15"),
   chat("19", "ИП Виталий Самарцев N-19 RU", "71064197", "Գայանե", "нет долга", "https://web.telegram.org/a/#-4018402264", "2026-06-10"),
   chat("33", "ИП Тимофей Кабанов N-33 RU", "72961955", "Լիլիթ", "нет долга", "https://web.telegram.org/a/#-4199207502", "2026-06-14"),
-  chat("11", "Мишт Тей OOO N-11 RU", "40130903", "Նաիրա", "нет долга", "https://web.telegram.org/a/#-4082607480", "2026-06-13"),
-  chat("100", "ИП Кирилл Оболдин N-1101 RU", "10000100", "Լիլիթ", "24000", "https://web.telegram.org/a/#-4086698328", "2026-06-12"),
+  chat("11", "Мишт Тей OOO N-11 RU", "40130903", "Նաիրա", "нет долга", "https://web.telegram.org/a/#-4082607480", "2026-06-13", "Active", true),
+  chat("100", "ИП Кирилл Оболдин N-1101 RU", "10000100", "Լիլիթ", "24000", "https://web.telegram.org/a/#-4086698328", "2026-06-12", "Active", true),
   chat("102", "Ретейл Софт ООО - OneBusiness N-102 RU", "10000102", "Նաիրա", "86000", "https://web.telegram.org/a/#-4022409024", "2026-06-11"),
   chat("28", "АЕОН Девелопмент", "10000028", "Ստելլա", "100000", "https://web.telegram.org/a/?account=2#-5184209470", "2026-06-15"),
   chat("180", "ООО Пар Груп N-180 RU", "10000180", "Ավագ", "18000", "https://web.telegram.org/a/#-4173746570", "2026-06-14"),
