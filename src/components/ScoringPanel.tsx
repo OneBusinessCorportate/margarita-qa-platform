@@ -7,6 +7,7 @@ import {
   MONTHLY_CATEGORIES,
   PREV_STATUS_DEFAULT,
   REGISTRATION_PENALTIES,
+  canonicalMonthlyStatus,
   computeOverall,
   computeRegistrationScore,
   daysBetween,
@@ -686,23 +687,20 @@ function ChatScoreRow({
   const [monthly, setMonthly] = useState<Record<string, MonthlyStatus>>(() => {
     const base = emptyMonthly();
     if (existing?.scores.monthly) return { ...base, ...existing.scores.monthly };
-    for (const c of MONTHLY_CATEGORIES) {
-      const p = prevStatuses[c.id];
-      if (p) base[c.id] = { status: p, prev: p };
-    }
-    // Auto-fill every status we can: first from facts (debt feed, client status,
-    // the deadline date), then from the AI model (learned from her past labels in
-    // Supabase) for the rest (Налоги / Зарплата / Первичка → «Предстоящая» /
-    // «Получил» …). She only edits the exceptions. All editable.
+    // Auto-fill every status so Margarita only edits exceptions. Order: carried
+    // value from the last check → facts (debt feed / client status / deadline
+    // date) → the AI model (learned from her labels in Supabase). Every value is
+    // canonicalized to a valid option (legacy data can be mis-cased, e.g. «нет
+    // долга»), otherwise the <select> would show a blank.
     const aiInit = predictEvaluation(accountant || null, prevStatuses, aiModel);
     for (const c of MONTHLY_CATEGORIES) {
-      if (base[c.id].status) continue; // a carried-over value wins
-      const auto =
-        autoMonthlyStatus(c, chat.status, chat.debts, date) ??
-        aiInit.monthly[c.id]?.status ??
-        "";
-      if (auto)
-        base[c.id] = { status: auto, prev: prevStatuses[c.id] ?? PREV_STATUS_DEFAULT };
+      const prevVal = canonicalMonthlyStatus(c, prevStatuses[c.id]);
+      const status =
+        prevVal ||
+        autoMonthlyStatus(c, chat.status, chat.debts, date) ||
+        canonicalMonthlyStatus(c, aiInit.monthly[c.id]?.status);
+      if (status)
+        base[c.id] = { status, prev: prevVal || PREV_STATUS_DEFAULT };
     }
     return base;
   });
@@ -745,7 +743,10 @@ function ChatScoreRow({
     setMonthly((m) => {
       const next = { ...m };
       for (const c of MONTHLY_CATEGORIES) {
-        next[c.id] = { ...next[c.id], status: ai.monthly[c.id]?.status ?? "" };
+        next[c.id] = {
+          ...next[c.id],
+          status: canonicalMonthlyStatus(c, ai.monthly[c.id]?.status),
+        };
       }
       // Real debt data wins over the AI's guess for the "Долги" status.
       const autoDebt = autoDebtStatus(chat.debts);

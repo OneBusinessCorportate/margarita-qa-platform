@@ -192,3 +192,13 @@ test("autoMonthlyStatus: a debt that is owed isn't auto-resolved after due day",
 test("autoMonthlyStatus: Inactive client → Inactive", () => {
   assert.equal(autoMonthlyStatus(catBy("salary"), "Inactive", null, "2026-06-18"), "Inactive");
 });
+
+import { canonicalMonthlyStatus } from "../src/lib/scoring";
+test("canonicalMonthlyStatus maps mis-cased/legacy statuses to a real option", () => {
+  const debts = catBy("debts");
+  assert.equal(canonicalMonthlyStatus(debts, "нет долга"), "Нет долга"); // lowercase legacy
+  assert.equal(canonicalMonthlyStatus(debts, "  Нет долга "), "Нет долга");
+  assert.equal(canonicalMonthlyStatus(debts, "1-й написал"), "1-й написал");
+  assert.equal(canonicalMonthlyStatus(debts, "garbage"), ""); // not an option
+  assert.equal(canonicalMonthlyStatus(debts, null), "");
+});

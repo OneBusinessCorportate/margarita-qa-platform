@@ -138,6 +138,21 @@ export const MONTHLY_CATEGORIES: MonthlyCategory[] = [
 
 export const PREV_STATUS_DEFAULT = "--";
 
+/**
+ * Map a (possibly mis-cased or legacy) status string to the category's canonical
+ * option, or "" if it isn't one. Carried-forward / imported data sometimes has
+ * "нет долга" where the option is "Нет долга" — without this the <select> shows
+ * nothing because the value matches no <option>.
+ */
+export function canonicalMonthlyStatus(
+  cat: MonthlyCategory,
+  s?: string | null
+): string {
+  const t = (s ?? "").trim();
+  if (!t) return "";
+  return cat.statuses.find((x) => x.toLowerCase() === t.toLowerCase()) ?? "";
+}
+
 /** Score a failing chat gets when a mandatory mailing is not done. */
 export const FAIL_SCORE = 1;
 
