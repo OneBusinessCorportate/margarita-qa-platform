@@ -144,11 +144,12 @@ test("isStaleActivity flags chats quiet longer than the window", () => {
 
 // --- Alternate schemes -----------------------------------------------------
 
-test("three evaluation schemes are registered", () => {
+test("evaluation schemes are registered", () => {
   assert.deepEqual(SCHEMES.map((s) => s.id), [
     "accounting",
     "accounting_kpi",
     "registration",
+    "kk_quality",
   ]);
 });
 

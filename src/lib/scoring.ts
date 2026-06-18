@@ -324,7 +324,11 @@ export const ACTIVE_MODEL: ScoringModel = "weighted";
 // All three reuse the same quality BANDS (Отлично/Хорошо/Плохо/Критично).
 // ===========================================================================
 
-export type SchemeId = "accounting" | "accounting_kpi" | "registration";
+export type SchemeId =
+  | "accounting"
+  | "accounting_kpi"
+  | "registration"
+  | "kk_quality";
 
 export type SchemeKind = "weighted" | "kpi" | "penalty";
 
@@ -368,6 +372,16 @@ export const SCHEMES: SchemeInfo[] = [
     description:
       "Старт 100 баллов, вычитаем штрафы за нарушения недели: критические ошибки, " +
       "скорость ответа (≤ 15 мин), обратная связь клиенту.",
+  },
+  {
+    id: "kk_quality",
+    name: "Контроль качества — оценка бухгалтера",
+    department: "Бухгалтерия",
+    subject: "Бухгалтер",
+    kind: "kpi",
+    description:
+      "Ежемесячная оценка качества: ошибки×10% + сроки×30% + отчётность×20% + " +
+      "документы×30% + доработки×10% → 0–100, с уровнем действий.",
   },
 ];
 
@@ -516,6 +530,49 @@ export function kpiBonusEligible(values: Record<string, number> = {}): boolean {
     (values.notifications ?? 0) >= KPI_BONUS_THRESHOLDS.notifications &&
     (values.csat ?? 0) >= KPI_BONUS_THRESHOLDS.csat
   );
+}
+
+// --- Quality-control monthly assessment (КК — Контроль качества) -----------
+//
+// "ОЦЕНКА КАЧЕСТВА РАБОТЫ БУХГАЛТЕРА" (Margarita's КК сопровождение journal):
+// five weighted criteria, each entered 0..100, Итог = Σ(Кᵢ × Wᵢ). Verified
+// against her journal (20/80/90/100/100 → 84; 100/80/100/100/100 → 94). The
+// weights are her «Гайд» Wi values (0.1 / 0.3 / 0.2 / 0.3 / 0.1) as percentages.
+
+export const KK_CRITERIA: KpiCriterion[] = [
+  { id: "errors", name: "Количество и уровень ошибок", weight: 10 },
+  { id: "deadlines", name: "Соблюдение сроков выполнения задач", weight: 30 },
+  { id: "reporting", name: "Качество подготовки отчётности", weight: 20 },
+  { id: "documents", name: "Полнота и корректность документов", weight: 30 },
+  { id: "rework", name: "Количество доработок после проверки", weight: 10 },
+];
+
+/** Итог 0..100 — weighted average of the five КК criteria (same maths as KPI). */
+export function computeKkScore(
+  values: Record<string, number> = {},
+  criteria: KpiCriterion[] = KK_CRITERIA
+): number {
+  return computeKpiScore(values, criteria);
+}
+
+export interface KkLevel {
+  /** Lower bound on the 0..100 Итог (her 1–5 thresholds, ×20). */
+  min: number;
+  action: string;
+}
+
+/** Action levels from her «ШКАЛА ИТОГОВОЙ ОЦЕНКИ» (1–5 scale, here on 0..100). */
+export const KK_LEVELS: KkLevel[] = [
+  { min: 90, action: "Премирование, кадровый резерв" }, // 4.50–5.00
+  { min: 70, action: "План развития по слабым зонам" }, // 3.50–4.49
+  { min: 50, action: "План корректирующих мероприятий" }, // 2.50–3.49
+  { min: 0, action: "Административные меры / доп. обучение" }, // 1.00–2.49
+];
+
+/** The action level for a КК Итог score (0..100). */
+export function kkLevel(score: number): KkLevel {
+  for (const l of KK_LEVELS) if (score >= l.min) return l;
+  return KK_LEVELS[KK_LEVELS.length - 1];
 }
 
 // --- Week helpers (registration journal is per-manager, per-week) -----------
