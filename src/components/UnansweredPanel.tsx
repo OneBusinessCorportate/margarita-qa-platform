@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { debtAmountLabel, isTelegramLink, waitingLabel } from "@/lib/chat-list";
+import { isResolvedWatched } from "@/lib/unanswered";
 import type {
   UnansweredCounts,
   UnansweredMode,
@@ -93,7 +94,7 @@ export default function UnansweredPanel({
 
   function waitingBadge(it: UnansweredQueueItem) {
     // A watched chat that's no longer waiting on us / anyone = it got answered.
-    if (it.watched && it.waiting_on !== "staff") {
+    if (isResolvedWatched(it.waiting_on, it.watched)) {
       return <span className="text-green-700 font-medium">✅ ответили</span>;
     }
     if (it.waiting_on === "staff")

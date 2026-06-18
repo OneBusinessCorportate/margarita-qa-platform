@@ -37,6 +37,49 @@ export interface UnansweredLabel {
 /** Whom an open/unfinished thread is waiting on. */
 export type WaitingOn = "staff" | "client" | "none";
 
+/** Stored detection state for one chat (subset of mqa_unanswered). */
+export interface UnansweredRecord {
+  human_unanswered?: boolean | null;
+  ai_waiting_on?: string | null;
+  watched?: boolean | null;
+}
+
+/**
+ * Effective waiting state for a chat, by precedence:
+ *   1. Margarita's ✔/✘ (human_unanswered): ✔ → staff, ✘ → none
+ *   2. the AI verdict (ai_waiting_on)
+ *   3. the rule fallback (mqa_chats.unanswered: client wrote last & not closing)
+ * Kept pure so the precedence Margarita relies on is unit-tested, not buried in
+ * the data layer.
+ */
+export function effectiveWaitingOn(
+  rec: UnansweredRecord | undefined | null,
+  ruleUnanswered: boolean | null | undefined
+): WaitingOn {
+  if (rec?.human_unanswered === true) return "staff";
+  if (rec?.human_unanswered === false) return "none";
+  if (
+    rec?.ai_waiting_on === "staff" ||
+    rec?.ai_waiting_on === "client" ||
+    rec?.ai_waiting_on === "none"
+  )
+    return rec.ai_waiting_on;
+  if (ruleUnanswered === true) return "staff";
+  return "none";
+}
+
+/**
+ * A watched chat that's no longer waiting on us (or anyone) is one that finally
+ * got answered — surface it as resolved so she can verify, instead of dropping
+ * it silently (her old "re-check at the end" step, automated).
+ */
+export function isResolvedWatched(
+  waitingOn: WaitingOn,
+  watched: boolean
+): boolean {
+  return watched && waitingOn !== "staff";
+}
+
 /** The model's verdict for one chat. */
 export interface Verdict {
   agr_no: string;

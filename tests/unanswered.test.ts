@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildSystemPrompt,
+  effectiveWaitingOn,
   formatTranscript,
+  isResolvedWatched,
   parseVerdicts,
   selectFewShot,
   type UnansweredLabel,
@@ -68,4 +70,26 @@ test("parseVerdicts derives unanswered from waiting_on, defaults safely", () => 
 test("parseVerdicts returns [] on non-JSON", () => {
   assert.deepEqual(parseVerdicts("not json"), []);
   assert.deepEqual(parseVerdicts("{}"), []);
+});
+
+test("effectiveWaitingOn precedence: human → AI → rule", () => {
+  // human ✔/✘ wins over everything
+  assert.equal(effectiveWaitingOn({ human_unanswered: true, ai_waiting_on: "none" }, false), "staff");
+  assert.equal(effectiveWaitingOn({ human_unanswered: false, ai_waiting_on: "staff" }, true), "none");
+  // then AI verdict
+  assert.equal(effectiveWaitingOn({ ai_waiting_on: "client" }, true), "client");
+  assert.equal(effectiveWaitingOn({ ai_waiting_on: "staff" }, false), "staff");
+  // then rule fallback
+  assert.equal(effectiveWaitingOn({}, true), "staff");
+  assert.equal(effectiveWaitingOn(undefined, true), "staff");
+  // nothing → none
+  assert.equal(effectiveWaitingOn(undefined, false), "none");
+  assert.equal(effectiveWaitingOn({ ai_waiting_on: "garbage" }, false), "none");
+});
+
+test("isResolvedWatched only for watched chats no longer waiting on us", () => {
+  assert.equal(isResolvedWatched("none", true), true); // answered → verify
+  assert.equal(isResolvedWatched("client", true), true); // ball in client's court
+  assert.equal(isResolvedWatched("staff", true), false); // still our turn
+  assert.equal(isResolvedWatched("none", false), false); // not watched
 });

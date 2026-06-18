@@ -54,7 +54,9 @@ export async function POST(req: Request) {
   try {
     const resp = await client.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 8000,
+      // Headroom for adaptive thinking + a verdict per chat; truncation would
+      // break the JSON. 16k stays under the SDK's non-streaming timeout guard.
+      max_tokens: 16000,
       thinking: { type: "adaptive" },
       output_config: {
         effort: "low",

@@ -21,7 +21,12 @@ import {
   type ReportFilters,
   type ReportSnapshot,
 } from "./report";
-import type { Candidate, UnansweredLabel, Verdict } from "./unanswered";
+import {
+  effectiveWaitingOn,
+  type Candidate,
+  type UnansweredLabel,
+  type Verdict,
+} from "./unanswered";
 import type { DebtTotals } from "./debts";
 import { debtsCellValue } from "./debts";
 import type {
@@ -764,13 +769,7 @@ export async function listUnansweredQueue(
   for (const c of (chats ?? []) as any[]) {
     const m = byAgr.get(c.agr_no);
     // Effective waiting state: human confirmation wins, then AI, then rule.
-    let waiting_on: QueueWaitingOn;
-    if (m?.human_unanswered === true) waiting_on = "staff";
-    else if (m?.human_unanswered === false) waiting_on = "none";
-    else if (m?.ai_waiting_on) waiting_on = m.ai_waiting_on as QueueWaitingOn;
-    else if (c.unanswered === true) waiting_on = "staff"; // rule fallback
-    else waiting_on = "none";
-
+    const waiting_on = effectiveWaitingOn(m, c.unanswered) as QueueWaitingOn;
     const watched = m?.watched === true;
     if (waiting_on === "none" && !watched) continue; // nothing to show
 
