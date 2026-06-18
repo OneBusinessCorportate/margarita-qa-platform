@@ -546,14 +546,14 @@ export default function ScoringPanel({
         </span>
       </div>
 
-      {/* Scroll the wide grid inside its own box so the sticky header row and
-          sticky first column pin relative to THIS container — otherwise the
-          first column floated over the rest of the page while scrolling. */}
+      {/* Scroll the wide grid inside its own box so the sticky HEADER ROW pins
+          relative to THIS container. The first column is intentionally NOT
+          horizontally pinned — it scrolls with the grid. */}
       <div className="card overflow-auto max-h-[78vh]">
         <table className="qa pairs sticky-head">
           <thead>
             <tr>
-              <th className="corner sticky left-0 bg-gray-100 min-w-[210px]">
+              <th className="corner bg-gray-100 min-w-[210px]">
                 № / Чат / Бухгалтер
               </th>
               <th className="text-center">Кто</th>
@@ -822,7 +822,7 @@ function ChatScoreRow({
       <tr className={`chat-start ${savedId ? "bg-green-100" : ""}`}>
         <td
           rowSpan={2}
-          className={`chat-info sticky left-0 z-10 align-top min-w-[280px] max-w-[340px] ${
+          className={`chat-info align-top min-w-[280px] max-w-[340px] ${
             savedId ? "bg-green-100 border-l-8 border-green-600" : "bg-white"
           }`}
         >
@@ -1205,8 +1205,8 @@ function RegRoleRow({
 
   return (
     <tr className={savedId ? "bg-green-50/50" : "bg-violet-50/30"}>
-      {/* Role + person — sits in the same sticky first column as the chat info. */}
-      <td className="sticky left-0 z-10 bg-white align-top min-w-[210px]">
+      {/* Role + person — sits in the first column (scrolls with the grid). */}
+      <td className="bg-white align-top min-w-[210px]">
         <div className="flex items-start gap-1.5">
           <span className="pt-1" title={info.label}>{info.icon}</span>
           <PersonPicker
