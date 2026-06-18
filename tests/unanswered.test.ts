@@ -46,19 +46,23 @@ test("buildSystemPrompt embeds confirmed labels as examples", () => {
   assert.match(sys, /ответа не требуется/);
 });
 
-test("parseVerdicts validates shape and defaults confidence", () => {
+test("parseVerdicts derives unanswered from waiting_on, defaults safely", () => {
   const text = JSON.stringify({
     results: [
-      { agr_no: "B-1", unanswered: true, reason: "вопрос", confidence: "high" },
-      { agr_no: "B-2", unanswered: false, reason: "спасибо", confidence: "bogus" },
-      { agr_no: 99, unanswered: true }, // invalid agr_no → dropped
-      { unanswered: true }, // missing agr_no → dropped
+      { agr_no: "B-1", waiting_on: "staff", reason: "вопрос", confidence: "high" },
+      { agr_no: "B-2", waiting_on: "client", reason: "ждём документы", confidence: "bogus" },
+      { agr_no: "B-3", waiting_on: "none", reason: "спасибо", confidence: "low" },
+      { agr_no: "B-4", waiting_on: "weird", reason: "x", confidence: "low" }, // bad enum → none
+      { agr_no: 99, waiting_on: "staff" }, // invalid agr_no → dropped
     ],
   });
   const v = parseVerdicts(text);
-  assert.equal(v.length, 2);
-  assert.equal(v[0].agr_no, "B-1");
+  assert.equal(v.length, 4);
+  assert.equal(v[0].unanswered, true); // staff → we owe a reply
+  assert.equal(v[1].unanswered, false); // client → not our turn
   assert.equal(v[1].confidence, "low"); // invalid enum coerced
+  assert.equal(v[2].unanswered, false); // none → finished
+  assert.equal(v[3].waiting_on, "none"); // invalid waiting_on coerced
 });
 
 test("parseVerdicts returns [] on non-JSON", () => {

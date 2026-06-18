@@ -695,65 +695,136 @@ export async function createReportSnapshot(
 
 // --- Unanswered ("Без ответа") — AI detection + learning -------------------
 
-/** A flagged chat as shown on the «Без ответа» page (worst wait first). */
+/** Whom an open thread is waiting on (mirrors WaitingOn in ./unanswered). */
+export type QueueWaitingOn = "staff" | "client" | "none";
+
+/** Which slice of the «Без ответа» queue to show. */
+export type UnansweredMode = "staff" | "client" | "watched" | "all";
+
+/** A row on the «Без ответа» page (worst wait first). */
 export interface UnansweredQueueItem {
   agr_no: string;
   chat_name: string;
   accountant: string | null;
   chat_link: string | null;
+  debts: string | null;
   last_activity_at: string | null;
   last_msg_text: string | null;
-  ai_unanswered: boolean | null;
+  /** Effective state: human → AI → rule. staff = we owe a reply. */
+  waiting_on: QueueWaitingOn;
+  watched: boolean;
   ai_reason: string | null;
   ai_confidence: string | null;
   human_unanswered: boolean | null;
   analyzed_at: string | null;
 }
 
-/**
- * Chats currently flagged as awaiting a reply (mqa_chats.unanswered = the smart
- * signal: human ✔/✘ → AI verdict → rule+closing), oldest-waiting first, enriched
- * with the AI's reason/confidence and whether Margarita has confirmed yet.
- */
-export async function listUnansweredQueue(): Promise<UnansweredQueueItem[]> {
-  const sb = getServiceClient();
-  if (!sb) return [];
-  const { data: chats, error } = await sb
-    .from(TABLES.chats)
-    .select("agr_no, chat_name, accountant, chat_link, last_activity_at")
-    .eq("unanswered", true)
-    .order("last_activity_at", { ascending: true })
-    .limit(2000);
-  if (error) throw error;
-  const rows = (chats ?? []) as any[];
-  if (rows.length === 0) return [];
+/** Counts per mode for the page's filter tabs. */
+export interface UnansweredCounts {
+  staff: number;
+  client: number;
+  watched: number;
+  all: number;
+}
 
-  const agrNos = rows.map((c) => c.agr_no);
-  const { data: meta, error: e2 } = await sb
-    .from(TABLES.unanswered)
-    .select(
-      "agr_no, last_msg_text, ai_unanswered, ai_reason, ai_confidence, human_unanswered, analyzed_at"
-    )
-    .in("agr_no", agrNos);
+/**
+ * The «Без ответа» queue. Effective state per chat = Margarita's ✔/✘ →
+ * AI verdict (waiting_on) → rule fallback (mqa_chats.unanswered). Modes:
+ *   staff   — ждут НАС (мы должны ответить) — the SLA breaches
+ *   client  — ждём КЛИЕНТА (сотрудник задал вопрос, ход за клиентом)
+ *   watched — «на контроле» (она пометила, чтобы проследить)
+ *   all     — любая незавершённая коммуникация или отмеченные
+ * Returns the rows for `mode` (worst wait first) plus counts for every tab.
+ */
+export async function listUnansweredQueue(
+  mode: UnansweredMode = "staff"
+): Promise<{ items: UnansweredQueueItem[]; counts: UnansweredCounts }> {
+  const empty = { items: [], counts: { staff: 0, client: 0, watched: 0, all: 0 } };
+  const sb = getServiceClient();
+  if (!sb) return empty;
+
+  const [{ data: chats, error }, { data: meta, error: e2 }] = await Promise.all([
+    sb
+      .from(TABLES.chats)
+      .select("agr_no, chat_name, accountant, chat_link, debts, last_activity_at, unanswered")
+      .limit(20000),
+    sb
+      .from(TABLES.unanswered)
+      .select(
+        "agr_no, last_msg_text, ai_unanswered, ai_waiting_on, ai_reason, ai_confidence, human_unanswered, watched, analyzed_at"
+      )
+      .limit(20000),
+  ]);
+  if (error) throw error;
   if (e2) throw e2;
+
   const byAgr = new Map((meta ?? []).map((m: any) => [m.agr_no, m]));
 
-  return rows.map((c) => {
+  const all: UnansweredQueueItem[] = [];
+  for (const c of (chats ?? []) as any[]) {
     const m = byAgr.get(c.agr_no);
-    return {
+    // Effective waiting state: human confirmation wins, then AI, then rule.
+    let waiting_on: QueueWaitingOn;
+    if (m?.human_unanswered === true) waiting_on = "staff";
+    else if (m?.human_unanswered === false) waiting_on = "none";
+    else if (m?.ai_waiting_on) waiting_on = m.ai_waiting_on as QueueWaitingOn;
+    else if (c.unanswered === true) waiting_on = "staff"; // rule fallback
+    else waiting_on = "none";
+
+    const watched = m?.watched === true;
+    if (waiting_on === "none" && !watched) continue; // nothing to show
+
+    all.push({
       agr_no: c.agr_no,
       chat_name: c.chat_name,
       accountant: c.accountant ?? null,
       chat_link: c.chat_link ?? null,
+      debts: c.debts ?? null,
       last_activity_at: c.last_activity_at ?? null,
       last_msg_text: m?.last_msg_text ?? null,
-      ai_unanswered: m?.ai_unanswered ?? null,
+      waiting_on,
+      watched,
       ai_reason: m?.ai_reason ?? null,
       ai_confidence: m?.ai_confidence ?? null,
       human_unanswered: m?.human_unanswered ?? null,
       analyzed_at: m?.analyzed_at ?? null,
-    };
-  });
+    });
+  }
+
+  const counts: UnansweredCounts = {
+    staff: all.filter((x) => x.waiting_on === "staff").length,
+    client: all.filter((x) => x.waiting_on === "client").length,
+    watched: all.filter((x) => x.watched).length,
+    all: all.length,
+  };
+
+  let items = all;
+  if (mode === "staff") items = all.filter((x) => x.waiting_on === "staff");
+  else if (mode === "client") items = all.filter((x) => x.waiting_on === "client");
+  else if (mode === "watched") items = all.filter((x) => x.watched);
+
+  items.sort((a, b) =>
+    (a.last_activity_at ?? "").localeCompare(b.last_activity_at ?? "")
+  );
+  return { items, counts };
+}
+
+/** Toggle «на контроле» (her "mark it") for a chat — persisted across re-analysis. */
+export async function setUnansweredWatched(
+  agrNo: string,
+  watched: boolean
+): Promise<void> {
+  const sb = getServiceClient();
+  if (!sb) throw new Error("Supabase not configured");
+  const { error } = await sb.from(TABLES.unanswered).upsert(
+    {
+      agr_no: agrNo,
+      watched,
+      watched_at: watched ? new Date().toISOString() : null,
+    },
+    { onConflict: "agr_no" }
+  );
+  if (error) throw error;
 }
 
 /** Candidates for AI analysis (client wrote last, recent, not yet analyzed). */
@@ -811,6 +882,7 @@ export async function recordUnansweredVerdicts(
         last_msg_at: c.last_msg_at,
         last_msg_text: c.last_msg_text,
         ai_unanswered: v.unanswered,
+        ai_waiting_on: v.waiting_on,
         ai_reason: v.reason,
         ai_confidence: v.confidence,
         human_unanswered: null,
