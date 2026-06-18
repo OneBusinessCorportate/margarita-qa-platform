@@ -34,6 +34,21 @@ export interface AccountantTasks {
   overdue: number;
 }
 
+/**
+ * One person Margarita should follow up with, with the reason(s) why. Consolidates
+ * the danger signals that today are scattered across two tables (a weak average,
+ * any critical chat, overdue tasks) into a single coaching to-do list.
+ */
+export interface AttentionItem {
+  accountant: string;
+  avgScore: number; // 0..100, -1 when flagged only for tasks (no evaluations)
+  band: QualityBand | null;
+  lowCount: number; // Плохо + Критично evaluations
+  criticalCount: number; // Критично evaluations
+  overdueTasks: number;
+  reasons: string[]; // short human-readable Russian reasons
+}
+
 export interface DailyReport {
   filters: ReportFilters;
   totals: {
@@ -45,6 +60,8 @@ export interface DailyReport {
   distribution: Record<QualityBand, number>;
   serviceQualityPct: number; // "Сервис Бухгалтерии" %
   perAccountant: AccountantScore[];
+  /** Who Margarita should follow up with, most urgent first. May be empty. */
+  needsAttention: AttentionItem[];
   tasks: {
     total: number;
     onTime: number;
@@ -145,14 +162,18 @@ export function buildReport(
   for (const e of evals) distribution[bandFor(e.total_score)] += 1;
 
   // Per-accountant chat scores.
-  const byAcc = new Map<string, { sum: number; count: number; low: number }>();
+  const byAcc = new Map<
+    string,
+    { sum: number; count: number; low: number; crit: number }
+  >();
   for (const e of evals) {
     const key = e.accountant ?? "—";
-    const agg = byAcc.get(key) ?? { sum: 0, count: 0, low: 0 };
+    const agg = byAcc.get(key) ?? { sum: 0, count: 0, low: 0, crit: 0 };
     agg.sum += e.total_score;
     agg.count += 1;
     const band = bandFor(e.total_score);
     if (band === "Плохо" || band === "Критично") agg.low += 1;
+    if (band === "Критично") agg.crit += 1;
     byAcc.set(key, agg);
   }
   const perAccountant: AccountantScore[] = [...byAcc.entries()]
@@ -205,6 +226,42 @@ export function buildReport(
     .map(([accountant, a]) => ({ accountant, ...a }))
     .sort((x, y) => y.total - x.total);
 
+  // "Требует внимания" — the coaching to-do list. Flag a person when their
+  // average lands in a weak band (Плохо/Критично), they have a critical chat,
+  // or they have overdue tasks. Most urgent first.
+  const overdueByAcc = new Map<string, number>();
+  for (const [acc, a] of taskByAcc) if (a.overdue > 0) overdueByAcc.set(acc, a.overdue);
+
+  const attentionKeys = new Set<string>();
+  for (const [acc, a] of byAcc) {
+    const band = bandFor(a.sum / a.count);
+    if (a.crit > 0 || band === "Плохо" || band === "Критично") attentionKeys.add(acc);
+  }
+  for (const acc of overdueByAcc.keys()) attentionKeys.add(acc);
+
+  const needsAttention: AttentionItem[] = [...attentionKeys]
+    .map((accountant): AttentionItem => {
+      const s = byAcc.get(accountant);
+      const avgScore = s && s.count ? Math.round((s.sum / s.count) * 10) / 10 : -1;
+      const band = avgScore >= 0 ? bandFor(avgScore) : null;
+      const criticalCount = s?.crit ?? 0;
+      const lowCount = s?.low ?? 0;
+      const overdueTasks = overdueByAcc.get(accountant) ?? 0;
+      const reasons: string[] = [];
+      if (band === "Критично" || band === "Плохо")
+        reasons.push(`средняя ${avgScore}% — ${band}`);
+      if (criticalCount > 0) reasons.push(`критичных чатов: ${criticalCount}`);
+      if (overdueTasks > 0) reasons.push(`просрочено задач: ${overdueTasks}`);
+      return { accountant, avgScore, band, lowCount, criticalCount, overdueTasks, reasons };
+    })
+    .sort((x, y) => {
+      if (y.criticalCount !== x.criticalCount) return y.criticalCount - x.criticalCount;
+      if (y.overdueTasks !== x.overdueTasks) return y.overdueTasks - x.overdueTasks;
+      const ax = x.avgScore < 0 ? 101 : x.avgScore;
+      const ay = y.avgScore < 0 ? 101 : y.avgScore;
+      return ax - ay;
+    });
+
   return {
     filters,
     totals: {
@@ -223,6 +280,7 @@ export function buildReport(
     distribution,
     serviceQualityPct,
     perAccountant,
+    needsAttention,
     tasks: {
       total: scopedTasks.length,
       onTime: tOnTime,

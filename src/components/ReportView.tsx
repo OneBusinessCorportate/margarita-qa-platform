@@ -4,8 +4,27 @@ import type { DailyReport } from "@/lib/report";
 // Presentational report blocks (distribution, per-accountant, tasks), shared by
 // the live dashboard and saved-snapshot views so both render the exact same way.
 export default function ReportView({ report }: { report: DailyReport }) {
+  // Guard for snapshots saved before "Требует внимания" existed.
+  const needsAttention = report.needsAttention ?? [];
   return (
     <div className="space-y-4">
+      {/* Требует внимания — the coaching to-do list, shown only when non-empty. */}
+      {needsAttention.length > 0 && (
+        <div className="card p-3 border-red-200 bg-red-50">
+          <div className="text-sm font-medium mb-2 text-red-700">
+            ❗ Требует внимания
+          </div>
+          <ul className="space-y-1">
+            {needsAttention.map((a) => (
+              <li key={a.accountant} className="text-sm flex flex-wrap gap-x-2">
+                <span className="font-medium">{a.accountant}</span>
+                <span className="text-red-700">— {a.reasons.join("; ")}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Distribution + service quality */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="card p-3 md:col-span-2">
