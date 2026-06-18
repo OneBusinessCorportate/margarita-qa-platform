@@ -21,6 +21,9 @@ import {
   type ReportFilters,
   type ReportSnapshot,
 } from "./report";
+import type { Candidate, UnansweredLabel, Verdict } from "./unanswered";
+import type { DebtTotals } from "./debts";
+import { debtsCellValue } from "./debts";
 import type {
   Accountant,
   ActiveExclusion,
@@ -688,4 +691,252 @@ export async function createReportSnapshot(
   }
   store().reportSnapshots.unshift(row);
   return row;
+}
+
+// --- Unanswered ("Без ответа") — AI detection + learning -------------------
+
+/** A flagged chat as shown on the «Без ответа» page (worst wait first). */
+export interface UnansweredQueueItem {
+  agr_no: string;
+  chat_name: string;
+  accountant: string | null;
+  chat_link: string | null;
+  last_activity_at: string | null;
+  last_msg_text: string | null;
+  ai_unanswered: boolean | null;
+  ai_reason: string | null;
+  ai_confidence: string | null;
+  human_unanswered: boolean | null;
+  analyzed_at: string | null;
+}
+
+/**
+ * Chats currently flagged as awaiting a reply (mqa_chats.unanswered = the smart
+ * signal: human ✔/✘ → AI verdict → rule+closing), oldest-waiting first, enriched
+ * with the AI's reason/confidence and whether Margarita has confirmed yet.
+ */
+export async function listUnansweredQueue(): Promise<UnansweredQueueItem[]> {
+  const sb = getServiceClient();
+  if (!sb) return [];
+  const { data: chats, error } = await sb
+    .from(TABLES.chats)
+    .select("agr_no, chat_name, accountant, chat_link, last_activity_at")
+    .eq("unanswered", true)
+    .order("last_activity_at", { ascending: true })
+    .limit(2000);
+  if (error) throw error;
+  const rows = (chats ?? []) as any[];
+  if (rows.length === 0) return [];
+
+  const agrNos = rows.map((c) => c.agr_no);
+  const { data: meta, error: e2 } = await sb
+    .from(TABLES.unanswered)
+    .select(
+      "agr_no, last_msg_text, ai_unanswered, ai_reason, ai_confidence, human_unanswered, analyzed_at"
+    )
+    .in("agr_no", agrNos);
+  if (e2) throw e2;
+  const byAgr = new Map((meta ?? []).map((m: any) => [m.agr_no, m]));
+
+  return rows.map((c) => {
+    const m = byAgr.get(c.agr_no);
+    return {
+      agr_no: c.agr_no,
+      chat_name: c.chat_name,
+      accountant: c.accountant ?? null,
+      chat_link: c.chat_link ?? null,
+      last_activity_at: c.last_activity_at ?? null,
+      last_msg_text: m?.last_msg_text ?? null,
+      ai_unanswered: m?.ai_unanswered ?? null,
+      ai_reason: m?.ai_reason ?? null,
+      ai_confidence: m?.ai_confidence ?? null,
+      human_unanswered: m?.human_unanswered ?? null,
+      analyzed_at: m?.analyzed_at ?? null,
+    };
+  });
+}
+
+/** Candidates for AI analysis (client wrote last, recent, not yet analyzed). */
+export async function getUnansweredCandidates(
+  limit = 40,
+  days = 14
+): Promise<Candidate[]> {
+  const sb = getServiceClient();
+  if (!sb) return [];
+  const { data, error } = await sb.rpc("mqa_unanswered_candidates", {
+    p_limit: limit,
+    p_days: days,
+  });
+  if (error) throw error;
+  return (data ?? []) as Candidate[];
+}
+
+/** Past confirmed labels, newest first — few-shot training data for the prompt. */
+export async function listUnansweredLabels(
+  limit = 60
+): Promise<UnansweredLabel[]> {
+  const sb = getServiceClient();
+  if (!sb) return [];
+  const { data, error } = await sb
+    .from(TABLES.unansweredLabels)
+    .select("last_msg_text, ai_unanswered, human_unanswered")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as UnansweredLabel[];
+}
+
+/**
+ * Persist a batch of AI verdicts: upsert mqa_unanswered (resetting any prior
+ * human confirmation — the verdict is for a NEW last message) and reflect the
+ * verdict into mqa_chats.unanswered immediately so the badge updates without
+ * waiting for the cron.
+ */
+export async function recordUnansweredVerdicts(
+  verdicts: Verdict[],
+  candidates: Candidate[]
+): Promise<number> {
+  const sb = getServiceClient();
+  if (!sb || verdicts.length === 0) return 0;
+  const candByAgr = new Map(candidates.map((c) => [c.agr_no, c]));
+  const now = new Date().toISOString();
+
+  const rows = verdicts
+    .filter((v) => candByAgr.has(v.agr_no))
+    .map((v) => {
+      const c = candByAgr.get(v.agr_no)!;
+      return {
+        agr_no: v.agr_no,
+        chat_id: c.chat_id,
+        last_msg_at: c.last_msg_at,
+        last_msg_text: c.last_msg_text,
+        ai_unanswered: v.unanswered,
+        ai_reason: v.reason,
+        ai_confidence: v.confidence,
+        human_unanswered: null,
+        human_at: null,
+        analyzed_at: now,
+      };
+    });
+  if (rows.length === 0) return 0;
+
+  const { error } = await sb
+    .from(TABLES.unanswered)
+    .upsert(rows, { onConflict: "agr_no" });
+  if (error) throw error;
+
+  // Reflect verdicts into the consumed signal right away.
+  for (const v of verdicts) {
+    if (!candByAgr.has(v.agr_no)) continue;
+    const { error: ue } = await sb
+      .from(TABLES.chats)
+      .update({ unanswered: v.unanswered })
+      .eq("agr_no", v.agr_no);
+    if (ue) throw ue;
+  }
+  return rows.length;
+}
+
+/**
+ * Record Margarita's ✔/✘ for a chat: append a training label (with whatever the
+ * AI had said, for learning), pin the human verdict on mqa_unanswered, and set
+ * the consumed mqa_chats.unanswered signal to her decision.
+ */
+export async function recordUnansweredLabel(
+  agrNo: string,
+  humanUnanswered: boolean,
+  createdBy: string | null
+): Promise<void> {
+  const sb = getServiceClient();
+  if (!sb) throw new Error("Supabase not configured");
+
+  const { data: cur } = await sb
+    .from(TABLES.unanswered)
+    .select("chat_id, last_msg_text, ai_unanswered, ai_reason")
+    .eq("agr_no", agrNo)
+    .maybeSingle();
+
+  const { error: le } = await sb.from(TABLES.unansweredLabels).insert({
+    agr_no: agrNo,
+    chat_id: cur?.chat_id ?? null,
+    last_msg_text: cur?.last_msg_text ?? null,
+    ai_unanswered: cur?.ai_unanswered ?? null,
+    ai_reason: cur?.ai_reason ?? null,
+    human_unanswered: humanUnanswered,
+    created_by: createdBy,
+  });
+  if (le) throw le;
+
+  const now = new Date().toISOString();
+  // Pin the human verdict (create the row if analysis never ran for this chat).
+  const { error: ue } = await sb.from(TABLES.unanswered).upsert(
+    {
+      agr_no: agrNo,
+      chat_id: cur?.chat_id ?? null,
+      human_unanswered: humanUnanswered,
+      human_at: now,
+    },
+    { onConflict: "agr_no" }
+  );
+  if (ue) throw ue;
+
+  const { error: ce } = await sb
+    .from(TABLES.chats)
+    .update({ unanswered: humanUnanswered })
+    .eq("agr_no", agrNo);
+  if (ce) throw ce;
+}
+
+// --- Debts ("Долги") — automatic sync from the OneBusiness system -----------
+
+/**
+ * Mirror aggregated debts into mqa_debts and refresh mqa_chats.debts (the field
+ * the scoring UI already reads). `byNorm` maps a normalized agreement key →
+ * totals; we match it against each chat's normalized agr_no.
+ */
+export async function syncDebts(
+  byNorm: Map<string, DebtTotals>,
+  normalize: (s: string) => string
+): Promise<{ updated: number; withDebt: number }> {
+  const sb = getServiceClient();
+  if (!sb) return { updated: 0, withDebt: 0 };
+  const now = new Date().toISOString();
+
+  const { data: chats, error } = await sb
+    .from(TABLES.chats)
+    .select("agr_no")
+    .limit(20000);
+  if (error) throw error;
+
+  const debtRows: any[] = [];
+  const chatUpdates: { agr_no: string; debts: string }[] = [];
+  let withDebt = 0;
+  for (const c of (chats ?? []) as any[]) {
+    const totals = byNorm.get(normalize(c.agr_no));
+    debtRows.push({
+      agr_no: c.agr_no,
+      overdue: totals?.overdue ?? 0,
+      upcoming: totals?.upcoming ?? 0,
+      total: totals?.total ?? 0,
+      as_of: now,
+    });
+    if (totals && totals.overdue > 0) withDebt++;
+    chatUpdates.push({ agr_no: c.agr_no, debts: debtsCellValue(totals) });
+  }
+
+  if (debtRows.length > 0) {
+    const { error: de } = await sb
+      .from(TABLES.debts)
+      .upsert(debtRows, { onConflict: "agr_no" });
+    if (de) throw de;
+  }
+  // Refresh the UI-consumed string per chat.
+  for (const u of chatUpdates) {
+    const { error: ce } = await sb
+      .from(TABLES.chats)
+      .update({ debts: u.debts })
+      .eq("agr_no", u.agr_no);
+    if (ce) throw ce;
+  }
+  return { updated: chatUpdates.length, withDebt };
 }

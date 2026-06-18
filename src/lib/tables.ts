@@ -18,4 +18,7 @@ export const TABLES = {
   activeExclusions: `${PREFIX}active_exclusions`,
   reportSnapshots: `${PREFIX}report_snapshots`,
   chatActivity: `${PREFIX}chat_activity`,
+  unanswered: `${PREFIX}unanswered`,
+  unansweredLabels: `${PREFIX}unanswered_labels`,
+  debts: `${PREFIX}debts`,
 } as const;

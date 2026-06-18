@@ -22,6 +22,14 @@ services:
         sync: false
       - key: AUTH_USERS
         sync: false
+      # AI unanswered-chat detection (set in the Render dashboard):
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Debts source — the OneBusiness debts Supabase project:
+      - key: ONEBUSINESS_SUPABASE_URL
+        sync: false
+      - key: ONEBUSINESS_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       # Optional (later):
       # - key: TELEGRAM_BOT_TOKEN
       #   sync: false

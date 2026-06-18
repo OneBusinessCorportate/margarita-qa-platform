@@ -12,6 +12,7 @@
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.69.0",
     "@supabase/supabase-js": "^2.45.4",
     "jose": "^5.9.6",
     "next": "14.2.35",
