@@ -776,6 +776,34 @@ export async function listUnansweredQueue(
   return { items, counts };
 }
 
+/** A «Поздний ответ» row: answered, but the client waited past SLA. */
+export interface LateAnswerItem {
+  agr_no: string;
+  chat_name: string;
+  accountant: string | null;
+  chat_link: string | null;
+  hours_ago: number | null;
+  problem_text: string | null;
+  responder_name: string | null;
+}
+
+/** Recently answered chats where the client waited past SLA (working hours). */
+export async function listLateAnswers(): Promise<LateAnswerItem[]> {
+  const sb = getServiceClient();
+  if (!sb) return [];
+  const { data, error } = await sb.rpc("mqa_late_answers", { p_sla_hours: 2 });
+  if (error) throw error;
+  return ((data ?? []) as any[]).map((r) => ({
+    agr_no: r.agr_no,
+    chat_name: r.chat_name,
+    accountant: r.accountant ?? null,
+    chat_link: r.chat_link ?? null,
+    hours_ago: r.hours_ago != null ? Number(r.hours_ago) : null,
+    problem_text: r.problem_text ?? null,
+    responder_name: r.responder_name ?? null,
+  }));
+}
+
 /** Toggle «на контроле» (her "mark it") for a chat — persisted across re-analysis. */
 export async function setUnansweredWatched(
   agrNo: string,

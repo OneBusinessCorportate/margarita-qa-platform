@@ -4,14 +4,37 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { isTelegramLink } from "@/lib/chat-list";
 import { slaWaitLabel } from "@/lib/unanswered";
-import type { UnansweredQueueItem } from "@/lib/repo";
+import type { LateAnswerItem, UnansweredQueueItem } from "@/lib/repo";
 
-// The simplest possible triage list: the chats we owe a reply on. Click the chat
-// to read it in Telegram, pick one status. That's it.
+function ChatLink({
+  name,
+  link,
+}: {
+  name: string;
+  link: string | null;
+}) {
+  return isTelegramLink(link) ? (
+    <a
+      href={link!}
+      target="_blank"
+      rel="noreferrer"
+      className="text-blue-600 hover:underline font-medium"
+    >
+      {name}
+    </a>
+  ) : (
+    <span className="font-medium text-gray-900">{name}</span>
+  );
+}
+
+// The simplest possible triage list: chats we owe a reply on (pick a status),
+// plus a short list of recent late answers (already replied, just for review).
 export default function UnansweredPanel({
   items,
+  late,
 }: {
   items: UnansweredQueueItem[];
+  late: LateAnswerItem[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -44,18 +67,7 @@ export default function UnansweredPanel({
             {items.map((it) => (
               <tr key={it.agr_no} className="border-b border-gray-100 align-top">
                 <td className="py-3 pr-4 whitespace-nowrap">
-                  {isTelegramLink(it.chat_link) ? (
-                    <a
-                      href={it.chat_link!}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-blue-600 hover:underline font-medium"
-                    >
-                      {it.chat_name}
-                    </a>
-                  ) : (
-                    <span className="font-medium text-gray-900">{it.chat_name}</span>
-                  )}
+                  <ChatLink name={it.chat_name} link={it.chat_link} />
                   <div className="text-xs text-gray-400">
                     {it.agr_no} · {it.accountant ?? "—"} · ждёт{" "}
                     {slaWaitLabel(it.hours_ago)}
@@ -83,6 +95,35 @@ export default function UnansweredPanel({
             ))}
           </tbody>
         </table>
+      )}
+
+      {late.length > 0 && (
+        <>
+          <h2 className="text-base font-semibold text-gray-900 mt-8 mb-3">
+            Поздний ответ ({late.length})
+          </h2>
+          <table className="w-full text-sm">
+            <tbody>
+              {late.map((it) => (
+                <tr key={it.agr_no} className="border-b border-gray-100 align-top">
+                  <td className="py-3 pr-4 whitespace-nowrap">
+                    <ChatLink name={it.chat_name} link={it.chat_link} />
+                    <div className="text-xs text-gray-400">
+                      {it.agr_no} · {it.accountant ?? "—"} · ждал{" "}
+                      {slaWaitLabel(it.hours_ago)}
+                    </div>
+                  </td>
+                  <td className="py-3 pr-4 text-gray-700">
+                    <div className="line-clamp-2">{it.problem_text ?? "—"}</div>
+                  </td>
+                  <td className="py-3 text-right whitespace-nowrap text-xs text-gray-500">
+                    ответил(а) {it.responder_name ?? "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );

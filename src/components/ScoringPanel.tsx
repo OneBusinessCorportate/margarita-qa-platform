@@ -23,8 +23,6 @@ import {
   autoMonthlyStatus,
   cmpAgrNo,
   compareByActivity,
-  debtAmountLabel,
-  debtTone,
   isTelegramLink,
   waitingLabel,
   type SortBy,
@@ -692,12 +690,17 @@ function ChatScoreRow({
       const p = prevStatuses[c.id];
       if (p) base[c.id] = { status: p, prev: p };
     }
-    // Auto-fill every status we can determine from facts (debt feed, client
-    // status, the deadline date) so Margarita only edits the exceptions instead
-    // of picking "Нет долга" / "Предстоящая" by hand on every row. Editable.
+    // Auto-fill every status we can: first from facts (debt feed, client status,
+    // the deadline date), then from the AI model (learned from her past labels in
+    // Supabase) for the rest (Налоги / Зарплата / Первичка → «Предстоящая» /
+    // «Получил» …). She only edits the exceptions. All editable.
+    const aiInit = predictEvaluation(accountant || null, prevStatuses, aiModel);
     for (const c of MONTHLY_CATEGORIES) {
       if (base[c.id].status) continue; // a carried-over value wins
-      const auto = autoMonthlyStatus(c, chat.status, chat.debts, date);
+      const auto =
+        autoMonthlyStatus(c, chat.status, chat.debts, date) ??
+        aiInit.monthly[c.id]?.status ??
+        "";
       if (auto)
         base[c.id] = { status: auto, prev: prevStatuses[c.id] ?? PREV_STATUS_DEFAULT };
     }
@@ -728,6 +731,7 @@ function ChatScoreRow({
     Boolean(savedId) ||
     prefilledFromPrev ||
     DAILY_CRITERIA.some((c) => typeof criteria[c.id] === "number") ||
+    MONTHLY_CATEGORIES.some((c) => Boolean(monthly[c.id]?.status)) ||
     override.trim() !== "";
 
   const setCrit = (id: CriterionId, v: string) =>
@@ -922,43 +926,6 @@ function ChatScoreRow({
               </span>
             )}
           </div>
-          {/* Debt signal. The payment state is filled AUTOMATICALLY from the
-              Import Debts feed so Margarita never maintains it by hand: a client
-              who still owes shows a red «Не уплачено» + amount; a client with
-              nothing outstanding gets the auto «Нет долга» status. She only
-              judges the follow-up («1-й написал» …) from the chat itself. */}
-          {(() => {
-            const amount = debtAmountLabel(chat.debts);
-            const status = monthly["debts"]?.status?.trim() || "";
-            const tone = debtTone(status);
-            if (!amount?.owed && !tone) return null;
-            const toneCls =
-              tone === "fail"
-                ? "bg-red-100 text-red-700"
-                : tone === "none"
-                ? "bg-gray-100 text-gray-500"
-                : "bg-amber-100 text-amber-700";
-            return (
-              <div className="text-xs mt-1 flex flex-wrap items-center gap-1">
-                {amount?.owed && (
-                  <span
-                    className="inline-block rounded px-1.5 py-0.5 font-medium bg-red-100 text-red-700"
-                    title="Долг по данным импорта — клиент ещё не оплатил (обновляется из таблицы долгов)"
-                  >
-                    Не уплачено: {amount.text.replace(/^долг\s*/i, "")}
-                  </span>
-                )}
-                {tone && (
-                  <span
-                    className={`inline-block rounded px-1.5 py-0.5 font-medium ${toneCls}`}
-                    title="Статус по долгам из последней проверки (см. колонку «Долги»)"
-                  >
-                    Долги: {status}
-                  </span>
-                )}
-              </div>
-            );
-          })()}
           <div className="mt-1">
             <PersonPicker
               value={accountant}

@@ -1,11 +1,14 @@
 import UnansweredPanel from "@/components/UnansweredPanel";
-import { listUnansweredQueue } from "@/lib/repo";
+import { listLateAnswers, listUnansweredQueue } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
 
-// «Без ответа»: the chats we owe a reply on (canonical QA/SLA logic), longest
-// wait first. Dead-simple list.
+// «Без ответа»: the chats we owe a reply on + recent late answers (client waited
+// past SLA but got a reply). Canonical QA/SLA logic. Dead-simple list.
 export default async function UnansweredPage() {
-  const { items } = await listUnansweredQueue("unanswered");
-  return <UnansweredPanel items={items} />;
+  const [{ items }, late] = await Promise.all([
+    listUnansweredQueue("unanswered"),
+    listLateAnswers(),
+  ]);
+  return <UnansweredPanel items={items} late={late} />;
 }
