@@ -27,6 +27,7 @@ import {
   debtAmountLabel,
   debtTone,
   isTelegramLink,
+  waitingLabel,
   type SortBy,
 } from "@/lib/chat-list";
 import type {
@@ -86,14 +87,16 @@ export default function ScoringPanel({
   initialEvaluations: Evaluation[];
   aiModel: AiModel;
   taskActivity?: { chat_agr_no: string; date: string }[];
-  chatActivity?: { chat_agr_no: string; date: string }[];
+  chatActivity?: { chat_agr_no: string; date: string; at?: string | null }[];
   latestActivityDate?: string | null;
   initialExclusions?: ActiveExclusion[];
 }) {
   const router = useRouter();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
   const [date, setDate] = useState(latestActivityDate ?? today());
-  const [scope, setScope] = useState<Scope>("all");
+  // Default to the day view: Margarita works through one day's chats in time
+  // order, bottom-to-top. "All active chats" stays a click away.
+  const [scope, setScope] = useState<Scope>("day");
   const [sortBy, setSortBy] = useState<SortBy>("activity");
   const [search, setSearch] = useState("");
   const [accFilters, setAccFilters] = useState<string[]>([]);
@@ -236,8 +239,25 @@ export default function ScoringPanel({
     for (const a of chatActivity) if (a.date === date) s.add(a.chat_agr_no);
     for (const c of chats) if (lastActivityFor(c) === date) s.add(c.agr_no);
     for (const t of taskActivity) if (t.date === date) s.add(t.chat_agr_no);
+    // Backlog: chats where the CLIENT had the last word (still unanswered) stay
+    // in the day view even if their last message was on an earlier day, so the
+    // "start from the bottom unanswered chat" workflow can reach yesterday's.
+    for (const c of chats) if (c.unanswered === true) s.add(c.agr_no);
     return s;
   }, [chatActivity, chats, lastActivityFor, taskActivity, date]);
+
+  // Precise activity time for a chat ON the selected day (from the per-day feed),
+  // so the day view sorts by when the chat was actually active that day — not by
+  // the chat's most-recent activity across all days (which looked random).
+  const activityAtForDay = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of chatActivity) {
+      if (a.date !== date || !a.at) continue;
+      const cur = m.get(a.chat_agr_no);
+      if (!cur || a.at > cur) m.set(a.chat_agr_no, a.at);
+    }
+    return m;
+  }, [chatActivity, date]);
 
   const isHidden = (agrNo: string) => excluded.has(`${agrNo}|${date}`);
 
@@ -314,10 +334,15 @@ export default function ScoringPanel({
       return arr;
     }
     if (sortBy === "activity") {
-      // Most recent activity first, by precise timestamp when the sync has it
-      // (so 11:00 sorts above 10:30 on the same day); falls back to the date or
-      // a task touch. Null activity sinks to the bottom.
-      const key = (c: Chat) => c.last_activity_at ?? lastActivityFor(c) ?? "";
+      // Most recent first by precise message time. In the day view, use the
+      // chat's activity time ON that day (so 11:00 sorts above 10:30 for the day
+      // being reviewed, not by the chat's latest activity on some other day).
+      // Falls back to the global timestamp, the date, then a task touch.
+      const key = (c: Chat) =>
+        (scope === "day" ? activityAtForDay.get(c.agr_no) : undefined) ??
+        c.last_activity_at ??
+        lastActivityFor(c) ??
+        "";
       arr.sort((a, b) => compareByActivity(a, b, key));
       return arr;
     }
@@ -342,7 +367,7 @@ export default function ScoringPanel({
       orderRef.current = { sig: orderSig, ids: arr.map((c) => c.agr_no) };
     }
     return arr;
-  }, [visibleChats, sortBy, lastActivityFor, evalForDate, prevByChat, aiModel, orderSig]);
+  }, [visibleChats, sortBy, lastActivityFor, evalForDate, prevByChat, aiModel, orderSig, scope, activityAtForDay]);
 
   // Only render a window of the sorted list; "load more" grows it.
   const shownChats = sortedChats.slice(0, visibleCount);
@@ -897,6 +922,17 @@ function ChatScoreRow({
               </span>
             ) : (
               <span className="text-gray-400">активность: {lastActivity}</span>
+            )}
+            {chat.unanswered === true && (
+              <span
+                className="ml-1.5 inline-block rounded bg-orange-500 text-white font-semibold px-1.5 py-0.5 whitespace-nowrap"
+                title="Последним написал клиент — чат ждёт ответа (в т.ч. со вчерашнего дня)"
+              >
+                ⏳ ждёт ответа
+                {waitingLabel(chat.last_activity_at, asOf)
+                  ? ` · ${waitingLabel(chat.last_activity_at, asOf)!.replace("ждёт ", "")}`
+                  : ""}
+              </span>
             )}
           </div>
           {/* Debt signal. The payment state is filled AUTOMATICALLY from the

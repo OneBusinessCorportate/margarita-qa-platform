@@ -100,12 +100,12 @@ function filterChats(rows: Chat[], search: string): Chat[] {
  */
 export async function listChatActivity(
   from?: string
-): Promise<{ chat_agr_no: string; date: string }[]> {
+): Promise<{ chat_agr_no: string; date: string; at: string | null }[]> {
   const sb = getServiceClient();
   if (sb) {
     let q = sb
       .from(TABLES.chatActivity)
-      .select("agr_no, active_date")
+      .select("agr_no, active_date, last_at")
       .order("active_date", { ascending: false })
       .limit(20000);
     if (from) q = q.gte("active_date", from);
@@ -114,11 +114,16 @@ export async function listChatActivity(
     return (data ?? []).map((r) => ({
       chat_agr_no: r.agr_no as string,
       date: String(r.active_date).slice(0, 10),
+      at: (r.last_at as string | null) ?? null,
     }));
   }
   return store()
     .chats.filter((c) => c.last_activity_date)
-    .map((c) => ({ chat_agr_no: c.agr_no, date: c.last_activity_date!.slice(0, 10) }));
+    .map((c) => ({
+      chat_agr_no: c.agr_no,
+      date: c.last_activity_date!.slice(0, 10),
+      at: c.last_activity_at ?? c.last_activity_date ?? null,
+    }));
 }
 
 export async function getChat(agrNo: string): Promise<Chat | null> {
