@@ -8,8 +8,19 @@ import {
   parseVerdicts,
   sameInstant,
   selectFewShot,
+  slaWaitLabel,
   type UnansweredLabel,
 } from "../src/lib/unanswered";
+
+test("slaWaitLabel shows working-hours and caps display at 9 days", () => {
+  assert.equal(slaWaitLabel(null), "—");
+  assert.equal(slaWaitLabel(2.9), "3 ч");
+  assert.equal(slaWaitLabel(7.3), "7 ч");
+  assert.equal(slaWaitLabel(0.2), "1 ч"); // never "0 ч"
+  assert.equal(slaWaitLabel(9), "1 дн"); // one working day
+  assert.equal(slaWaitLabel(45), "5 дн");
+  assert.equal(slaWaitLabel(1000), "9+ дн"); // capped
+});
 
 test("formatTranscript labels client vs staff and truncates", () => {
   const out = formatTranscript(

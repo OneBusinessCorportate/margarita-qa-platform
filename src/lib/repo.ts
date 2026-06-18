@@ -21,13 +21,7 @@ import {
   type ReportFilters,
   type ReportSnapshot,
 } from "./report";
-import {
-  effectiveWaitingOn,
-  sameInstant,
-  type Candidate,
-  type UnansweredLabel,
-  type Verdict,
-} from "./unanswered";
+import { type Candidate, type UnansweredLabel, type Verdict } from "./unanswered";
 import type { DebtTotals } from "./debts";
 import { debtsCellValue } from "./debts";
 import type {
@@ -699,120 +693,84 @@ export async function createReportSnapshot(
   return row;
 }
 
-// --- Unanswered ("Без ответа") — AI detection + learning -------------------
-
-/** Whom an open thread is waiting on (mirrors WaitingOn in ./unanswered). */
-export type QueueWaitingOn = "staff" | "client" | "none";
+// --- Unanswered ("Без ответа") — canonical QA/SLA detection ----------------
+// Detection comes from public.mqa_unanswered_queue → public.qa_unanswered_chats
+// (working-hours SLA clock, meaningful/strong-request, substantive staff reply,
+// closing/nudge/self-resolve, data-completeness, staff-role detection — per the
+// QA SLA spec). We only show chats WE owe a reply on.
 
 /** Which slice of the «Без ответа» queue to show. */
-export type UnansweredMode = "staff" | "client" | "watched" | "all";
+export type UnansweredMode = "unanswered" | "watched";
 
-/** A row on the «Без ответа» page (worst wait first). */
+/** A row on the «Без ответа» page (longest wait first). */
 export interface UnansweredQueueItem {
   agr_no: string;
   chat_name: string;
   accountant: string | null;
   chat_link: string | null;
   debts: string | null;
-  last_activity_at: string | null;
-  last_msg_text: string | null;
-  /** Effective state: human → AI → rule. staff = we owe a reply. */
-  waiting_on: QueueWaitingOn;
-  watched: boolean;
-  ai_reason: string | null;
-  ai_confidence: string | null;
+  /** The client message that opened the obligation. */
+  problem_text: string | null;
+  problem_at: string | null;
+  /** Working hours waited (Yerevan business hours), per the canonical RPC. */
+  hours_ago: number | null;
+  severity: string | null; // critical | minor
+  classification: string; // unanswered | problematic_not_critical | needs_human_review | answered
+  flag_reason: string | null;
   human_unanswered: boolean | null;
-  analyzed_at: string | null;
+  watched: boolean;
 }
 
-/** Counts per mode for the page's filter tabs. */
+/** Counts for the page's filter tabs. */
 export interface UnansweredCounts {
-  staff: number;
-  client: number;
+  unanswered: number;
   watched: number;
-  all: number;
 }
 
 /**
- * The «Без ответа» queue. Effective state per chat = Margarita's ✔/✘ →
- * AI verdict (waiting_on) → rule fallback (mqa_chats.unanswered). Modes:
- *   staff   — ждут НАС (мы должны ответить) — the SLA breaches
- *   client  — ждём КЛИЕНТА (сотрудник задал вопрос, ход за клиентом)
- *   watched — «на контроле» (она пометила, чтобы проследить)
- *   all     — любая незавершённая коммуникация или отмеченные
- * Returns the rows for `mode` (worst wait first) plus counts for every tab.
+ * The «Без ответа» queue, straight from the canonical QA/SLA RPC. Shows only the
+ * chats WE owe a reply on (classification = 'unanswered'), or, in `watched` mode,
+ * the ones Margarita put «на контроле». Longest working-hours wait first.
  */
 export async function listUnansweredQueue(
-  mode: UnansweredMode = "staff"
+  mode: UnansweredMode = "unanswered"
 ): Promise<{ items: UnansweredQueueItem[]; counts: UnansweredCounts }> {
-  const empty = { items: [], counts: { staff: 0, client: 0, watched: 0, all: 0 } };
+  const empty = { items: [], counts: { unanswered: 0, watched: 0 } };
   const sb = getServiceClient();
   if (!sb) return empty;
 
-  const [{ data: chats, error }, { data: meta, error: e2 }] = await Promise.all([
-    sb
-      .from(TABLES.chats)
-      .select("agr_no, chat_name, accountant, chat_link, debts, last_activity_at, unanswered")
-      .limit(20000),
-    sb
-      .from(TABLES.unanswered)
-      .select(
-        "agr_no, last_msg_at, last_msg_text, ai_unanswered, ai_waiting_on, ai_reason, ai_confidence, human_unanswered, watched, analyzed_at"
-      )
-      .limit(20000),
-  ]);
+  const { data, error } = await sb.rpc("mqa_unanswered_queue", {
+    p_threshold_hours: 2,
+  });
   if (error) throw error;
-  if (e2) throw e2;
 
-  const byAgr = new Map((meta ?? []).map((m: any) => [m.agr_no, m]));
-
-  const all: UnansweredQueueItem[] = [];
-  for (const c of (chats ?? []) as any[]) {
-    const m = byAgr.get(c.agr_no);
-    // A stored verdict only counts for the message it was made on. If a newer
-    // message has arrived since (her "new message after the QA" case), the verdict
-    // is stale → fall back to the rule, re-opening the chat.
-    const verdictIsCurrent = m ? sameInstant(m.last_msg_at, c.last_activity_at) : false;
-    const waiting_on = effectiveWaitingOn(
-      m,
-      c.unanswered,
-      verdictIsCurrent
-    ) as QueueWaitingOn;
-    const watched = m?.watched === true;
-    if (waiting_on === "none" && !watched) continue; // nothing to show
-
-    all.push({
-      agr_no: c.agr_no,
-      chat_name: c.chat_name,
-      accountant: c.accountant ?? null,
-      chat_link: c.chat_link ?? null,
-      debts: c.debts ?? null,
-      last_activity_at: c.last_activity_at ?? null,
-      last_msg_text: m?.last_msg_text ?? null,
-      waiting_on,
-      watched,
-      ai_reason: m?.ai_reason ?? null,
-      ai_confidence: m?.ai_confidence ?? null,
-      human_unanswered: m?.human_unanswered ?? null,
-      analyzed_at: m?.analyzed_at ?? null,
-    });
-  }
+  const all: UnansweredQueueItem[] = ((data ?? []) as any[]).map((r) => ({
+    agr_no: r.agr_no,
+    chat_name: r.chat_name,
+    accountant: r.accountant ?? null,
+    chat_link: r.chat_link ?? null,
+    debts: r.debts ?? null,
+    problem_text: r.problem_text ?? null,
+    problem_at: r.problem_at ?? null,
+    hours_ago: r.hours_ago != null ? Number(r.hours_ago) : null,
+    severity: r.severity ?? null,
+    classification: r.classification,
+    flag_reason: r.flag_reason ?? null,
+    human_unanswered: r.human_unanswered ?? null,
+    watched: r.watched === true,
+  }));
 
   const counts: UnansweredCounts = {
-    staff: all.filter((x) => x.waiting_on === "staff").length,
-    client: all.filter((x) => x.waiting_on === "client").length,
+    unanswered: all.filter((x) => x.classification === "unanswered").length,
     watched: all.filter((x) => x.watched).length,
-    all: all.length,
   };
 
-  let items = all;
-  if (mode === "staff") items = all.filter((x) => x.waiting_on === "staff");
-  else if (mode === "client") items = all.filter((x) => x.waiting_on === "client");
-  else if (mode === "watched") items = all.filter((x) => x.watched);
+  const items = (
+    mode === "watched"
+      ? all.filter((x) => x.watched)
+      : all.filter((x) => x.classification === "unanswered")
+  ).sort((a, b) => (b.hours_ago ?? 0) - (a.hours_ago ?? 0)); // longest wait first
 
-  items.sort((a, b) =>
-    (a.last_activity_at ?? "").localeCompare(b.last_activity_at ?? "")
-  );
   return { items, counts };
 }
 

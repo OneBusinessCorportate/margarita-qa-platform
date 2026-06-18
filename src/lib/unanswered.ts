@@ -78,6 +78,18 @@ export function effectiveWaitingOn(
   return "none";
 }
 
+/**
+ * Format the SLA wait (in business working-hours, per the canonical RPC) for the
+ * «Сколько» column. One working day = 9h (10:00–19:00). Display is capped at
+ * 9 days so a stuck/old row can never read like "34 дн".
+ */
+export function slaWaitLabel(hours: number | null | undefined): string {
+  if (hours == null || Number.isNaN(hours)) return "—";
+  if (hours < 9) return `${Math.max(1, Math.round(hours))} ч`;
+  const days = Math.floor(hours / 9);
+  return days > 9 ? "9+ дн" : `${days} дн`;
+}
+
 /** True when two timestamps refer to the same instant (tolerant of formatting). */
 export function sameInstant(
   a: string | null | undefined,
