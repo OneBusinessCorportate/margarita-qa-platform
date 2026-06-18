@@ -4,6 +4,7 @@ import {
   SORT_OPTIONS,
   activityKey,
   autoDebtStatus,
+  autoMonthlyStatus,
   cmpAgrNo,
   compareByActivity,
   debtAmountLabel,
@@ -165,4 +166,29 @@ test("waitingLabel renders hours then days from the last message", () => {
   // No timestamp, or a future time, yields no label.
   assert.equal(waitingLabel(null, now), null);
   assert.equal(waitingLabel("2026-06-17T13:00:00Z", now), null);
+});
+
+// --- autoMonthlyStatus: auto-fill the obvious monthly statuses ---------------
+import { MONTHLY_CATEGORIES } from "../src/lib/scoring";
+const catBy = (id: string) => MONTHLY_CATEGORIES.find((c) => c.id === id)!;
+
+test("autoMonthlyStatus: debts with nothing owed → Нет долга", () => {
+  assert.equal(autoMonthlyStatus(catBy("debts"), "Active", "Нет долга", "2026-06-18"), "Нет долга");
+  assert.equal(autoMonthlyStatus(catBy("debts"), "Active", "0", "2026-06-18"), "Нет долга");
+});
+
+test("autoMonthlyStatus: deadline still ahead this month → Предстоящая", () => {
+  // taxes due day 15; on the 3rd it's upcoming.
+  assert.equal(autoMonthlyStatus(catBy("main_taxes"), "Active", null, "2026-06-03"), "Предстоящая");
+  // on the 20th the deadline has passed → leave for her (null).
+  assert.equal(autoMonthlyStatus(catBy("main_taxes"), "Active", null, "2026-06-20"), null);
+});
+
+test("autoMonthlyStatus: a debt that is owed isn't auto-resolved after due day", () => {
+  // debts due day 5; on the 18th with an amount owed → null (she assesses).
+  assert.equal(autoMonthlyStatus(catBy("debts"), "Active", "76000", "2026-06-18"), null);
+});
+
+test("autoMonthlyStatus: Inactive client → Inactive", () => {
+  assert.equal(autoMonthlyStatus(catBy("salary"), "Inactive", null, "2026-06-18"), "Inactive");
 });

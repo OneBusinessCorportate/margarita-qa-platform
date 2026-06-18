@@ -6,7 +6,6 @@ import {
   DAILY_CRITERIA,
   MONTHLY_CATEGORIES,
   PREV_STATUS_DEFAULT,
-  GREETING_ACCURACY_CAP,
   REGISTRATION_PENALTIES,
   computeOverall,
   computeRegistrationScore,
@@ -16,12 +15,12 @@ import {
   type CriteriaScores,
   type CriterionId,
   type EvalRole,
-  type Greeting,
 } from "@/lib/scoring";
 import { predictEvaluation, toSnapshot, type AiModel } from "@/lib/ai";
 import {
   SORT_OPTIONS,
   autoDebtStatus,
+  autoMonthlyStatus,
   cmpAgrNo,
   compareByActivity,
   debtAmountLabel,
@@ -44,7 +43,6 @@ interface PrevCheck {
   date: string;
   monthly: Record<string, string>;
   criteria: CriteriaScores;
-  greeting?: Greeting;
   comment: string;
 }
 
@@ -132,8 +130,8 @@ export default function ScoringPanel({
   }, [router]);
 
   // The most recent check BEFORE the selected date — carried forward in full
-  // (mailing statuses, criteria, greeting, comment) so Margarita only changes
-  // what actually changed.
+  // (mailing statuses, criteria, comment) so Margarita only changes what
+  // actually changed.
   const prevByChat = useMemo(() => {
     const latestBefore = new Map<string, Evaluation>();
     for (const e of evaluations) {
@@ -153,7 +151,6 @@ export default function ScoringPanel({
         date: e.checking_date.slice(0, 10),
         monthly,
         criteria: e.scores.criteria ?? {},
-        greeting: e.scores.greeting,
         comment: e.comment ?? "",
       });
     }
@@ -562,12 +559,6 @@ export default function ScoringPanel({
                   {c.id === "accuracy" ? "Точн." : "СЛА"}
                 </th>
               ))}
-              <th
-                className="text-center"
-                title="Приветствие: бухгалтер поздоровался / ответил на приветствие клиента. Если нет — «Точность и полнота» не выше 4 (не критично, но ошибка)."
-              >
-                Прив.
-              </th>
               {MONTHLY_CATEGORIES.map((c) => (
                 <th key={c.id} title={c.name}>
                   {c.shortName}
@@ -582,7 +573,7 @@ export default function ScoringPanel({
           <tbody>
             {sortedChats.length === 0 && (
               <tr>
-                <td colSpan={13} className="text-center text-gray-500 py-6">
+                <td colSpan={12} className="text-center text-gray-500 py-6">
                   {scope === "day" ? (
                     <div className="space-y-2">
                       <div>За {date} нет активных чатов (оценок/задач).</div>
@@ -694,9 +685,6 @@ function ChatScoreRow({
   const [criteria, setCriteria] = useState<CriteriaScores>(
     existing?.scores.criteria ?? prev?.criteria ?? {}
   );
-  const [greeting, setGreeting] = useState<Greeting | "">(
-    existing?.scores.greeting ?? prev?.greeting ?? ""
-  );
   const [monthly, setMonthly] = useState<Record<string, MonthlyStatus>>(() => {
     const base = emptyMonthly();
     if (existing?.scores.monthly) return { ...base, ...existing.scores.monthly };
@@ -704,13 +692,15 @@ function ChatScoreRow({
       const p = prevStatuses[c.id];
       if (p) base[c.id] = { status: p, prev: p };
     }
-    // Auto-fill the "Долги" status from the real debt data: when nothing is
-    // owed (per the Import Debts feed) the status is unambiguously "Нет долга",
-    // so Margarita doesn't set it by hand. Clients with an outstanding amount
-    // are left for her to assess the follow-up. Editable like any prefill.
-    const autoDebt = autoDebtStatus(chat.debts);
-    if (autoDebt)
-      base["debts"] = { status: autoDebt, prev: prevStatuses["debts"] ?? PREV_STATUS_DEFAULT };
+    // Auto-fill every status we can determine from facts (debt feed, client
+    // status, the deadline date) so Margarita only edits the exceptions instead
+    // of picking "Нет долга" / "Предстоящая" by hand on every row. Editable.
+    for (const c of MONTHLY_CATEGORIES) {
+      if (base[c.id].status) continue; // a carried-over value wins
+      const auto = autoMonthlyStatus(c, chat.status, chat.debts, date);
+      if (auto)
+        base[c.id] = { status: auto, prev: prevStatuses[c.id] ?? PREV_STATUS_DEFAULT };
+    }
     return base;
   });
   const [comment, setComment] = useState(existing?.comment ?? prev?.comment ?? "");
@@ -719,7 +709,6 @@ function ChatScoreRow({
   const [error, setError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
 
-  const greetingVal: Greeting | undefined = greeting === "" ? undefined : greeting;
   const staleDays = lastActivity ? daysBetween(lastActivity, asOf) : null;
   const isStale = isStaleActivity(lastActivity, asOf);
 
@@ -733,13 +722,12 @@ function ChatScoreRow({
   const total =
     override.trim() !== "" && !Number.isNaN(Number(override))
       ? Number(override)
-      : computeOverall(criteria, monthly, DAILY_CRITERIA, greetingVal);
+      : computeOverall(criteria, monthly, DAILY_CRITERIA);
 
   const touched =
     Boolean(savedId) ||
     prefilledFromPrev ||
     DAILY_CRITERIA.some((c) => typeof criteria[c.id] === "number") ||
-    greeting !== "" ||
     override.trim() !== "";
 
   const setCrit = (id: CriterionId, v: string) =>
@@ -780,7 +768,6 @@ function ChatScoreRow({
       // The AI snapshot is stored with her answer — the training pair.
       scores: {
         criteria,
-        greeting: greetingVal,
         monthly: monthlyWithPrev,
         ai: toSnapshot(ai),
       },
@@ -1002,8 +989,6 @@ function ChatScoreRow({
             {ai.criteria[c.id]}
           </td>
         ))}
-        {/* Greeting is read from the chat text by Margarita — AI doesn't judge it. */}
-        <td className={`${aiCell} text-center text-gray-400`}>—</td>
         {MONTHLY_CATEGORIES.map((c) => (
           <td key={c.id} className={`${aiCell} text-xs`}>
             <span className="block truncate max-w-[120px]" title={ai.monthly[c.id]?.status}>
@@ -1055,24 +1040,6 @@ function ChatScoreRow({
             </select>
           </td>
         ))}
-        {/* Greeting toggle — no greeting caps Точность at 4 (small, non-critical). */}
-        <td className={`${youCell} text-center`}>
-          <select
-            className="input w-[52px]"
-            value={greeting}
-            onChange={(e) => setGreeting(e.target.value as Greeting | "")}
-            title="Поздоровался / ответил на приветствие? Если «нет» — Точность не выше 4."
-          >
-            <option value="">—</option>
-            <option value="yes">✓</option>
-            <option value="no">✗</option>
-          </select>
-          {greeting === "no" && (
-            <div className="text-[10px] text-amber-600 leading-tight mt-0.5">
-              Точн. ≤ {GREETING_ACCURACY_CAP}
-            </div>
-          )}
-        </td>
         {MONTHLY_CATEGORIES.map((c) => (
           <td key={c.id} className={youCell}>
             <select
@@ -1162,9 +1129,9 @@ function RegRoleRow({
   const touched =
     Boolean(savedId) || REGISTRATION_PENALTIES.some((p) => (counts[p.id] ?? 0) > 0);
   const info = roleInfo(role);
-  // Span the accountant criteria columns (Точн/СЛА/Прив + 4 monthly) with the
-  // three penalty inputs, so this role's row stays aligned with the grid.
-  const critColSpan = DAILY_CRITERIA.length + 1 + MONTHLY_CATEGORIES.length;
+  // Span the accountant criteria columns (Точн/СЛА + 4 monthly) with the three
+  // penalty inputs, so this role's row stays aligned with the grid.
+  const critColSpan = DAILY_CRITERIA.length + MONTHLY_CATEGORIES.length;
 
   const setCount = (id: string, v: string) =>
     setCounts((c) => ({ ...c, [id]: v === "" ? 0 : Math.max(0, Number(v)) }));
@@ -1313,7 +1280,7 @@ function ChatGroup({
 }) {
   const [showManager, setShowManager] = useState(Boolean(managerEval));
   const [showLawyer, setShowLawyer] = useState(Boolean(lawyerEval));
-  const totalCols = DAILY_CRITERIA.length + MONTHLY_CATEGORIES.length + 7;
+  const totalCols = DAILY_CRITERIA.length + MONTHLY_CATEGORIES.length + 6;
 
   return (
     <>

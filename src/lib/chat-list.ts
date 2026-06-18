@@ -7,7 +7,7 @@
 // "worst-first" snapshot, the per-day task fallback); everything here is pure.
 // ---------------------------------------------------------------------------
 import type { Chat } from "./types";
-import { MONTHLY_CATEGORIES } from "./scoring";
+import { MONTHLY_CATEGORIES, type MonthlyCategory } from "./scoring";
 
 /** How the chat list is ordered. */
 export type SortBy = "activity" | "worst" | "number";
@@ -135,4 +135,35 @@ export function autoDebtStatus(debts: string | null | undefined): string | null 
   const n = Number(s.replace(/[\s,]/g, ""));
   if (Number.isFinite(n) && n > 0) return null;
   return "Нет долга";
+}
+
+/**
+ * Auto-fill a monthly mailing status from facts we already have, so Margarita
+ * doesn't set the obvious ones by hand every time (her main complaint). Returns
+ * null when it genuinely can't be determined (then she/AI decides). Logic, not
+ * guesswork:
+ *   - Inactive client                       → "Inactive" (mailing N/A)
+ *   - Долги with nothing owed (debt feed)    → "Нет долга"
+ *   - deadline still ahead this month        → "Предстоящая" (nothing to do yet)
+ */
+export function autoMonthlyStatus(
+  cat: MonthlyCategory,
+  chatStatus: string | null | undefined,
+  debts: string | null | undefined,
+  checkingDateISO: string
+): string | null {
+  if (chatStatus === "Inactive" && cat.statuses.includes("Inactive")) return "Inactive";
+  if (cat.id === "debts") {
+    const d = autoDebtStatus(debts);
+    if (d && cat.statuses.includes(d)) return d; // "Нет долга"
+  }
+  const day = Number(checkingDateISO.slice(8, 10));
+  if (
+    Number.isFinite(day) &&
+    day > 0 &&
+    day < cat.dueDay &&
+    cat.statuses.includes("Предстоящая")
+  )
+    return "Предстоящая";
+  return null;
 }
