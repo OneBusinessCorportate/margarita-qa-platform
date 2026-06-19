@@ -1050,6 +1050,18 @@ function ChatScoreRow({
             <span className="block truncate max-w-[92px]" title={ai.monthly[c.id]?.status}>
               {ai.monthly[c.id]?.status || "—"}
             </span>
+            {/* Standing debt amount in the «Долги» column — shown on the AI row
+                too, mirroring the human row and the sheet's Debts column (item 5). */}
+            {c.id === "debts" && debt && (
+              <div
+                className={`mt-0.5 text-[10px] font-medium ${
+                  debt.owed ? "text-red-600" : "text-gray-400"
+                }`}
+                title="Текущая задолженность клиента (система долгов OneBusiness)"
+              >
+                {debt.owed ? `💰 ${debt.text}` : "нет долга"}
+              </div>
+            )}
           </td>
         ))}
         <td className={`${aiCell} text-center tabular-nums font-semibold`}>{ai.total}</td>
