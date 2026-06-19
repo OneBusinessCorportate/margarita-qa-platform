@@ -196,6 +196,12 @@ export function autoDebtStatus(debts: string | null | undefined): string | null 
  *   - Inactive client                       → "Inactive" (mailing N/A)
  *   - Долги with nothing owed (debt feed)    → "Нет долга"
  *   - deadline still ahead this month        → "Предстоящая" (nothing to do yet)
+ *   - deadline reached/passed                → the mailing's "done" status
+ *     («Отправил» / «Получил»): these mailings are a recurring template that
+ *     normally goes through, so default it as completed and let Margarita flip
+ *     only the exceptions — instead of marking «Получил» on every chat by hand
+ *     (her request). «Долги» is excluded: it has no expectedStatus, so an owed
+ *     debt stays for her to judge.
  */
 export function autoMonthlyStatus(
   cat: MonthlyCategory,
@@ -209,12 +215,14 @@ export function autoMonthlyStatus(
     if (d && cat.statuses.includes(d)) return d; // "Нет долга"
   }
   const day = Number(checkingDateISO.slice(8, 10));
-  if (
-    Number.isFinite(day) &&
-    day > 0 &&
-    day < cat.dueDay &&
-    cat.statuses.includes("Предстоящая")
-  )
-    return "Предстоящая";
+  if (Number.isFinite(day) && day > 0) {
+    if (day < cat.dueDay && cat.statuses.includes("Предстоящая")) return "Предстоящая";
+    if (
+      day >= cat.dueDay &&
+      cat.expectedStatus &&
+      cat.statuses.includes(cat.expectedStatus)
+    )
+      return cat.expectedStatus;
+  }
   return null;
 }

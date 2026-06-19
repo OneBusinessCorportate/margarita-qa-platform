@@ -684,12 +684,12 @@ export default function ScoringPanel({
                 </th>
               ))}
               {MONTHLY_CATEGORIES.map((c) => (
-                <th key={c.id} title={c.name}>
+                <th key={c.id} className="text-center" title={c.name}>
                   {c.shortName}
                 </th>
               ))}
               <th className="text-center">Общая</th>
-              <th>Кач-во</th>
+              <th className="text-center">Кач-во</th>
               <th className="w-full">Коммент.</th>
               <th></th>
             </tr>
@@ -1159,14 +1159,17 @@ function ChatScoreRow({
           </td>
         ))}
         {MONTHLY_CATEGORIES.map((c) => (
-          <td key={c.id} className={`${aiCell} text-xs`}>
-            <span className="block truncate max-w-[92px]" title={ai.monthly[c.id]?.status}>
+          <td key={c.id} className={`${aiCell} text-xs text-center`}>
+            <span
+              className="block truncate w-[96px] mx-auto"
+              title={ai.monthly[c.id]?.status}
+            >
               {ai.monthly[c.id]?.status || "—"}
             </span>
           </td>
         ))}
         <td className={`${aiCell} text-center tabular-nums font-semibold`}>{ai.total}</td>
-        <td className={aiCell}>
+        <td className={`${aiCell} text-center`}>
           <BandChip band={ai.band} />
         </td>
         <td className={`${aiCell} text-xs italic text-gray-500`}>
@@ -1210,9 +1213,9 @@ function ChatScoreRow({
           </td>
         ))}
         {MONTHLY_CATEGORIES.map((c) => (
-          <td key={c.id} className={youCell}>
+          <td key={c.id} className={`${youCell} text-center`}>
             <select
-              className="input w-full min-w-[84px] text-xs"
+              className="input w-[96px] text-xs"
               value={monthly[c.id]?.status ?? ""}
               onChange={(e) => setMon(c.id, e.target.value)}
               title={c.name}
@@ -1235,7 +1238,7 @@ function ChatScoreRow({
             title="Авто из критериев; можно переопределить"
           />
         </td>
-        <td className={youCell}>
+        <td className={`${youCell} text-center`}>
           {touched ? <BandChip total={total} /> : <span className="text-gray-300">—</span>}
         </td>
         <td className={youCell}>
@@ -1403,7 +1406,7 @@ function RoleQaRow({
           title="Авто из критериев; можно переопределить"
         />
       </td>
-      <td className="align-middle">
+      <td className="align-middle text-center">
         {touched ? <BandChip total={total} /> : <span className="text-gray-300">—</span>}
       </td>
       <td className="align-middle">

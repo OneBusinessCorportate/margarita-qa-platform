@@ -210,8 +210,17 @@ test("autoMonthlyStatus: debts with nothing owed → Нет долга", () => {
 test("autoMonthlyStatus: deadline still ahead this month → Предстоящая", () => {
   // taxes due day 15; on the 3rd it's upcoming.
   assert.equal(autoMonthlyStatus(catBy("main_taxes"), "Active", null, "2026-06-03"), "Предстоящая");
-  // on the 20th the deadline has passed → leave for her (null).
-  assert.equal(autoMonthlyStatus(catBy("main_taxes"), "Active", null, "2026-06-20"), null);
+});
+
+test("autoMonthlyStatus: deadline reached → the mailing's done status", () => {
+  // Once the due day passes, the routine mailing defaults to «done» so Margarita
+  // only flips the exceptions instead of marking each chat by hand.
+  assert.equal(autoMonthlyStatus(catBy("main_taxes"), "Active", null, "2026-06-20"), "Отправил");
+  // On the due day itself it already counts as expected-done.
+  assert.equal(autoMonthlyStatus(catBy("salary"), "Active", null, "2026-06-10"), "Получил");
+  assert.equal(autoMonthlyStatus(catBy("primary_docs"), "Active", null, "2026-06-28"), "Получил");
+  // Before the due day it's still upcoming, not yet done.
+  assert.equal(autoMonthlyStatus(catBy("salary"), "Active", null, "2026-06-05"), "Предстоящая");
 });
 
 test("autoMonthlyStatus: a debt that is owed isn't auto-resolved after due day", () => {
