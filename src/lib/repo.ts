@@ -611,14 +611,16 @@ export async function importCriticalChatsAsViolations(
       skipped += 1;
       continue;
     }
+    const extraReasons = c.reasons.slice(1).join("; ");
     await createViolation({
       vdate: date,
       accountant: c.accountant ?? null,
       chat_agr_no: c.chat_agr_no,
       client: c.chat_name ?? null,
       severity: "Критичное",
-      violation_type: c.reasons[0] ?? "Критичный чат (авто из оценки)",
-      note: c.reasons.length > 1 ? c.reasons.slice(1).join("; ") : null,
+      violation_type: c.reasons[0] ?? "Критичный чат",
+      // Mark the source so auto-imported rows are obvious in the journal.
+      note: ["авто из оценки", extraReasons].filter(Boolean).join("; "),
       sanction: null,
     });
     alreadyLogged.add(c.chat_agr_no);

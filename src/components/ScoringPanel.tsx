@@ -725,9 +725,12 @@ function ChatScoreRow({
   const debt = debtAmountLabel(chat.debts);
   // Brand-new chat (item 6) and "scored, then the client wrote again" (items 9/7).
   const newChat = isNewChat(chat.created_date, asOf);
+  // Re-check only when a message landed AFTER the evaluation AND on/after the
+  // reviewed day — so back-filling an old date doesn't light up every row.
   const reCheck =
     Boolean(existing) &&
-    hasNewMessageAfterEval(chat.last_activity_at, existing?.created_at);
+    hasNewMessageAfterEval(chat.last_activity_at, existing?.created_at) &&
+    (chat.last_activity_date ?? "") >= date;
 
   // AI's row: same fields, predicted from the learned model. Re-predicts when
   // the accountant changes (the model is per-accountant).

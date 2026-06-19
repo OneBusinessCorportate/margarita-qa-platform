@@ -63,6 +63,9 @@ export default async function MessagesPage({
   const perAccountant = accountantsToMessage(report).map((name) => ({
     name,
     text: buildAccountantMessage(report, name, { date: resolved.to }),
+    critCount: report.criticalChats.filter((c) => c.accountant === name).length,
+    waitingCount: (report.unansweredChats ?? []).filter((c) => c.accountant === name)
+      .length,
   }));
 
   return (
@@ -108,10 +111,22 @@ export default async function MessagesPage({
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {perAccountant.map(({ name, text }) => (
+            {perAccountant.map(({ name, text, critCount, waitingCount }) => (
               <div key={name} className="card p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium truncate">{name}</div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm font-medium truncate">{name}</span>
+                    {critCount > 0 && (
+                      <span className="inline-block rounded bg-red-100 text-red-700 font-semibold px-1.5 py-0.5 text-[11px] whitespace-nowrap">
+                        ⛔️ {critCount}
+                      </span>
+                    )}
+                    {waitingCount > 0 && (
+                      <span className="inline-block rounded bg-orange-100 text-orange-700 font-semibold px-1.5 py-0.5 text-[11px] whitespace-nowrap">
+                        ⏳ {waitingCount}
+                      </span>
+                    )}
+                  </div>
                   <CopyButton
                     label="Копировать"
                     className="btn-primary !py-0.5 !px-2 text-xs shrink-0"

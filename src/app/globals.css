@@ -68,6 +68,15 @@ table.qa.pairs td.chat-info {
 table.qa.pairs tr:hover td {
   background: transparent;
 }
+/* Dense + paired grid (the scoring page): tighter cells so the whole row —
+   including «Оценить» — fits on one screen without horizontal scrolling. Needs
+   higher specificity than `.qa.pairs td` (above) to actually win. */
+table.qa.pairs.dense td {
+  padding: 3px 4px;
+}
+table.qa.pairs.dense tr.chat-start > td {
+  padding-top: 7px;
+}
 
 .input {
   @apply border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
