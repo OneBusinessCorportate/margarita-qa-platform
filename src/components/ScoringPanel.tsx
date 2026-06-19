@@ -363,8 +363,12 @@ export default function ScoringPanel({
     const scoreFor = (c: Chat): number => {
       const ev = evalForDate.get(c.agr_no);
       if (ev) return ev.total_score;
-      return predictEvaluation(c.accountant, prevByChat.get(c.agr_no)?.monthly ?? {}, aiModel)
-        .total;
+      return predictEvaluation(c.accountant, prevByChat.get(c.agr_no)?.monthly ?? {}, aiModel, {
+        status: c.status,
+        debts: c.debts,
+        debtStatus: c.debt_status,
+        date,
+      }).total;
     };
     if (orderRef.current.sig === orderSig && orderRef.current.ids.length) {
       // Reuse the frozen order so a just-saved chat keeps its place.
@@ -733,7 +737,12 @@ function ChatScoreRow({
     // date) → the AI model (learned from her labels in Supabase). Every value is
     // canonicalized to a valid option (legacy data can be mis-cased, e.g. «нет
     // долга»), otherwise the <select> would show a blank.
-    const aiInit = predictEvaluation(accountant || null, prevStatuses, aiModel);
+    const aiInit = predictEvaluation(accountant || null, prevStatuses, aiModel, {
+      status: chat.status,
+      debts: chat.debts,
+      debtStatus: chat.debt_status,
+      date,
+    });
     for (const c of MONTHLY_CATEGORIES) {
       const prevVal = canonicalMonthlyStatus(c, prevStatuses[c.id]);
       // «Долги» is fully derived from the OneBusiness debts system (overdue +
@@ -772,8 +781,14 @@ function ChatScoreRow({
   // AI's row: same fields, predicted from the learned model. Re-predicts when
   // the accountant changes (the model is per-accountant).
   const ai = useMemo(
-    () => predictEvaluation(accountant || null, prevStatuses, aiModel),
-    [accountant, prevStatuses, aiModel]
+    () =>
+      predictEvaluation(accountant || null, prevStatuses, aiModel, {
+        status: chat.status,
+        debts: chat.debts,
+        debtStatus: chat.debt_status,
+        date,
+      }),
+    [accountant, prevStatuses, aiModel, chat.status, chat.debts, chat.debt_status, date]
   );
 
   const total =

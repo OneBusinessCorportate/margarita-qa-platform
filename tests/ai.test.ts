@@ -117,3 +117,71 @@ test("the model is JSON-serializable (server → client prop)", () => {
   const b = predictEvaluation("Գայանե", {}, roundTripped);
   assert.deepEqual(a, b);
 });
+
+test("facts: debt status auto-fills «Долги» and a failing status gates to 1", () => {
+  const model = trainAiModel([]);
+  const p = predictEvaluation("Օլյա", {}, model, {
+    status: "Active",
+    debts: "48000",
+    debtStatus: "Не написал 1",
+    date: "2026-06-18",
+  });
+  assert.equal(p.monthly.debts.status, "Не написал 1");
+  assert.equal(p.total, 1); // failing mailing gate
+  assert.equal(p.band, "Критично");
+});
+
+test("facts: deadline before the due day → «Предстоящая»; Inactive client → «Inactive»", () => {
+  const model = trainAiModel([]);
+  const upcoming = predictEvaluation("Օլյա", {}, model, {
+    status: "Active",
+    debts: "Нет долга",
+    debtStatus: "Нет долга",
+    date: "2026-06-10", // before main_taxes due day (15)
+  });
+  assert.equal(upcoming.monthly.main_taxes.status, "Предстоящая");
+  assert.equal(upcoming.monthly.debts.status, "Нет долга");
+
+  const inactive = predictEvaluation("Օլյա", {}, model, {
+    status: "Inactive",
+    date: "2026-06-20",
+  });
+  assert.equal(inactive.monthly.main_taxes.status, "Inactive");
+});
+
+test("recency: recent evaluations outweigh old ones", () => {
+  const history = [
+    evalRow({ checking_date: "2026-01-01", scores: { criteria: { accuracy: 5, sla: 5 } } }),
+    evalRow({ checking_date: "2026-06-01", scores: { criteria: { accuracy: 2, sla: 2 } } }),
+  ];
+  const model = trainAiModel(history);
+  const p = predictEvaluation("Գայանե", {}, model);
+  // The recent 2/2 dominates the 5-month-old 5/5 → prediction is low, not the
+  // plain mean (which would round to 4).
+  assert.ok(p.criteria.accuracy <= 3, `accuracy ${p.criteria.accuracy} should be low`);
+});
+
+test("shrinkage: a 1-sample accountant is pulled toward the global average", () => {
+  const history = [
+    evalRow({ accountant: "A", scores: { criteria: { accuracy: 2, sla: 2 } } }),
+    evalRow({ accountant: "A", scores: { criteria: { accuracy: 2, sla: 2 } } }),
+    evalRow({ accountant: "A", scores: { criteria: { accuracy: 2, sla: 2 } } }),
+    evalRow({ accountant: "B", scores: { criteria: { accuracy: 5, sla: 5 } } }),
+  ];
+  const model = trainAiModel(history);
+  // B has a single perfect chat, but the global average is ~2.75 → shrunk below 5.
+  const b = predictEvaluation("B", {}, model);
+  assert.ok(b.criteria.accuracy < 5, `B accuracy ${b.criteria.accuracy} should be shrunk`);
+  // A has 3 consistent chats → stays at its own pattern.
+  const a = predictEvaluation("A", {}, model);
+  assert.equal(a.criteria.accuracy, 2);
+});
+
+test("facts path still gates a carried-forward failing mailing", () => {
+  const model = trainAiModel([]);
+  const p = predictEvaluation("Գայане", { salary: "Не запросил 1" }, model, {
+    status: "Active",
+    date: "2026-06-18",
+  });
+  assert.equal(p.total, 1);
+});

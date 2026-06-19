@@ -2,32 +2,46 @@
 // Self-learning AI evaluator.
 //
 // The AI fills the SAME fields as Margarita (Точность, СЛА, статусы рассылок,
-// Общая, Кач-во) by analysing the data already in Supabase: the chat's status
-// history and Margarita's past evaluations. Every time she saves her own row,
-// the AI's snapshot is stored alongside it (scores.ai), so the next training
-// pass can compare "what AI said" vs "what Margarita said" and correct itself:
+// Общая, Кач-во) by analysing the data already in Supabase: the chat's facts
+// (status / debts / deadline) and Margarita's past evaluations. Every time she
+// saves her own row, the AI's snapshot is stored alongside it (scores.ai), so
+// the next training pass compares "what AI said" vs "what Margarita said" and
+// corrects itself.
 //
-//   • criteria (Точн./СЛА): per-accountant running averages of HER scores —
-//     if she consistently gives an accountant 4s, the AI starts predicting 4;
-//   • total: a learned bias = mean(her total − AI total) over past pairs,
-//     applied per accountant (falling back to the global bias).
+// What makes the prediction good (June 2026 rework — "ai doesn't work good
+// enough"):
+//
+//   • criteria (Точн./СЛА): a RECENCY-weighted, SHRUNK estimate of HER scores.
+//     Recent evaluations count more (45-day half-life), and an accountant's own
+//     average is blended toward the global average with a pseudo-count prior, so
+//     a bookkeeper with 2 chats doesn't swing to an extreme while one with 200
+//     reflects her real pattern.
+//   • monthly statuses: predicted from the SAME facts the human row auto-fills
+//     from — the debt feed (mqa_chats.debt_status), the client's Inactive flag,
+//     and the deadline ("Предстоящая" before the due day) — then carried-forward
+//     statuses, then "Предстоящая". This is what fixed the biggest miss: the AI
+//     used to mark everything "Предстоящая", so its mailing GATE (and therefore
+//     its total) disagreed with Margarita on every chat with a real debt.
+//   • total: the rules engine on the predicted criteria + monthly, plus a learned
+//     per-accountant bias = recency-weighted mean(her total − AI total).
 //
 // Everything is a pure function of the evaluation list, so the model retrains
 // from the source of truth on every page load — no separate training state.
-// When the Telegram bot feed adds chat text, an LLM can replace predictCriteria
-// while the calibration layer keeps learning from Margarita the same way.
 // ---------------------------------------------------------------------------
 
 import {
   CRITERIA,
   MONTHLY_CATEGORIES,
   bandFor,
+  canonicalMonthlyStatus,
   computeOverall,
+  daysBetween,
   isMailingFail,
   type CriteriaScores,
   type CriterionId,
   type QualityBand,
 } from "./scoring";
+import { autoMonthlyStatus } from "./chat-list";
 import type { Evaluation } from "./types";
 
 export interface AiPrediction {
@@ -46,16 +60,25 @@ export interface AiSnapshot {
   total: number;
 }
 
+/** The chat facts the AI uses to auto-fill mailing statuses (same as the human row). */
+export interface ChatFacts {
+  status?: string | null;
+  debts?: string | null;
+  debtStatus?: string | null;
+  date?: string | null;
+}
+
+/** Weighted accumulator: `sum` = Σ(weight·value), `count` = Σ(weight). */
 interface CriterionStats {
   sum: number;
   count: number;
 }
 
 export interface AiModel {
-  /** Margarita's average criterion scores per accountant (and overall). */
+  /** Margarita's recency-weighted criterion scores per accountant (and overall). */
   criteria: Record<string, Partial<Record<CriterionId, CriterionStats>>>;
   global: Partial<Record<CriterionId, CriterionStats>>;
-  /** Learned correction: mean(final − ai_total), per accountant + overall. */
+  /** Learned correction: recency-weighted mean(final − ai_total), per accountant + overall. */
   bias: Record<string, CriterionStats>;
   globalBias: CriterionStats;
   /** Number of (AI, Margarita) pairs the model has learned from. */
@@ -63,6 +86,12 @@ export interface AiModel {
 }
 
 const GLOBAL = "__global__";
+
+// How fast old evaluations fade: a 45-day-old row counts half as much as today's.
+const HALF_LIFE_DAYS = 45;
+// Pseudo-count prior for criteria shrinkage: blend an accountant's own average
+// with the global one as if we'd seen PRIOR_STRENGTH global samples for them.
+const PRIOR_STRENGTH = 2;
 
 function emptyModel(): AiModel {
   return {
@@ -77,58 +106,87 @@ function emptyModel(): AiModel {
 function addStat(
   rec: Partial<Record<CriterionId, CriterionStats>>,
   id: CriterionId,
-  value: number
+  value: number,
+  weight: number
 ) {
   const s = rec[id] ?? { sum: 0, count: 0 };
-  s.sum += value;
-  s.count += 1;
+  s.sum += value * weight;
+  s.count += weight;
   rec[id] = s;
+}
+
+/** Recency weight for a row, relative to the newest row in the set (half-life decay). */
+function recencyWeight(dateISO: string, refISO: string): number {
+  const age = Math.max(0, daysBetween(dateISO, refISO));
+  return Math.pow(0.5, age / HALF_LIFE_DAYS);
 }
 
 /**
  * Train the model from Margarita's saved evaluations (read from Supabase via
  * the repo). Pure + JSON-serializable, so the server can train and hand the
- * model to the client component.
+ * model to the client component. Recent rows count more than old ones.
  */
 export function trainAiModel(evaluations: Evaluation[]): AiModel {
   const m = emptyModel();
+  if (evaluations.length === 0) return m;
+  // Reference "now" = the newest evaluation date, so weights are stable
+  // regardless of when the page is loaded (and tests are deterministic).
+  const refDate = evaluations.reduce(
+    (max, e) => (e.checking_date > max ? e.checking_date : max),
+    evaluations[0].checking_date
+  );
+
   for (const ev of evaluations) {
     const acc = ev.accountant ?? GLOBAL;
-    // Learn her criterion-scoring pattern.
+    const w = recencyWeight(ev.checking_date, refDate);
+    // Learn her criterion-scoring pattern (recency-weighted).
     for (const c of CRITERIA) {
       const v = ev.scores.criteria?.[c.id];
       if (typeof v !== "number" || Number.isNaN(v)) continue;
       m.criteria[acc] ??= {};
-      addStat(m.criteria[acc], c.id, v);
-      addStat(m.global, c.id, v);
+      addStat(m.criteria[acc], c.id, v, w);
+      addStat(m.global, c.id, v, w);
     }
     // Learn from AI-vs-Margarita pairs (gated rows are rule-driven, skip).
     const ai = (ev.scores as { ai?: AiSnapshot }).ai;
     if (ai && typeof ai.total === "number" && ev.total_score > 1 && ai.total > 1) {
       const delta = ev.total_score - ai.total;
       const b = m.bias[acc] ?? { sum: 0, count: 0 };
-      b.sum += delta;
-      b.count += 1;
+      b.sum += delta * w;
+      b.count += w;
       m.bias[acc] = b;
-      m.globalBias.sum += delta;
-      m.globalBias.count += 1;
+      m.globalBias.sum += delta * w;
+      m.globalBias.count += w;
       m.trainedPairs += 1;
     }
   }
   return m;
 }
 
+/** Global average for a criterion, or full marks when there's no history at all. */
+function globalAverage(model: AiModel, id: CriterionId, scaleMax: number): number {
+  const g = model.global[id];
+  return g && g.count > 0 ? g.sum / g.count : scaleMax;
+}
+
+/**
+ * Predicted criterion = the accountant's own (recency-weighted) average, shrunk
+ * toward the global average by a pseudo-count prior. Low-data accountants lean
+ * global; high-data ones reflect their real pattern. Rounded to the 0..scaleMax
+ * grid at the end.
+ */
 function predictedCriterion(
   model: AiModel,
   accountant: string | null,
   id: CriterionId,
   scaleMax: number
 ): number {
+  const prior = globalAverage(model, id, scaleMax);
   const acc = model.criteria[accountant ?? GLOBAL]?.[id];
-  const stats = acc && acc.count > 0 ? acc : model.global[id];
-  if (!stats || stats.count === 0) return scaleMax; // no history → full marks
-  const avg = stats.sum / stats.count;
-  return Math.max(0, Math.min(scaleMax, Math.round(avg)));
+  const accSum = acc?.sum ?? 0;
+  const accW = acc?.count ?? 0;
+  const blended = (accSum + PRIOR_STRENGTH * prior) / (accW + PRIOR_STRENGTH);
+  return Math.max(0, Math.min(scaleMax, Math.round(blended)));
 }
 
 function learnedBias(model: AiModel, accountant: string | null): number {
@@ -139,18 +197,50 @@ function learnedBias(model: AiModel, accountant: string | null): number {
 }
 
 /**
- * Predict the full evaluation row for a chat: mailing statuses carried forward
- * from the previous check, criteria from the learned per-accountant pattern,
+ * The AI's mailing status for one category, from the same facts the human row
+ * auto-fills from: the debt feed wins for «Долги»; otherwise a carried-forward
+ * status, then the fact-based auto-fill (Inactive / deadline → «Предстоящая»),
+ * then «Предстоящая». Without facts (legacy callers) it just carries forward.
+ */
+function predictedMonthlyStatus(
+  cat: (typeof MONTHLY_CATEGORIES)[number],
+  prevStatuses: Record<string, string>,
+  facts?: ChatFacts
+): string {
+  const prevVal = canonicalMonthlyStatus(cat, prevStatuses[cat.id]);
+  if (cat.id === "debts" && facts) {
+    return (
+      canonicalMonthlyStatus(cat, facts.debtStatus) ||
+      prevVal ||
+      autoMonthlyStatus(cat, facts.status, facts.debts, facts.date ?? "") ||
+      "Предстоящая"
+    );
+  }
+  if (facts) {
+    return (
+      prevVal ||
+      autoMonthlyStatus(cat, facts.status, facts.debts, facts.date ?? "") ||
+      "Предстоящая"
+    );
+  }
+  // Legacy path (no facts): carry forward, else "Предстоящая".
+  return prevStatuses[cat.id] ?? "Предстоящая";
+}
+
+/**
+ * Predict the full evaluation row for a chat: mailing statuses from the chat
+ * facts (+ carried-forward), criteria from the learned per-accountant pattern,
  * total through the same rules engine + the learned correction.
  */
 export function predictEvaluation(
   accountant: string | null,
   prevStatuses: Record<string, string>,
-  model: AiModel
+  model: AiModel,
+  facts?: ChatFacts
 ): AiPrediction {
   const monthly: Record<string, { status: string }> = {};
   for (const cat of MONTHLY_CATEGORIES) {
-    monthly[cat.id] = { status: prevStatuses[cat.id] ?? "Предстоящая" };
+    monthly[cat.id] = { status: predictedMonthlyStatus(cat, prevStatuses, facts) };
   }
 
   const criteria: CriteriaScores = {};
