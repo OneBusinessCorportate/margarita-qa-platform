@@ -126,11 +126,8 @@ export function buildReportMessage(
   lines.push("");
 
   // ── Sheet metrics (kept) ───────────────────────────────────────────────
-  lines.push(`Активных чатов: ${totals.activeChats}`);
-  lines.push(`Новых чатов: ${totals.newChats}`);
-  lines.push(`Чаты без ответственных: ${totals.chatsWithoutResponsible}`);
-  lines.push(`Оценено чатов всего: ${totals.evaluatedChats}`);
-  lines.push("");
+  // Active/new/without-responsible/evaluated are already covered by the
+  // headline + coverage line above; Margarita asked to drop this block.
 
   const evalCount = scoredCount(report);
   const lowShare =

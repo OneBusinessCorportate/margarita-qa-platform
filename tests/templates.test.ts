@@ -11,13 +11,16 @@ import {
 import { buildReport } from "../src/lib/report";
 import { seedChats, seedEvaluations, seedTasks } from "../src/lib/seed-data";
 
-test("report message contains the sheet metrics + both blocks", () => {
+test("report message contains the headline metrics + both blocks", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks);
   const msg = buildReportMessage(report);
-  assert.match(msg, /Активных чатов:/);
-  assert.match(msg, /Новых чатов:/);
-  assert.match(msg, /Чаты без ответственных:/);
-  assert.match(msg, /Оценено чатов всего:/);
+  // The redundant sheet block (Активных/Новых/Без ответственных/Оценено) was
+  // dropped at Margarita's request — coverage + service lines cover it.
+  assert.doesNotMatch(msg, /^Активных чатов:/m);
+  assert.doesNotMatch(msg, /^Новых чатов:/m);
+  assert.doesNotMatch(msg, /^Чаты без ответственных:/m);
+  assert.doesNotMatch(msg, /^Оценено чатов всего:/m);
+  assert.match(msg, /👁 Охват:/);
   assert.match(msg, /Сервис Бухгалтерии:/);
   assert.match(msg, /Задачи Бухгалтерии:/);
   assert.match(msg, /Отлично:/);

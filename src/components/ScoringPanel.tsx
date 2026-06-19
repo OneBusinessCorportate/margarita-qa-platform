@@ -101,9 +101,12 @@ export default function ScoringPanel({
   const [onlyUnscored, setOnlyUnscored] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
   const [hideStale, setHideStale] = useState(false);
-  // Default to the "K" web client — it loads much faster than "A" (helps the
-  // "chats open slowly / sometimes don't open" complaint). A saved choice wins.
-  const [tgClient, setTgClient] = useState<TgClient>("k");
+  // Default to the link's NATIVE "A" client. Rewriting the stored web.telegram.org/a/
+  // links to the "K" client changed the URL the app expects and made some chats
+  // open EMPTY ("some chats are empty when she clicks to Telegram"). The big speed
+  // win is reusing ONE Telegram tab (below), which works on either client — so we
+  // keep the reliable native client and let QA opt into K via the toggle.
+  const [tgClient, setTgClient] = useState<TgClient>("a");
   // Chats QA manually hid from "Активные за день", keyed `${agr_no}|${date}`.
   const [excluded, setExcluded] = useState<Set<string>>(
     () => new Set(initialExclusions.map((e) => `${e.chat_agr_no}|${e.exclude_date}`))
@@ -121,6 +124,16 @@ export default function ScoringPanel({
     const saved = window.localStorage.getItem("qa_tg_client");
     if (saved === "a" || saved === "k") setTgClient(saved);
   }, []);
+
+  // Switch Telegram web client (A native / K faster) and remember the choice.
+  function chooseTgClient(c: TgClient) {
+    setTgClient(c);
+    try {
+      window.localStorage.setItem("qa_tg_client", c);
+    } catch {
+      /* ignore storage errors */
+    }
+  }
 
   // Refresh the chat/eval data every 40 minutes. With the bot feed wired in,
   // this is how the day view stays current through the day.
@@ -534,6 +547,30 @@ export default function ScoringPanel({
             {showHidden ? "Скрыть скрытые" : `Скрытые за день (${hiddenCount})`}
           </button>
         )}
+        {/* A/K client picker: A is the native, reliable client (some chats opened
+            empty on K); K loads a bit faster. Choice is remembered. */}
+        <span
+          className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-xs"
+          title="Клиент Telegram Web. «A» — родной для ссылок, открывает чаты надёжно. «K» — быстрее грузится, но иногда чат пустой. Выбор запоминается."
+        >
+          <span className="px-2 py-1 text-gray-500 bg-gray-50">TG:</span>
+          <button
+            onClick={() => chooseTgClient("a")}
+            className={`px-2 py-1 font-medium ${
+              tgClient === "a" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            A
+          </button>
+          <button
+            onClick={() => chooseTgClient("k")}
+            className={`px-2 py-1 font-medium border-l border-gray-300 ${
+              tgClient === "k" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            K
+          </button>
+        </span>
       </div>
 
       {/* At-a-glance counts. */}
@@ -1074,6 +1111,19 @@ function ChatScoreRow({
                 </option>
               ))}
             </select>
+            {/* Show the standing debt amount right under the «Долги» status so
+                Margarita sees at a glance whether the client owes and how much
+                (item 5). */}
+            {c.id === "debts" && debt && (
+              <div
+                className={`mt-0.5 text-[10px] font-medium ${
+                  debt.owed ? "text-red-600" : "text-gray-400"
+                }`}
+                title="Текущая задолженность клиента (система долгов OneBusiness)"
+              >
+                {debt.owed ? `💰 ${debt.text}` : "нет долга"}
+              </div>
+            )}
           </td>
         ))}
         <td className={`${youCell} text-center`}>
