@@ -431,29 +431,96 @@ export default function ScoringPanel({
   }
 
   return (
-    <div className="space-y-3">
-      {/* Scope toggle */}
-      <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
-        <button
-          onClick={() => setScope("day")}
-          className={`px-3 py-1.5 font-medium ${
-            scope === "day" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
-          }`}
-        >
-          Активные за день
-        </button>
-        <button
-          onClick={() => setScope("all")}
-          className={`px-3 py-1.5 font-medium border-l border-gray-300 ${
-            scope === "all" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
-          }`}
-        >
-          Все активные чаты
-        </button>
+    <div className="flex flex-col gap-2 flex-1 min-h-0">
+      {/* Top bar — title, scope toggle and live counts on the left; actions
+          (Telegram, refresh, hidden, client picker) pushed to the right. One
+          aligned row so the grid keeps the most vertical space. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 className="text-base font-semibold text-gray-900">Оценка чатов</h1>
+        {/* Scope toggle */}
+        <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+          <button
+            onClick={() => setScope("day")}
+            className={`px-3 py-1.5 font-medium ${
+              scope === "day" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            Активные за день
+          </button>
+          <button
+            onClick={() => setScope("all")}
+            className={`px-3 py-1.5 font-medium border-l border-gray-300 ${
+              scope === "all" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            Все активные чаты
+          </button>
+        </div>
+
+        {/* At-a-glance counts. */}
+        <span className="inline-block rounded bg-blue-50 text-blue-700 font-medium text-xs px-2 py-1">
+          Активных за {date}: {Math.max(0, activeTodaySet.size - hiddenCount)}
+        </span>
+        <span className="inline-block rounded bg-green-50 text-green-700 font-medium text-xs px-2 py-1">
+          ✓ Оценено за {date}: {evalForDate.size}
+        </span>
+
+        {/* Actions — Telegram, refresh, hidden toggle, client picker. */}
+        <div className="ml-auto flex flex-wrap items-center gap-2 text-sm">
+          <a
+            href={`https://web.telegram.org/${tgClient}/`}
+            target="telegram_chat"
+            rel="noreferrer"
+            className="btn-secondary"
+            title="Откройте Telegram один раз — дальше каждый чат по ссылке открывается мгновенно в этой же вкладке"
+          >
+            Открыть Telegram ⚡
+          </a>
+          <button
+            className="btn-secondary"
+            onClick={() => router.refresh()}
+            title="Список обновляется автоматически каждые 40 минут"
+          >
+            Обновить ⟳
+          </button>
+          {scope === "day" && (hiddenCount > 0 || showHidden) && (
+            <button
+              className="btn-secondary"
+              onClick={() => setShowHidden((v) => !v)}
+              title="Чаты, вручную скрытые из списка «Активные за день». Нажмите, чтобы показать и при необходимости вернуть."
+            >
+              {showHidden ? "Скрыть скрытые" : `Скрытые за день (${hiddenCount})`}
+            </button>
+          )}
+          {/* A/K client picker: A is the native, reliable client (some chats opened
+              empty on K); K loads a bit faster. Choice is remembered. */}
+          <span
+            className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-xs"
+            title="Клиент Telegram Web. «A» — родной для ссылок, открывает чаты надёжно. «K» — быстрее грузится, но иногда чат пустой. Выбор запоминается."
+          >
+            <span className="px-2 py-1.5 text-gray-500 bg-gray-50">TG:</span>
+            <button
+              onClick={() => chooseTgClient("a")}
+              className={`px-2 py-1.5 font-medium ${
+                tgClient === "a" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              A
+            </button>
+            <button
+              onClick={() => chooseTgClient("k")}
+              className={`px-2 py-1.5 font-medium border-l border-gray-300 ${
+                tgClient === "k" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              K
+            </button>
+          </span>
+        </div>
       </div>
 
-      {/* Toolbar */}
-      <div className="card p-3 flex flex-wrap items-end gap-3">
+      {/* Filter toolbar */}
+      <div className="card p-2 flex flex-wrap items-end gap-x-3 gap-y-2">
         <div className="space-y-1">
           <label className="text-xs text-gray-500 block">Дата проверки</label>
           <input
@@ -524,73 +591,12 @@ export default function ScoringPanel({
         </label>
       </div>
 
-      {/* Compact action bar — Telegram + refresh only. */}
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <a
-          href={`https://web.telegram.org/${tgClient}/`}
-          target="telegram_chat"
-          rel="noreferrer"
-          className="btn-secondary"
-          title="Откройте Telegram один раз — дальше каждый чат по ссылке открывается мгновенно в этой же вкладке"
-        >
-          Открыть Telegram ⚡
-        </a>
-        <button
-          className="btn-secondary"
-          onClick={() => router.refresh()}
-          title="Список обновляется автоматически каждые 40 минут"
-        >
-          Обновить ⟳
-        </button>
-        {scope === "day" && (hiddenCount > 0 || showHidden) && (
-          <button
-            className="btn-secondary"
-            onClick={() => setShowHidden((v) => !v)}
-            title="Чаты, вручную скрытые из списка «Активные за день». Нажмите, чтобы показать и при необходимости вернуть."
-          >
-            {showHidden ? "Скрыть скрытые" : `Скрытые за день (${hiddenCount})`}
-          </button>
-        )}
-        {/* A/K client picker: A is the native, reliable client (some chats opened
-            empty on K); K loads a bit faster. Choice is remembered. */}
-        <span
-          className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-xs"
-          title="Клиент Telegram Web. «A» — родной для ссылок, открывает чаты надёжно. «K» — быстрее грузится, но иногда чат пустой. Выбор запоминается."
-        >
-          <span className="px-2 py-1 text-gray-500 bg-gray-50">TG:</span>
-          <button
-            onClick={() => chooseTgClient("a")}
-            className={`px-2 py-1 font-medium ${
-              tgClient === "a" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
-            }`}
-          >
-            A
-          </button>
-          <button
-            onClick={() => chooseTgClient("k")}
-            className={`px-2 py-1 font-medium border-l border-gray-300 ${
-              tgClient === "k" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"
-            }`}
-          >
-            K
-          </button>
-        </span>
-      </div>
-
-      {/* At-a-glance counts. */}
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="inline-block rounded bg-blue-50 text-blue-700 font-medium px-2 py-1">
-          Активных за {date}: {Math.max(0, activeTodaySet.size - hiddenCount)}
-        </span>
-        <span className="inline-block rounded bg-green-50 text-green-700 font-medium px-2 py-1">
-          ✓ Оценено за {date}: {evalForDate.size}
-        </span>
-      </div>
-
       {/* Scroll the wide grid inside its own box so the sticky HEADER ROW pins
-          relative to THIS container. The first column is intentionally NOT
-          horizontally pinned — it scrolls with the grid. */}
-      <div className="card overflow-auto max-h-[80vh]">
+          relative to THIS container. The box fills the remaining viewport
+          height (flex-1), so the page never scrolls — only the grid does. The
+          first column is intentionally NOT horizontally pinned — it scrolls
+          with the grid. */}
+      <div className="card overflow-auto flex-1 min-h-0">
         <table className="qa pairs sticky-head dense w-full">
           <thead>
             <tr>

@@ -47,8 +47,10 @@ export default async function ScoringPage() {
   );
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Оценка чатов</h1>
+    // Fill the viewport (minus navbar + main padding) so the grid below fills
+    // the remaining height and only the grid scrolls — the page itself never
+    // does. Keeps every control on one screen.
+    <div className="flex flex-col h-[calc(100vh-5rem)] min-h-0">
       <ScoringPanel
         chats={chats}
         accountants={accountants}
