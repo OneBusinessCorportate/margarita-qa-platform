@@ -6,10 +6,8 @@ import {
   DAILY_CRITERIA,
   MONTHLY_CATEGORIES,
   PREV_STATUS_DEFAULT,
-  REGISTRATION_PENALTIES,
   canonicalMonthlyStatus,
   computeOverall,
-  computeRegistrationScore,
   daysBetween,
   isStaleActivity,
   roleInfo,
@@ -24,6 +22,9 @@ import {
   autoMonthlyStatus,
   cmpAgrNo,
   compareByActivity,
+  debtAmountLabel,
+  hasNewMessageAfterEval,
+  isNewChat,
   isTelegramLink,
   waitingLabel,
   type SortBy,
@@ -239,6 +240,9 @@ export default function ScoringPanel({
     // in the day view even if their last message was on an earlier day, so the
     // "start from the bottom unanswered chat" workflow can reach yesterday's.
     for (const c of chats) if (c.unanswered === true) s.add(c.agr_no);
+    // Brand-new chats created on the reviewed day appear even before they have
+    // any message activity captured in the feed (item 6).
+    for (const c of chats) if ((c.created_date ?? "").slice(0, 10) === date) s.add(c.agr_no);
     return s;
   }, [chatActivity, chats, lastActivityFor, taskActivity, date]);
 
@@ -545,11 +549,11 @@ export default function ScoringPanel({
       {/* Scroll the wide grid inside its own box so the sticky HEADER ROW pins
           relative to THIS container. The first column is intentionally NOT
           horizontally pinned — it scrolls with the grid. */}
-      <div className="card overflow-auto max-h-[78vh]">
-        <table className="qa pairs sticky-head">
+      <div className="card overflow-auto max-h-[80vh]">
+        <table className="qa pairs sticky-head dense w-full">
           <thead>
             <tr>
-              <th className="corner bg-gray-100 min-w-[210px]">
+              <th className="corner bg-gray-100 min-w-[170px]">
                 № / Чат / Бухгалтер
               </th>
               <th className="text-center">Кто</th>
@@ -716,6 +720,14 @@ function ChatScoreRow({
 
   const staleDays = lastActivity ? daysBetween(lastActivity, asOf) : null;
   const isStale = isStaleActivity(lastActivity, asOf);
+  // The standing debt amount, brought back to the row (item 5 — "вернуть
+  // отображение задолженности, было удобно видеть сумму долга").
+  const debt = debtAmountLabel(chat.debts);
+  // Brand-new chat (item 6) and "scored, then the client wrote again" (items 9/7).
+  const newChat = isNewChat(chat.created_date, asOf);
+  const reCheck =
+    Boolean(existing) &&
+    hasNewMessageAfterEval(chat.last_activity_at, existing?.created_at);
 
   // AI's row: same fields, predicted from the learned model. Re-predicts when
   // the accountant changes (the model is per-accountant).
@@ -821,7 +833,7 @@ function ChatScoreRow({
       <tr className={`chat-start ${savedId ? "bg-green-100" : ""}`}>
         <td
           rowSpan={2}
-          className={`chat-info align-top min-w-[280px] max-w-[340px] ${
+          className={`chat-info align-top min-w-[190px] max-w-[230px] ${
             savedId ? "bg-green-100 border-l-8 border-green-600" : "bg-white"
           }`}
         >
@@ -934,6 +946,35 @@ function ChatScoreRow({
               </span>
             )}
           </div>
+          {/* Debt amount (item 5) + new-chat / re-check flags (items 6, 9, 7). */}
+          {(debt?.owed || newChat || reCheck) && (
+            <div className="text-xs mt-1 flex flex-wrap gap-1">
+              {debt?.owed && (
+                <span
+                  className="inline-block rounded bg-red-100 text-red-700 font-semibold px-1.5 py-0.5 whitespace-nowrap"
+                  title="Текущая задолженность клиента (из системы долгов OneBusiness)"
+                >
+                  💰 {debt.text}
+                </span>
+              )}
+              {newChat && (
+                <span
+                  className="inline-block rounded bg-sky-100 text-sky-700 font-semibold px-1.5 py-0.5 whitespace-nowrap"
+                  title={`Новый чат — создан ${chat.created_date ?? ""}`}
+                >
+                  🆕 новый
+                </span>
+              )}
+              {reCheck && (
+                <span
+                  className="inline-block rounded bg-purple-100 text-purple-700 font-semibold px-1.5 py-0.5 whitespace-nowrap"
+                  title="После вашей оценки в чате появились новые сообщения — перепроверьте (относится к следующему дню проверки)"
+                >
+                  🔄 новое после оценки
+                </span>
+              )}
+            </div>
+          )}
           <div className="mt-1">
             <PersonPicker
               value={accountant}
@@ -966,7 +1007,7 @@ function ChatScoreRow({
         ))}
         {MONTHLY_CATEGORIES.map((c) => (
           <td key={c.id} className={`${aiCell} text-xs`}>
-            <span className="block truncate max-w-[120px]" title={ai.monthly[c.id]?.status}>
+            <span className="block truncate max-w-[92px]" title={ai.monthly[c.id]?.status}>
               {ai.monthly[c.id]?.status || "—"}
             </span>
           </td>
@@ -1018,7 +1059,7 @@ function ChatScoreRow({
         {MONTHLY_CATEGORIES.map((c) => (
           <td key={c.id} className={youCell}>
             <select
-              className="input w-full min-w-[112px] text-xs"
+              className="input w-full min-w-[84px] text-xs"
               value={monthly[c.id]?.status ?? ""}
               onChange={(e) => setMon(c.id, e.target.value)}
               title={c.name}
@@ -1070,11 +1111,15 @@ function ChatScoreRow({
 }
 
 /**
- * One editable row for the менеджер / юрист roles. Both grade a chat on the
- * registration penalty model (start 100, minus penalties) — a single row, no AI
- * suggestion. The graded person is stored in the evaluation's `accountant` field.
+ * One editable QA row for the менеджер / юрист roles (item 3 — "в одном чате
+ * могут отвечать и бухгалтер, и менеджер; нужно оценивать обоих отдельно").
+ * Both are graded on the SAME chat-quality criteria as the accountant — Точность
+ * и полнота + Соблюдение сроков / SLA → 0–100 — so a manager who answers in the
+ * chat finally lands in QA. Monthly mailings are accountant-specific, so those
+ * columns are spanned with a hint instead. The graded person is stored in the
+ * evaluation's `accountant` field; the row's `role` keeps it separate.
  */
-function RegRoleRow({
+function RoleQaRow({
   chat,
   role,
   date,
@@ -1092,24 +1137,34 @@ function RegRoleRow({
   const [person, setPerson] = useState(
     existing?.accountant ?? (role === "manager" ? chat.manager ?? "" : "")
   );
-  const [counts, setCounts] = useState<Record<string, number>>(
-    existing?.scores.registration ?? {}
+  const [criteria, setCriteria] = useState<CriteriaScores>(
+    existing?.scores.criteria ?? {}
   );
   const [comment, setComment] = useState(existing?.comment ?? "");
+  const [override, setOverride] = useState(
+    existing && typeof existing.total_score === "number" && !existing.scores.criteria
+      ? String(existing.total_score)
+      : ""
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
 
-  const total = computeRegistrationScore(counts);
-  const touched =
-    Boolean(savedId) || REGISTRATION_PENALTIES.some((p) => (counts[p.id] ?? 0) > 0);
   const info = roleInfo(role);
-  // Span the accountant criteria columns (Точн/СЛА + 4 monthly) with the three
-  // penalty inputs, so this role's row stays aligned with the grid.
-  const critColSpan = DAILY_CRITERIA.length + MONTHLY_CATEGORIES.length;
+  // Same chat-quality maths as the accountant, just the two daily criteria.
+  const total =
+    override.trim() !== "" && !Number.isNaN(Number(override))
+      ? Number(override)
+      : computeOverall(criteria, undefined, DAILY_CRITERIA);
+  const touched =
+    Boolean(savedId) ||
+    DAILY_CRITERIA.some((c) => typeof criteria[c.id] === "number") ||
+    override.trim() !== "";
+  // The 4 monthly columns don't apply to a manager/lawyer — span them with a hint.
+  const monthlySpan = MONTHLY_CATEGORIES.length;
 
-  const setCount = (id: string, v: string) =>
-    setCounts((c) => ({ ...c, [id]: v === "" ? 0 : Math.max(0, Number(v)) }));
+  const setCrit = (id: CriterionId, v: string) =>
+    setCriteria((c) => ({ ...c, [id]: v === "" ? undefined : Number(v) }));
 
   async function save() {
     setSaving(true);
@@ -1125,8 +1180,10 @@ function RegRoleRow({
             checking_date: date,
             role,
             accountant: person || null,
-            scores: { scheme: "registration", registration: counts },
+            // Default (accounting) scheme: graded on the same criteria → 0–100.
+            scores: { criteria },
             comment: comment || null,
+            total_override: override.trim() !== "" ? Number(override) : null,
           }),
         }
       );
@@ -1148,7 +1205,7 @@ function RegRoleRow({
   return (
     <tr className={savedId ? "bg-green-50/50" : "bg-violet-50/30"}>
       {/* Role + person — sits in the first column (scrolls with the grid). */}
-      <td className="bg-white align-top min-w-[210px]">
+      <td className="bg-white align-top min-w-[170px]">
         <div className="flex items-start gap-1.5">
           <span className="pt-1" title={info.label}>{info.icon}</span>
           <PersonPicker
@@ -1164,29 +1221,34 @@ function RegRoleRow({
           {role === "manager" ? "Мен" : "Юр"}
         </span>
       </td>
-      <td colSpan={critColSpan} className="align-middle">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          {REGISTRATION_PENALTIES.map((p) => (
-            <label
-              key={p.id}
-              className="inline-flex items-center gap-1 text-xs text-gray-600"
-              title={`${p.name} — ${p.goal} (${p.points})`}
-            >
-              {p.id === "critical" ? "Крит." : p.id === "speed" ? "Скор." : "ОС"}
-              <input
-                type="number"
-                min={0}
-                className="input w-[48px] text-center"
-                placeholder="0"
-                value={counts[p.id] ?? ""}
-                onChange={(e) => setCount(p.id, e.target.value)}
-              />
-            </label>
-          ))}
-        </div>
+      {DAILY_CRITERIA.map((c) => (
+        <td key={c.id} className="text-center align-middle">
+          <select
+            className="input w-[46px]"
+            value={criteria[c.id] ?? ""}
+            onChange={(e) => setCrit(c.id, e.target.value)}
+            title={c.name}
+          >
+            <option value="">—</option>
+            {Array.from({ length: c.scaleMax + 1 }, (_, i) => i).map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </td>
+      ))}
+      <td colSpan={monthlySpan} className="align-middle text-xs text-gray-400 italic">
+        рассылки — у бухгалтера
       </td>
-      <td className="text-center align-middle tabular-nums font-semibold">
-        {touched ? total : <span className="text-gray-300">—</span>}
+      <td className="text-center align-middle">
+        <input
+          className="input w-[50px] tabular-nums text-center"
+          value={override !== "" ? override : touched ? total : ""}
+          placeholder="—"
+          onChange={(e) => setOverride(e.target.value)}
+          title="Авто из критериев; можно переопределить"
+        />
       </td>
       <td className="align-middle">
         {touched ? <BandChip total={total} /> : <span className="text-gray-300">—</span>}
@@ -1273,7 +1335,7 @@ function ChatGroup({
         hideControl={hideControl}
       />
       {showManager && (
-        <RegRoleRow
+        <RoleQaRow
           chat={chat}
           role="manager"
           date={date}
@@ -1283,7 +1345,7 @@ function ChatGroup({
         />
       )}
       {showLawyer && (
-        <RegRoleRow
+        <RoleQaRow
           chat={chat}
           role="lawyer"
           date={date}

@@ -246,6 +246,53 @@ export function isTaskOverdue(status: string | null): boolean {
   return status === "Overdue";
 }
 
+/** Was the task marked done/cancelled by the accountant? */
+export function isTaskCompleted(status: string | null | undefined): boolean {
+  return (
+    status === "Completed (On Time)" ||
+    status === "Completed (Late)" ||
+    status === "Cancelled"
+  );
+}
+
+/**
+ * Is the task CLOSED (off Margarita's plate)? A normal task closes when the
+ * accountant completes/cancels it. A recurring / non-closable task (the boss's
+ * rule) only closes when the accountant did it AND QA confirmed it — so it stays
+ * open through every period until both are true.
+ */
+export function isTaskClosed(t: {
+  task_status: string | null | undefined;
+  recurring?: boolean | null;
+  qa_confirmed?: boolean | null;
+}): boolean {
+  if (!isTaskCompleted(t.task_status)) return false;
+  if (t.recurring) return t.qa_confirmed === true;
+  return true;
+}
+
+/**
+ * Is an open task past (or at) its deadline as of `asOf`? Uses the postponed
+ * due date when present (the accountant moved it), else the original. Closed
+ * tasks are never "due". This is what flags a "вернётся через 2 дня" promise that
+ * has come due (item 8).
+ */
+export function isTaskDue(
+  t: {
+    task_status: string | null | undefined;
+    recurring?: boolean | null;
+    qa_confirmed?: boolean | null;
+    due_date_original?: string | null;
+    due_date_postponed?: string | null;
+  },
+  asOf: string
+): boolean {
+  if (isTaskClosed(t)) return false;
+  const due = (t.due_date_postponed || t.due_date_original || "").slice(0, 10);
+  if (!due) return false;
+  return due <= asOf.slice(0, 10);
+}
+
 // --- Quality bands ---------------------------------------------------------
 
 export type QualityBand = "Отлично" | "Хорошо" | "Плохо" | "Критично";

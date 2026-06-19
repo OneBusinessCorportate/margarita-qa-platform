@@ -14,7 +14,9 @@ export default async function TasksPage() {
       <div>
         <h1 className="text-xl font-semibold">Задачи</h1>
         <p className="text-sm text-gray-500">
-          Задачи от бухгалтеров. Новая — в нижней строке.
+          Задачи с дедлайном (напр. «вернётся через 2 дня») и повторяющиеся задачи.
+          Повторяющаяся задача закрывается только после подтверждения QA. Новая — в
+          нижней строке.
         </p>
       </div>
       <TasksPanel

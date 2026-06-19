@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  accountantsToMessage,
+  buildAccountantMessage,
   buildReportMessage,
   buildScoreMessage,
   surveyInviteAm,
@@ -60,6 +62,28 @@ test("score message includes overall, band, monthly statuses and link", () => {
 test("score message handles missing chat gracefully", () => {
   const msg = buildScoreMessage(seedEvaluations[0], null);
   assert.match(msg, new RegExp(seedEvaluations[0].chat_agr_no));
+});
+
+test("per-accountant message lists that person's critical chats", () => {
+  const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  const someone = report.criticalChats[0]?.accountant;
+  assert.ok(someone, "seed data should have at least one critical chat with an accountant");
+  const msg = buildAccountantMessage(report, someone!, { date: "2026-06-15" });
+  assert.match(msg, new RegExp(`👤 ${someone}`));
+  assert.match(msg, /⛔️ Критичные чаты/);
+  // Only that accountant's critical chats appear.
+  const others = report.criticalChats.filter((c) => c.accountant !== someone);
+  for (const o of others) assert.doesNotMatch(msg, new RegExp(`№${o.chat_agr_no}\\b`));
+});
+
+test("accountantsToMessage returns people with critical chats, none empty", () => {
+  const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  const names = accountantsToMessage(report);
+  const critOwners = new Set(
+    report.criticalChats.map((c) => c.accountant).filter(Boolean) as string[]
+  );
+  for (const owner of critOwners) assert.ok(names.includes(owner));
+  assert.ok(!names.includes("" as any));
 });
 
 test("survey invites embed the typeform link with the chat id", () => {

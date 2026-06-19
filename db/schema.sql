@@ -101,8 +101,19 @@ create table if not exists mqa_tasks (
   task_status         text,                 -- Completed (On Time) / Completed (Late) / Overdue / Cancelled / -
   accountant          text,
   checking_date       date,
-  period              text
+  period              text,
+  -- A recurring / non-closable task stays OPEN until the accountant does it AND
+  -- QA confirms it (boss's rule). See db/migrations/20260619_mqa_tasks_recurring_qa_confirm.sql.
+  recurring           boolean not null default false,
+  qa_confirmed        boolean not null default false,
+  qa_confirmed_at     timestamptz,
+  qa_confirmed_by     text
 );
+
+alter table mqa_tasks add column if not exists recurring      boolean not null default false;
+alter table mqa_tasks add column if not exists qa_confirmed    boolean not null default false;
+alter table mqa_tasks add column if not exists qa_confirmed_at timestamptz;
+alter table mqa_tasks add column if not exists qa_confirmed_by text;
 
 create index if not exists mqa_tasks_chat_idx on mqa_tasks (chat_agr_no);
 

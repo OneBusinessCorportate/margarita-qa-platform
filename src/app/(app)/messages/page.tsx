@@ -1,5 +1,10 @@
 import { getDailyAnalytics, listViolations } from "@/lib/repo";
-import { buildReportMessage, telegramConfigured } from "@/lib/templates";
+import {
+  accountantsToMessage,
+  buildAccountantMessage,
+  buildReportMessage,
+  telegramConfigured,
+} from "@/lib/templates";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
 
@@ -50,6 +55,16 @@ export default async function MessagesPage({
       ? fmtDay(resolved.from)
       : `${fmtDay(resolved.from)} — ${fmtDay(resolved.to)}`;
 
+  // Per-accountant messages (item 11): one ready-to-send block per person who has
+  // a critical chat, a low average, or a chat still waiting. This is what
+  // Margarita copies to send each bookkeeper directly — previously the page only
+  // produced the single aggregate report, so per-person critical chats (e.g.
+  // Olya's) had nowhere to be copied from.
+  const perAccountant = accountantsToMessage(report).map((name) => ({
+    name,
+    text: buildAccountantMessage(report, name, { date: resolved.to }),
+  }));
+
   return (
     <div className="space-y-4">
       <div>
@@ -74,6 +89,42 @@ export default async function MessagesPage({
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {reportMessage}
         </pre>
+      </div>
+
+      {/* Per-accountant messages — copy and send each bookkeeper directly. */}
+      <div className="space-y-2">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold">Сообщения бухгалтерам</h2>
+          <span className="text-xs text-gray-500">
+            {perAccountant.length > 0
+              ? `${perAccountant.length} — есть что отправить`
+              : "нет критичных / проблемных чатов за период"}
+          </span>
+        </div>
+        {perAccountant.length === 0 ? (
+          <div className="card p-4 text-sm text-gray-500">
+            За {periodLabel} ни у кого нет критичных чатов, низких оценок или чатов без
+            ответа. Отправлять отдельные сообщения не нужно.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {perAccountant.map(({ name, text }) => (
+              <div key={name} className="card p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium truncate">{name}</div>
+                  <CopyButton
+                    label="Копировать"
+                    className="btn-primary !py-0.5 !px-2 text-xs shrink-0"
+                    text={text}
+                  />
+                </div>
+                <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
+{text}
+                </pre>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

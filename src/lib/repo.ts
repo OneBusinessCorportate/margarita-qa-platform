@@ -15,6 +15,7 @@ import {
 } from "./scoring";
 import {
   buildReport,
+  perPersonScores,
   precedingWindow,
   reportSnapshotLabel,
   type DailyReport,
@@ -35,6 +36,7 @@ import type {
   NewTaskInput,
   NewViolationInput,
   Task,
+  TaskPatch,
   Violation,
 } from "./types";
 
@@ -417,6 +419,10 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
     accountant: input.accountant ?? null,
     checking_date,
     period: checking_date.slice(0, 7).replace("-", ""),
+    recurring: input.recurring ?? false,
+    qa_confirmed: false,
+    qa_confirmed_at: null,
+    qa_confirmed_by: null,
   };
   const sb = getServiceClient();
   if (sb) {
@@ -430,6 +436,36 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
   }
   store().tasks.unshift(row);
   return row;
+}
+
+/** Update an existing task's status / QA confirmation (item 8, boss's note). */
+export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {
+  const fields: Record<string, unknown> = {};
+  if (patch.task_status !== undefined) fields.task_status = patch.task_status;
+  if (patch.completed_at !== undefined) fields.completed_at = patch.completed_at;
+  if (patch.result !== undefined) fields.result = patch.result;
+  if (patch.recurring !== undefined) fields.recurring = patch.recurring;
+  if (patch.qa_confirmed !== undefined) {
+    fields.qa_confirmed = patch.qa_confirmed;
+    fields.qa_confirmed_at = patch.qa_confirmed ? new Date().toISOString() : null;
+    fields.qa_confirmed_by = patch.qa_confirmed ? patch.qa_confirmed_by ?? null : null;
+  }
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.tasks)
+      .update(fields)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as Task;
+  }
+  const rows = store().tasks;
+  const idx = rows.findIndex((t) => t.id === id);
+  if (idx === -1) throw new Error(`Task ${id} not found`);
+  rows[idx] = { ...rows[idx], ...(fields as Partial<Task>) };
+  return rows[idx];
 }
 
 // --- Active-list exclusions ("Скрыть из активных за день") ------------------
@@ -551,6 +587,46 @@ export async function createViolation(
   return row;
 }
 
+/**
+ * Pull every chat that scored Критично on `date` into the Нарушения journal
+ * (item 10 — entering them by hand is "очень неудобно"). One violation per
+ * critical chat, severity «Критичное», the failing reason as the type. Chats
+ * already logged for that date are skipped, so re-running is safe / idempotent.
+ */
+export async function importCriticalChatsAsViolations(
+  date: string,
+  createdBy: string | null = null
+): Promise<{ created: number; skipped: number }> {
+  const [report, existing] = await Promise.all([
+    getReport({ from: date, to: date }),
+    listViolations({ from: date, to: date }),
+  ]);
+  const alreadyLogged = new Set(
+    existing.map((v) => v.chat_agr_no).filter(Boolean) as string[]
+  );
+  let created = 0;
+  let skipped = 0;
+  for (const c of report.criticalChats) {
+    if (alreadyLogged.has(c.chat_agr_no)) {
+      skipped += 1;
+      continue;
+    }
+    await createViolation({
+      vdate: date,
+      accountant: c.accountant ?? null,
+      chat_agr_no: c.chat_agr_no,
+      client: c.chat_name ?? null,
+      severity: "Критичное",
+      violation_type: c.reasons[0] ?? "Критичный чат (авто из оценки)",
+      note: c.reasons.length > 1 ? c.reasons.slice(1).join("; ") : null,
+      sanction: null,
+    });
+    alreadyLogged.add(c.chat_agr_no);
+    created += 1;
+  }
+  return { created, skipped };
+}
+
 // --- Report ----------------------------------------------------------------
 
 export async function getReport(filters: ReportFilters): Promise<DailyReport> {
@@ -564,7 +640,12 @@ export async function getReport(filters: ReportFilters): Promise<DailyReport> {
   // The accounting report only counts accountant-role evaluations — manager and
   // lawyer per-chat scores live in the same table but are reported separately.
   const accountantEvals = evaluations.filter((e) => e.role === "accountant");
-  return buildReport(chats, accountantEvals, filters, tasks, asOf);
+  const report = buildReport(chats, accountantEvals, filters, tasks, asOf);
+  // Item 3: surface manager / lawyer chat-quality scores so those roles land in
+  // QA instead of disappearing. They're already window-filtered by listEvaluations.
+  report.managerScores = perPersonScores(evaluations.filter((e) => e.role === "manager"));
+  report.lawyerScores = perPersonScores(evaluations.filter((e) => e.role === "lawyer"));
+  return report;
 }
 
 export interface DailyAnalytics {

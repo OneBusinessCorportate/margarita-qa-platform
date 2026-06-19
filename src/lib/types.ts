@@ -116,6 +116,12 @@ export interface Task {
   accountant: string | null;
   checking_date: string | null;
   period: string | null;
+  /** Recurring / non-closable: stays open until done AND QA-confirmed. */
+  recurring?: boolean | null;
+  /** QA confirmed the accountant actually did it (closes a recurring task). */
+  qa_confirmed?: boolean | null;
+  qa_confirmed_at?: string | null;
+  qa_confirmed_by?: string | null;
 }
 
 export interface NewEvaluationInput {
@@ -195,6 +201,17 @@ export interface NewTaskInput {
   task_status?: TaskStatus | null;
   accountant?: string | null;
   checking_date?: string | null;
+  recurring?: boolean | null;
+}
+
+/** Patch for an existing task (status update / QA confirmation). */
+export interface TaskPatch {
+  task_status?: TaskStatus | null;
+  completed_at?: string | null;
+  result?: string | null;
+  recurring?: boolean | null;
+  qa_confirmed?: boolean | null;
+  qa_confirmed_by?: string | null;
 }
 
 /**

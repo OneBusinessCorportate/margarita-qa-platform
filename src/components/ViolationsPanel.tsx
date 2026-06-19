@@ -56,6 +56,44 @@ export default function ViolationsPanel({
   const [fFrom, setFFrom] = useState("");
   const [fTo, setFTo] = useState("");
 
+  // Auto-import of critical chats (item 10).
+  const [importDate, setImportDate] = useState(today());
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+
+  async function importCritical() {
+    setImporting(true);
+    setImportMsg(null);
+    try {
+      const res = await fetch("/api/violations/import-critical", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: importDate }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setImportMsg(d.error || "Не удалось импортировать");
+        return;
+      }
+      setImportMsg(
+        `Добавлено: ${d.created ?? 0}${d.skipped ? `, пропущено (уже есть): ${d.skipped}` : ""}`
+      );
+      // Refresh the list so the new rows appear.
+      const list = await fetch(`/api/violations?from=${importDate}&to=${importDate}`);
+      if (list.ok) {
+        const fresh: Violation[] = await list.json();
+        setRows((prev) => {
+          const ids = new Set(fresh.map((v) => v.id));
+          return [...fresh, ...prev.filter((v) => !ids.has(v.id))];
+        });
+      }
+    } catch {
+      setImportMsg("Сетевая ошибка");
+    } finally {
+      setImporting(false);
+    }
+  }
+
   const filtered = useMemo(
     () =>
       rows.filter((v) => {
@@ -157,6 +195,27 @@ export default function ViolationsPanel({
           Сброс
         </button>
         <span className="text-xs text-gray-400 pb-1.5">Показано: {filtered.length}</span>
+      </div>
+
+      {/* Auto-import critical chats from the day's QA (item 10). */}
+      <div className="card p-3 flex flex-wrap items-end gap-3 bg-amber-50/40">
+        <Field label="Критичные чаты за дату">
+          <input
+            type="date"
+            className="input"
+            value={importDate}
+            onChange={(e) => setImportDate(e.target.value)}
+          />
+        </Field>
+        <button
+          className="btn-primary"
+          onClick={importCritical}
+          disabled={importing}
+          title="Добавить в журнал все чаты, получившие «Критично» в этот день (по оценкам). Повторный запуск не создаёт дублей."
+        >
+          {importing ? "Импорт…" : "➕ Импортировать критичные чаты"}
+        </button>
+        {importMsg && <span className="text-xs text-gray-600 pb-1.5">{importMsg}</span>}
       </div>
 
       {error && <div className="text-sm text-red-600 px-1">{error}</div>}

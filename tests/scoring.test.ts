@@ -21,6 +21,8 @@ import {
   daysBetween,
   isMailingFail,
   isStaleActivity,
+  isTaskClosed,
+  isTaskDue,
   isoWeekLabel,
   kpiBonusEligible,
   mondayOf,
@@ -202,4 +204,47 @@ test("isoWeekLabel gives the ISO-8601 week", () => {
   assert.equal(isoWeekLabel("2026-06-15"), "2026-W25");
   // The Thursday rule: 2026-01-01 (Thu) is in week 1.
   assert.equal(isoWeekLabel("2026-01-01"), "2026-W01");
+});
+
+test("isTaskClosed: normal task closes on completion; recurring needs QA", () => {
+  // A normal completed task is closed.
+  assert.equal(isTaskClosed({ task_status: "Completed (On Time)" }), true);
+  // Not completed → open.
+  assert.equal(isTaskClosed({ task_status: "Overdue" }), false);
+  // Recurring + completed but NOT QA-confirmed → still open (boss's rule).
+  assert.equal(
+    isTaskClosed({ task_status: "Completed (Late)", recurring: true, qa_confirmed: false }),
+    false
+  );
+  // Recurring + completed + QA-confirmed → closed.
+  assert.equal(
+    isTaskClosed({ task_status: "Completed (Late)", recurring: true, qa_confirmed: true }),
+    true
+  );
+});
+
+test("isTaskDue: open task at/past its (postponed) due date", () => {
+  // Due yesterday, still open → due.
+  assert.equal(
+    isTaskDue({ task_status: "-", due_date_original: "2026-06-18" }, "2026-06-19"),
+    true
+  );
+  // Due in the future → not yet.
+  assert.equal(
+    isTaskDue({ task_status: "-", due_date_original: "2026-06-25" }, "2026-06-19"),
+    false
+  );
+  // Postponed date wins over the original.
+  assert.equal(
+    isTaskDue(
+      { task_status: "-", due_date_original: "2026-06-10", due_date_postponed: "2026-06-25" },
+      "2026-06-19"
+    ),
+    false
+  );
+  // A closed task is never "due".
+  assert.equal(
+    isTaskDue({ task_status: "Completed (On Time)", due_date_original: "2026-06-01" }, "2026-06-19"),
+    false
+  );
 });

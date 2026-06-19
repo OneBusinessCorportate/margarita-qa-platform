@@ -37,6 +37,7 @@ export async function POST(req: Request) {
     task_status: body.task_status ?? "-",
     accountant: body.accountant ?? null,
     checking_date: body.checking_date ?? undefined,
+    recurring: body.recurring === true,
   };
   const created = await createTask(input);
   return NextResponse.json(created, { status: 201 });

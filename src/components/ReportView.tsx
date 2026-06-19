@@ -95,6 +95,42 @@ export default function ReportView({ report }: { report: DailyReport }) {
         </table>
       </div>
 
+      {/* Менеджеры / Юристы — chat-quality QA for non-accountant roles (item 3). */}
+      {[
+        { title: "Менеджеры — сервис в чатах", rows: report.managerScores ?? [] },
+        { title: "Юристы — сервис в чатах", rows: report.lawyerScores ?? [] },
+      ]
+        .filter((b) => b.rows.length > 0)
+        .map((b) => (
+          <div key={b.title} className="card overflow-x-auto">
+            <div className="px-3 pt-3 text-sm font-medium">{b.title}</div>
+            <table className="qa">
+              <thead>
+                <tr>
+                  <th>Сотрудник</th>
+                  <th>Средняя оценка %</th>
+                  <th>Оценено</th>
+                  <th>Низких оценок</th>
+                </tr>
+              </thead>
+              <tbody>
+                {b.rows.map((a) => (
+                  <tr key={a.accountant}>
+                    <td className="font-medium">{a.accountant}</td>
+                    <td className="tabular-nums">{a.avgScore < 0 ? "—" : `${a.avgScore}%`}</td>
+                    <td className="tabular-nums">{a.count}</td>
+                    <td className="tabular-nums">
+                      <span className={a.lowCount > 0 ? "text-red-600 font-medium" : ""}>
+                        {a.lowCount}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+
       {/* Задачи Бухгалтерии */}
       <div className="card overflow-x-auto">
         <div className="px-3 pt-3 text-sm font-medium">

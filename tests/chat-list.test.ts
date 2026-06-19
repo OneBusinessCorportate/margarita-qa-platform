@@ -9,6 +9,8 @@ import {
   compareByActivity,
   debtAmountLabel,
   debtTone,
+  hasNewMessageAfterEval,
+  isNewChat,
   isTelegramLink,
   isUnanswered,
   waitingLabel,
@@ -201,4 +203,29 @@ test("canonicalMonthlyStatus maps mis-cased/legacy statuses to a real option", (
   assert.equal(canonicalMonthlyStatus(debts, "1-й написал"), "1-й написал");
   assert.equal(canonicalMonthlyStatus(debts, "garbage"), ""); // not an option
   assert.equal(canonicalMonthlyStatus(debts, null), "");
+});
+
+test("isNewChat: created within the window of asOf", () => {
+  assert.equal(isNewChat("2026-06-18", "2026-06-19"), true); // 1 day old
+  assert.equal(isNewChat("2026-06-19", "2026-06-19"), true); // created today
+  assert.equal(isNewChat("2026-06-10", "2026-06-19"), false); // 9 days old
+  assert.equal(isNewChat(null, "2026-06-19"), false); // unknown creation date
+  // A future-dated creation isn't "new" (guards bad data).
+  assert.equal(isNewChat("2026-06-25", "2026-06-19"), false);
+});
+
+test("hasNewMessageAfterEval: later message re-opens a scored chat", () => {
+  // Message after the evaluation → needs re-check.
+  assert.equal(
+    hasNewMessageAfterEval("2026-06-19T15:00:00Z", "2026-06-19T12:00:00Z"),
+    true
+  );
+  // Message before the evaluation → nothing new.
+  assert.equal(
+    hasNewMessageAfterEval("2026-06-19T10:00:00Z", "2026-06-19T12:00:00Z"),
+    false
+  );
+  // Missing data → false (no false positives).
+  assert.equal(hasNewMessageAfterEval(null, "2026-06-19T12:00:00Z"), false);
+  assert.equal(hasNewMessageAfterEval("2026-06-19T15:00:00Z", null), false);
 });

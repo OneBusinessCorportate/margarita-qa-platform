@@ -7,7 +7,7 @@
 // "worst-first" snapshot, the per-day task fallback); everything here is pure.
 // ---------------------------------------------------------------------------
 import type { Chat } from "./types";
-import { MONTHLY_CATEGORIES, type MonthlyCategory } from "./scoring";
+import { MONTHLY_CATEGORIES, daysBetween, type MonthlyCategory } from "./scoring";
 
 /** How the chat list is ordered. */
 export type SortBy = "activity" | "worst" | "number";
@@ -52,6 +52,36 @@ export function compareByActivity(
 /** Is the chat still awaiting a reply — i.e. the client had the last word? */
 export function isUnanswered(chat: Chat): boolean {
   return chat.unanswered === true;
+}
+
+/**
+ * Was the chat created within `days` of `asOf`? Used to surface brand-new chats
+ * (item 6 — "как отображаются новые созданные чаты? я не вижу их в системе") with
+ * a 🆕 badge and to keep them in the day view even before they have message
+ * activity in the feed.
+ */
+export function isNewChat(
+  createdDate: string | null | undefined,
+  asOf: string,
+  days = 3
+): boolean {
+  if (!createdDate) return false;
+  const n = daysBetween(createdDate, asOf);
+  return n >= 0 && n <= days;
+}
+
+/**
+ * Did a new message land AFTER Margarita's evaluation for the day (item 9 /
+ * item 7)? Once a chat is scored, any later client/staff message means it should
+ * be re-checked — and per the boss's rule belongs to the next checking period.
+ * Both are ISO timestamps; ISO sorts lexicographically.
+ */
+export function hasNewMessageAfterEval(
+  lastActivityAt: string | null | undefined,
+  evalCreatedAt: string | null | undefined
+): boolean {
+  if (!lastActivityAt || !evalCreatedAt) return false;
+  return lastActivityAt > evalCreatedAt;
 }
 
 /**

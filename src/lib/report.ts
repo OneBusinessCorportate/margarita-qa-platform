@@ -95,6 +95,14 @@ export interface DailyReport {
   distribution: Record<QualityBand, number>;
   serviceQualityPct: number; // "Сервис Бухгалтерии" %
   perAccountant: AccountantScore[];
+  /**
+   * Chat-quality scores for the non-accountant roles (item 3 — a manager or
+   * lawyer who answers in a chat is now graded on the same criteria and shows
+   * up here, instead of falling out of QA entirely). Optional so snapshots saved
+   * before this existed still render.
+   */
+  managerScores?: AccountantScore[];
+  lawyerScores?: AccountantScore[];
   /** Who Margarita should follow up with, most urgent first. May be empty. */
   needsAttention: AttentionItem[];
   /** Chats that scored Критично in the window, worst score first. May be empty. */
@@ -198,6 +206,33 @@ function criticalReasons(ev: Evaluation): string[] {
     reasons.push(c.length > 80 ? `${c.slice(0, 77)}…` : c);
   }
   return reasons;
+}
+
+/**
+ * Per-person chat-quality summary (avg %, count, low count) for an already
+ * window-filtered set of evaluations. Used for the manager / lawyer roster so a
+ * non-accountant who answers in a chat is graded on the same model and shows up
+ * in the report (item 3).
+ */
+export function perPersonScores(evals: Evaluation[]): AccountantScore[] {
+  const byPerson = new Map<string, { sum: number; count: number; low: number }>();
+  for (const e of evals) {
+    const key = e.accountant ?? "—";
+    const agg = byPerson.get(key) ?? { sum: 0, count: 0, low: 0 };
+    agg.sum += e.total_score;
+    agg.count += 1;
+    const band = bandFor(e.total_score);
+    if (band === "Плохо" || band === "Критично") agg.low += 1;
+    byPerson.set(key, agg);
+  }
+  return [...byPerson.entries()]
+    .map(([accountant, a]) => ({
+      accountant,
+      avgScore: a.count ? Math.round((a.sum / a.count) * 10) / 10 : -1,
+      count: a.count,
+      lowCount: a.low,
+    }))
+    .sort((x, y) => y.avgScore - x.avgScore);
 }
 
 export function buildReport(
