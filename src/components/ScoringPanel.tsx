@@ -275,6 +275,29 @@ export default function ScoringPanel({
 
   const isHidden = (agrNo: string) => excluded.has(`${agrNo}|${date}`);
 
+  // Several contracts can share ONE Telegram chat (a client with multiple
+  // agreements all talk in one group). Those rows open the same conversation,
+  // which looks like a duplicate. Map each chat to the OTHER contract numbers
+  // on the same link so the row can flag it instead of looking like a bug.
+  const duplicateAgrsByChat = useMemo(() => {
+    const byLink = new Map<string, string[]>();
+    for (const c of chats) {
+      const link = (c.chat_link ?? "").trim();
+      if (!isTelegramLink(link)) continue;
+      const arr = byLink.get(link) ?? [];
+      arr.push(c.agr_no);
+      byLink.set(link, arr);
+    }
+    const out = new Map<string, string[]>();
+    for (const c of chats) {
+      const link = (c.chat_link ?? "").trim();
+      const group = byLink.get(link);
+      if (group && group.length > 1)
+        out.set(c.agr_no, group.filter((a) => a !== c.agr_no).sort(cmpAgrNo));
+    }
+    return out;
+  }, [chats]);
+
   // How many of the day's active chats QA has hidden (drives the "Скрытые (N)"
   // toggle). Only meaningful in the day view.
   const hiddenCount = useMemo(() => {
@@ -670,6 +693,7 @@ export default function ScoringPanel({
                 aiModel={aiModel}
                 tgClient={tgClient}
                 onSaved={onSaved}
+                duplicateAgrs={duplicateAgrsByChat.get(chat.agr_no) ?? []}
                 hideControl={
                   scope === "day"
                     ? {
@@ -716,6 +740,7 @@ function ChatScoreRow({
   aiModel,
   tgClient,
   onSaved,
+  duplicateAgrs = [],
   hideControl = null,
 }: {
   chat: Chat;
@@ -728,6 +753,7 @@ function ChatScoreRow({
   aiModel: AiModel;
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
+  duplicateAgrs?: string[];
   hideControl?: HideControl;
 }) {
   const prevStatuses = prev?.monthly ?? {};
@@ -1013,6 +1039,21 @@ function ChatScoreRow({
               </span>
             )}
           </div>
+          {/* Same Telegram chat shared by several contracts — flag it so two
+              rows opening the same conversation don't look like a bug. */}
+          {duplicateAgrs.length > 0 && (
+            <div className="text-xs mt-1">
+              <span
+                className="inline-block rounded bg-gray-100 text-gray-500 font-medium px-1.5 py-0.5"
+                title={`Тот же Telegram-чат, что и № ${duplicateAgrs.join(
+                  ", "
+                )} — один разговор на несколько договоров`}
+              >
+                🔗 тот же чат: № {duplicateAgrs.slice(0, 3).join(", ")}
+                {duplicateAgrs.length > 3 ? "…" : ""}
+              </span>
+            </div>
+          )}
           {/* Debt amount (item 5) + new-chat / re-check flags (items 6, 9, 7). */}
           {(debt?.owed || newChat || reCheck) && (
             <div className="text-xs mt-1 flex flex-wrap gap-1">
@@ -1364,6 +1405,7 @@ function ChatGroup({
   aiModel,
   tgClient,
   onSaved,
+  duplicateAgrs = [],
   hideControl = null,
 }: {
   chat: Chat;
@@ -1380,6 +1422,7 @@ function ChatGroup({
   aiModel: AiModel;
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
+  duplicateAgrs?: string[];
   hideControl?: HideControl;
 }) {
   const [showManager, setShowManager] = useState(Boolean(managerEval));
@@ -1399,6 +1442,7 @@ function ChatGroup({
         aiModel={aiModel}
         tgClient={tgClient}
         onSaved={onSaved}
+        duplicateAgrs={duplicateAgrs}
         hideControl={hideControl}
       />
       {showManager && (
