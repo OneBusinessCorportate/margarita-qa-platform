@@ -143,16 +143,72 @@ export default function ScoringPanel({
     return () => clearInterval(id);
   }, [router]);
 
+  // Several contracts can share ONE Telegram chat (a client with multiple
+  // agreements all talk in one group). Merge them into a single representative
+  // row so the same conversation isn't reviewed twice. The representative is the
+  // lowest contract № (stable across loads); `mergedAgrs` carries the others,
+  // `repOf` maps every contract → its representative, and the merged chat folds
+  // in the group's activity / unanswered / debt so the row stays in the day view
+  // whichever contract was active. Chats without a real Telegram link are never
+  // merged (each keeps its own row).
+  const { mergedChats, repOf, mergedAgrs } = useMemo(() => {
+    const groups = new Map<string, Chat[]>();
+    for (const c of chats) {
+      const link = (c.chat_link ?? "").trim();
+      const k = isTelegramLink(link) ? `tg:${link}` : `id:${c.agr_no}`;
+      const arr = groups.get(k) ?? [];
+      arr.push(c);
+      groups.set(k, arr);
+    }
+    const pickMax = (xs: (string | null | undefined)[]) => {
+      let best: string | null = null;
+      for (const x of xs) if (x && (best === null || x > best)) best = x;
+      return best;
+    };
+    const pickMin = (xs: (string | null | undefined)[]) => {
+      let best: string | null = null;
+      for (const x of xs) if (x && (best === null || x < best)) best = x;
+      return best;
+    };
+    const mergedChats: Chat[] = [];
+    const repOf = new Map<string, string>();
+    const mergedAgrs = new Map<string, string[]>();
+    for (const g of groups.values()) {
+      const sorted = [...g].sort((a, b) => cmpAgrNo(a.agr_no, b.agr_no));
+      const repChat = sorted[0];
+      for (const c of sorted) repOf.set(c.agr_no, repChat.agr_no);
+      if (sorted.length === 1) {
+        mergedChats.push(repChat);
+        continue;
+      }
+      const others = sorted.slice(1).map((c) => c.agr_no);
+      mergedAgrs.set(repChat.agr_no, others);
+      const owed = sorted.find((c) => debtAmountLabel(c.debts)?.owed);
+      mergedChats.push({
+        ...repChat,
+        last_activity_date: pickMax(sorted.map((c) => c.last_activity_date)),
+        last_activity_at: pickMax(sorted.map((c) => c.last_activity_at)),
+        created_date: pickMin(sorted.map((c) => c.created_date)),
+        unanswered: sorted.some((c) => c.unanswered === true) ? true : repChat.unanswered,
+        status: sorted.some((c) => c.status === "Active") ? "Active" : repChat.status,
+        debts: owed?.debts ?? repChat.debts,
+      });
+    }
+    return { mergedChats, repOf, mergedAgrs };
+  }, [chats]);
+
   // The most recent check BEFORE the selected date — carried forward in full
   // (mailing statuses, criteria, comment) so Margarita only changes what
-  // actually changed.
+  // actually changed. Keyed by the representative contract so a prior check
+  // saved under any contract in the group carries forward.
   const prevByChat = useMemo(() => {
     const latestBefore = new Map<string, Evaluation>();
     for (const e of evaluations) {
       if ((e.role ?? "accountant") !== "accountant") continue;
       if (e.checking_date.slice(0, 10) >= date) continue;
-      const cur = latestBefore.get(e.chat_agr_no);
-      if (!cur || e.checking_date > cur.checking_date) latestBefore.set(e.chat_agr_no, e);
+      const key = repOf.get(e.chat_agr_no) ?? e.chat_agr_no;
+      const cur = latestBefore.get(key);
+      if (!cur || e.checking_date > cur.checking_date) latestBefore.set(key, e);
     }
     const out = new Map<string, PrevCheck>();
     for (const [chatNo, e] of latestBefore) {
@@ -169,20 +225,22 @@ export default function ScoringPanel({
       });
     }
     return out;
-  }, [evaluations, date]);
+  }, [evaluations, date, repOf]);
 
   // Last REAL chat activity per chat: the chat's own activity date (from the bot
   // feed / import) or, failing that, the latest task touch. Evaluations don't
   // count — checking a chat isn't the client/accountant being active in it.
+  // Keyed by representative so a task on any merged contract counts.
   const lastTaskByChat = useMemo(() => {
     const m = new Map<string, string>();
     for (const t of taskActivity) {
       if (!t.date) continue;
-      const cur = m.get(t.chat_agr_no);
-      if (!cur || t.date > cur) m.set(t.chat_agr_no, t.date);
+      const key = repOf.get(t.chat_agr_no) ?? t.chat_agr_no;
+      const cur = m.get(key);
+      if (!cur || t.date > cur) m.set(key, t.date);
     }
     return m;
-  }, [taskActivity]);
+  }, [taskActivity, repOf]);
 
   const lastActivityFor = useMemo(() => {
     return (c: Chat): string | null =>
@@ -203,33 +261,36 @@ export default function ScoringPanel({
     const m = new Map<string, Evaluation>();
     for (const e of evaluations) {
       if ((e.role ?? "accountant") !== "accountant") continue;
-      if (e.checking_date.slice(0, 10) === date) m.set(e.chat_agr_no, e);
+      if (e.checking_date.slice(0, 10) === date)
+        m.set(repOf.get(e.chat_agr_no) ?? e.chat_agr_no, e);
     }
     return m;
-  }, [evaluations, date]);
+  }, [evaluations, date, repOf]);
 
-  // Every role's evaluation for the date, keyed `${chat}|${role}` — so each
-  // chat group can show the accountant, manager and lawyer rows together.
+  // Every role's evaluation for the date, keyed `${repChat}|${role}` — so each
+  // chat group can show the accountant, manager and lawyer rows together, even
+  // when the saved evaluation was filed under a merged sibling contract.
   const evalByChatRole = useMemo(() => {
     const m = new Map<string, Evaluation>();
     for (const e of evaluations) {
       if (e.checking_date.slice(0, 10) !== date) continue;
-      m.set(`${e.chat_agr_no}|${e.role ?? "accountant"}`, e);
+      const key = repOf.get(e.chat_agr_no) ?? e.chat_agr_no;
+      m.set(`${key}|${e.role ?? "accountant"}`, e);
     }
     return m;
-  }, [evaluations, date]);
+  }, [evaluations, date, repOf]);
 
   // People suggestions for the manager / lawyer pickers. Managers come from the
   // chats' own manager field + non-accountant specialists; both grow from names
   // already used in saved role-evaluations.
   const managers = useMemo(() => {
     const s = new Set<string>();
-    for (const c of chats) if (c.manager) s.add(c.manager);
+    for (const c of mergedChats) if (c.manager) s.add(c.manager);
     for (const a of accountants) if (a.role !== "accountant") s.add(a.name);
     for (const e of evaluations)
       if (e.role === "manager" && e.accountant) s.add(e.accountant);
     return [...s].sort();
-  }, [chats, accountants, evaluations]);
+  }, [mergedChats, accountants, evaluations]);
 
   const lawyers = useMemo(() => {
     const s = new Set<string>();
@@ -247,56 +308,37 @@ export default function ScoringPanel({
   // the client/accountant being active in it.
   const activeTodaySet = useMemo(() => {
     const s = new Set<string>();
-    for (const a of chatActivity) if (a.date === date) s.add(a.chat_agr_no);
-    for (const c of chats) if (lastActivityFor(c) === date) s.add(c.agr_no);
-    for (const t of taskActivity) if (t.date === date) s.add(t.chat_agr_no);
+    const rep = (a: string) => repOf.get(a) ?? a;
+    for (const a of chatActivity) if (a.date === date) s.add(rep(a.chat_agr_no));
+    for (const c of mergedChats) if (lastActivityFor(c) === date) s.add(c.agr_no);
+    for (const t of taskActivity) if (t.date === date) s.add(rep(t.chat_agr_no));
     // Backlog: chats where the CLIENT had the last word (still unanswered) stay
     // in the day view even if their last message was on an earlier day, so the
     // "start from the bottom unanswered chat" workflow can reach yesterday's.
-    for (const c of chats) if (c.unanswered === true) s.add(c.agr_no);
+    for (const c of mergedChats) if (c.unanswered === true) s.add(c.agr_no);
     // Brand-new chats created on the reviewed day appear even before they have
     // any message activity captured in the feed (item 6).
-    for (const c of chats) if ((c.created_date ?? "").slice(0, 10) === date) s.add(c.agr_no);
+    for (const c of mergedChats)
+      if ((c.created_date ?? "").slice(0, 10) === date) s.add(c.agr_no);
     return s;
-  }, [chatActivity, chats, lastActivityFor, taskActivity, date]);
+  }, [chatActivity, mergedChats, lastActivityFor, taskActivity, date, repOf]);
 
   // Precise activity time for a chat ON the selected day (from the per-day feed),
   // so the day view sorts by when the chat was actually active that day — not by
-  // the chat's most-recent activity across all days (which looked random).
+  // the chat's most-recent activity across all days (which looked random). Keyed
+  // by representative so a merged sibling's message time orders the merged row.
   const activityAtForDay = useMemo(() => {
     const m = new Map<string, string>();
     for (const a of chatActivity) {
       if (a.date !== date || !a.at) continue;
-      const cur = m.get(a.chat_agr_no);
-      if (!cur || a.at > cur) m.set(a.chat_agr_no, a.at);
+      const key = repOf.get(a.chat_agr_no) ?? a.chat_agr_no;
+      const cur = m.get(key);
+      if (!cur || a.at > cur) m.set(key, a.at);
     }
     return m;
-  }, [chatActivity, date]);
+  }, [chatActivity, date, repOf]);
 
   const isHidden = (agrNo: string) => excluded.has(`${agrNo}|${date}`);
-
-  // Several contracts can share ONE Telegram chat (a client with multiple
-  // agreements all talk in one group). Those rows open the same conversation,
-  // which looks like a duplicate. Map each chat to the OTHER contract numbers
-  // on the same link so the row can flag it instead of looking like a bug.
-  const duplicateAgrsByChat = useMemo(() => {
-    const byLink = new Map<string, string[]>();
-    for (const c of chats) {
-      const link = (c.chat_link ?? "").trim();
-      if (!isTelegramLink(link)) continue;
-      const arr = byLink.get(link) ?? [];
-      arr.push(c.agr_no);
-      byLink.set(link, arr);
-    }
-    const out = new Map<string, string[]>();
-    for (const c of chats) {
-      const link = (c.chat_link ?? "").trim();
-      const group = byLink.get(link);
-      if (group && group.length > 1)
-        out.set(c.agr_no, group.filter((a) => a !== c.agr_no).sort(cmpAgrNo));
-    }
-    return out;
-  }, [chats]);
 
   // How many of the day's active chats QA has hidden (drives the "Скрытые (N)"
   // toggle). Only meaningful in the day view.
@@ -308,7 +350,7 @@ export default function ScoringPanel({
 
   const visibleChats = useMemo(() => {
     const n = search.trim().toLowerCase();
-    return chats.filter((c) => {
+    return mergedChats.filter((c) => {
       // Day view = chats active that day.
       if (scope === "day" && !activeTodaySet.has(c.agr_no))
         return false;
@@ -329,12 +371,15 @@ export default function ScoringPanel({
         n &&
         !c.agr_no.toLowerCase().includes(n) &&
         !c.chat_name.toLowerCase().includes(n) &&
-        !(c.name_agr ?? "").toLowerCase().includes(n)
+        !(c.name_agr ?? "").toLowerCase().includes(n) &&
+        // Also match a merged sibling's contract № so search still finds the
+        // chat by any of the contracts sharing it.
+        !(mergedAgrs.get(c.agr_no) ?? []).some((a) => a.toLowerCase().includes(n))
       )
         return false;
       return true;
     });
-  }, [chats, search, accFilters, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
+  }, [mergedChats, mergedAgrs, search, accFilters, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
 
   // The list order. By default chats are ordered by most recent real activity
   // (the order Margarita expects); she can switch to "problem chats on top" or
@@ -693,7 +738,7 @@ export default function ScoringPanel({
                 aiModel={aiModel}
                 tgClient={tgClient}
                 onSaved={onSaved}
-                duplicateAgrs={duplicateAgrsByChat.get(chat.agr_no) ?? []}
+                duplicateAgrs={mergedAgrs.get(chat.agr_no) ?? []}
                 hideControl={
                   scope === "day"
                     ? {
@@ -1039,18 +1084,18 @@ function ChatScoreRow({
               </span>
             )}
           </div>
-          {/* Same Telegram chat shared by several contracts — flag it so two
-              rows opening the same conversation don't look like a bug. */}
+          {/* This row is ONE Telegram chat shared by several contracts —
+              list the other contract numbers folded into it. */}
           {duplicateAgrs.length > 0 && (
             <div className="text-xs mt-1">
               <span
-                className="inline-block rounded bg-gray-100 text-gray-500 font-medium px-1.5 py-0.5"
-                title={`Тот же Telegram-чат, что и № ${duplicateAgrs.join(
+                className="inline-block rounded bg-gray-100 text-gray-600 font-medium px-1.5 py-0.5"
+                title={`Один Telegram-чат на несколько договоров — оценивается один раз. Договоры: № ${chat.agr_no}, ${duplicateAgrs.join(
                   ", "
-                )} — один разговор на несколько договоров`}
+                )}`}
               >
-                🔗 тот же чат: № {duplicateAgrs.slice(0, 3).join(", ")}
-                {duplicateAgrs.length > 3 ? "…" : ""}
+                📎 ещё договоры: № {duplicateAgrs.slice(0, 4).join(", ")}
+                {duplicateAgrs.length > 4 ? "…" : ""}
               </span>
             </div>
           )}
