@@ -26,6 +26,7 @@ import {
   hasNewMessageAfterEval,
   isNewChat,
   isTelegramLink,
+  latestActivityKey,
   waitingLabel,
   type SortBy,
 } from "@/lib/chat-list";
@@ -350,12 +351,17 @@ export default function ScoringPanel({
       // Most recent first by precise message time. In the day view, use the
       // chat's activity time ON that day (so 11:00 sorts above 10:30 for the day
       // being reviewed, not by the chat's latest activity on some other day).
-      // Falls back to the global timestamp, the date, then a task touch.
+      // Take the LATEST of every source we have (per-day feed `last_at`, the
+      // chat's own timestamp, the activity date) so a precise time always wins
+      // over a coarse same-day date — otherwise same-day chats tied on the date
+      // and fell back to contract-№, looking alphabetical rather than ordered by
+      // activity.
       const key = (c: Chat) =>
-        (scope === "day" ? activityAtForDay.get(c.agr_no) : undefined) ??
-        c.last_activity_at ??
-        lastActivityFor(c) ??
-        "";
+        latestActivityKey(
+          scope === "day" ? activityAtForDay.get(c.agr_no) : undefined,
+          c.last_activity_at,
+          lastActivityFor(c)
+        );
       arr.sort((a, b) => compareByActivity(a, b, key));
       return arr;
     }

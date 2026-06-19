@@ -5,6 +5,7 @@ import {
   VIOLATION_SEVERITIES,
   violationTypeOptions,
 } from "@/lib/violations";
+import type { CriticalChat } from "@/lib/report";
 import type { Chat, Violation } from "@/lib/types";
 
 const TG_WINDOW = "telegram_chat";
@@ -39,16 +40,27 @@ export default function ViolationsPanel({
   accountants,
   chats,
   initialViolations,
+  criticalChats = [],
+  criticalWindow,
 }: {
   accountants: string[];
   chats: Chat[];
   initialViolations: Violation[];
+  criticalChats?: CriticalChat[];
+  criticalWindow?: { from: string; to: string };
 }) {
   const [rows, setRows] = useState<Violation[]>(initialViolations);
   const [draft, setDraft] = useState<Draft>(blankDraft());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chatMap = useMemo(() => new Map(chats.map((c) => [c.agr_no, c])), [chats]);
+
+  // Which critical chats are already in the journal — so the list can mark what
+  // still needs logging vs. what's covered.
+  const loggedChatNos = useMemo(
+    () => new Set(rows.map((v) => v.chat_agr_no).filter(Boolean) as string[]),
+    [rows]
+  );
 
   // Filters (item 3): severity (incl. Грубое), accountant, date range.
   const [fSeverity, setFSeverity] = useState("");
@@ -216,6 +228,77 @@ export default function ViolationsPanel({
           {importing ? "Импорт…" : "➕ Импортировать критичные чаты"}
         </button>
         {importMsg && <span className="text-xs text-gray-600 pb-1.5">{importMsg}</span>}
+      </div>
+
+      {/* Critical chats from QA scoring — always visible, not only after an
+          import. Rows not yet in the journal are highlighted so they stand out. */}
+      <div className="card overflow-x-auto">
+        <div className="px-3 pt-3 pb-1 flex items-baseline gap-2">
+          <span className="text-sm font-medium">Критичные чаты по оценкам</span>
+          {criticalWindow && (
+            <span className="text-xs text-gray-400">
+              {criticalWindow.from} — {criticalWindow.to}
+            </span>
+          )}
+          <span className="text-xs text-gray-400">· {criticalChats.length}</span>
+        </div>
+        <table className="qa">
+          <thead>
+            <tr>
+              <th className="min-w-[200px]">Клиент / Чат</th>
+              <th>Бухгалтер</th>
+              <th>Оценка</th>
+              <th className="min-w-[200px]">Причина</th>
+              <th>В журнале</th>
+            </tr>
+          </thead>
+          <tbody>
+            {criticalChats.length === 0 && (
+              <tr>
+                <td colSpan={5} className="text-center text-gray-400 py-6">
+                  Нет критичных чатов за период.
+                </td>
+              </tr>
+            )}
+            {criticalChats.map((c) => {
+              const chat = chatMap.get(c.chat_agr_no);
+              const logged = loggedChatNos.has(c.chat_agr_no);
+              return (
+                <tr key={c.chat_agr_no} className={logged ? "" : "bg-red-50/50"}>
+                  <td>
+                    <div>{c.chat_name ?? c.chat_agr_no}</div>
+                    <div className="text-xs text-gray-400">
+                      № {c.chat_agr_no}
+                      {chat?.chat_link && (
+                        <>
+                          {" · "}
+                          <a
+                            href={chat.chat_link}
+                            target={TG_WINDOW}
+                            rel="noreferrer"
+                            className="text-blue-600 hover:underline"
+                          >
+                            открыть
+                          </a>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                  <td>{c.accountant ?? "—"}</td>
+                  <td className="tabular-nums text-red-600 font-medium">{c.score}</td>
+                  <td className="text-xs text-gray-600">{c.reasons.join("; ") || "—"}</td>
+                  <td className="whitespace-nowrap">
+                    {logged ? (
+                      <span className="text-green-600 text-xs">✓ в журнале</span>
+                    ) : (
+                      <span className="text-amber-600 text-xs font-medium">нет</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
 
       {error && <div className="text-sm text-red-600 px-1">{error}</div>}

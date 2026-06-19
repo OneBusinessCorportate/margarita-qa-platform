@@ -13,6 +13,7 @@ import {
   isNewChat,
   isTelegramLink,
   isUnanswered,
+  latestActivityKey,
   waitingLabel,
 } from "../src/lib/chat-list";
 import type { Chat } from "../src/lib/types";
@@ -103,6 +104,33 @@ test("compareByActivity honours a custom key (task-touch fallback)", () => {
   const key = (c: Chat) => activityKey(c, taskDate[c.agr_no]);
   const sorted = [a, b].sort((x, y) => compareByActivity(x, y, key));
   assert.deepEqual(sorted.map((c) => c.agr_no), ["2", "1"]);
+});
+
+test("latestActivityKey prefers a precise time over a coarse same-day date", () => {
+  // The day-view bug: the per-day feed only knew the date, masking the chat's
+  // precise timestamp, so same-day chats tied and fell back to contract-№.
+  assert.equal(
+    latestActivityKey("2026-06-15", "2026-06-15T11:00:00Z", "2026-06-15"),
+    "2026-06-15T11:00:00Z"
+  );
+  // Two precise times on the same day: the later one wins (11:00 over 10:30).
+  assert.equal(
+    latestActivityKey("2026-06-15T10:30:00Z", "2026-06-15T11:00:00Z"),
+    "2026-06-15T11:00:00Z"
+  );
+  // Skips empty/missing sources and sinks a chat with nothing to "".
+  assert.equal(latestActivityKey(undefined, null, "2026-06-14"), "2026-06-14");
+  assert.equal(latestActivityKey(undefined, null), "");
+});
+
+test("latestActivityKey fixes same-day ordering via compareByActivity", () => {
+  // Both active on 06-15; only their precise times differ. With the latest key
+  // they order by activity time, not by contract № (118 must sit below 59).
+  const a = chat({ agr_no: "118", last_activity_date: "2026-06-15", last_activity_at: "2026-06-15T09:00:00Z" });
+  const b = chat({ agr_no: "59", last_activity_date: "2026-06-15", last_activity_at: "2026-06-15T16:00:00Z" });
+  const key = (c: Chat) => latestActivityKey(c.last_activity_date, c.last_activity_at);
+  const sorted = [a, b].sort((x, y) => compareByActivity(x, y, key));
+  assert.deepEqual(sorted.map((c) => c.agr_no), ["59", "118"]);
 });
 
 test("isTelegramLink accepts only real Telegram links", () => {

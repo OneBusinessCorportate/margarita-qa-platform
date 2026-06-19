@@ -49,6 +49,27 @@ export function compareByActivity(
   return cmpAgrNo(a.agr_no, b.agr_no);
 }
 
+/**
+ * The activity sort key for the DAY view. Several sources may know when a chat
+ * was last active — the per-day feed's precise `last_at`, the chat's own
+ * `last_activity_at`, or just a date. Pick the LATEST non-empty one. Because a
+ * full ISO timestamp sorts after its own date prefix ("…-15T11:00" > "…-15"),
+ * choosing the latest also means a precise time wins over a coarse same-day
+ * date — so same-day chats order by real activity time instead of collapsing to
+ * a tie (which then fell back to contract-№, the "alphabetical" order Margarita
+ * complained about). ISO strings sort lexicographically, so a plain string
+ * comparison is correct.
+ */
+export function latestActivityKey(
+  ...candidates: (string | null | undefined)[]
+): string {
+  let best = "";
+  for (const c of candidates) {
+    if (c && c > best) best = c;
+  }
+  return best;
+}
+
 /** Is the chat still awaiting a reply — i.e. the client had the last word? */
 export function isUnanswered(chat: Chat): boolean {
   return chat.unanswered === true;

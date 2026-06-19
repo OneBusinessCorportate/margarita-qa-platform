@@ -40,6 +40,16 @@ function chat(
   status: "Active" | "Inactive" = "Active",
   unanswered = false
 ): Chat {
+  // Give each chat a distinct intra-day activity TIME (derived deterministically
+  // from its contract №) so the day view can order same-day chats by real
+  // activity time instead of falling back to contract-№. Production gets this
+  // from the message feed; the demo synthesises it.
+  const digits = Number(agr_no.replace(/\D/g, "") || "0");
+  const hh = String(8 + (digits % 10)).padStart(2, "0"); // 08…17
+  const mm = String((digits * 7) % 60).padStart(2, "0");
+  const last_activity_at = last_activity_date
+    ? `${last_activity_date}T${hh}:${mm}:00Z`
+    : null;
   return {
     agr_no,
     hvhh,
@@ -54,6 +64,7 @@ function chat(
     debts,
     created_date: "2025-01-01",
     last_activity_date,
+    last_activity_at,
     last_sender_role: unanswered ? "client" : null,
     unanswered,
   };
