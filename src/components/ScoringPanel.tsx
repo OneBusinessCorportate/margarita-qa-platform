@@ -1327,7 +1327,7 @@ function ChatScoreRow({
   // Shared cell classes: a thick top border opens each chat group; the AI row
   // has no bottom border so the two lines read as one chat.
   const aiCell = "ai-cell bg-indigo-50/60 text-gray-600 align-middle";
-  const youCell = "align-middle";
+  const youCell = "align-top";
 
   return (
     <>
@@ -1635,7 +1635,7 @@ function ChatScoreRow({
           const current = monthly[c.id]?.status ?? "";
           const matches = Boolean(detected) && detected === current;
           return (
-            <td key={c.id} className={`${youCell} text-center align-top`}>
+            <td key={c.id} className={`${youCell} text-center`}>
               <select
                 className="input w-[96px] text-xs"
                 value={monthly[c.id]?.status ?? ""}
