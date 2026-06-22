@@ -478,13 +478,13 @@ export default function ScoringPanel({
       if (accFilters.length && !(c.accountant && accFilters.includes(c.accountant)))
         return false;
       if (onlyUnscored && evalForDate.has(c.agr_no)) return false;
+      // Free-text search incl. a pasted Telegram link: matchesChatQuery matches
+      // №, chat name, agreement name, the raw chat link AND the Telegram chat id
+      // (so an /a/, /k/ or t.me link all find the chat). Plus a merged sibling's
+      // contract № so any of the contracts sharing the chat finds the row.
       if (
         n &&
-        !c.agr_no.toLowerCase().includes(n) &&
-        !c.chat_name.toLowerCase().includes(n) &&
-        !(c.name_agr ?? "").toLowerCase().includes(n) &&
-        // Also match a merged sibling's contract № so search still finds the
-        // chat by any of the contracts sharing it.
+        !matchesChatQuery(c, search) &&
         !(mergedAgrs.get(c.agr_no) ?? []).some((a) => a.toLowerCase().includes(n))
       )
         return false;
@@ -716,10 +716,12 @@ export default function ScoringPanel({
           />
         </div>
         <div className="space-y-1 grow min-w-[200px]">
-          <label className="text-xs text-gray-500 block">Поиск чата (№ / название)</label>
+          <label className="text-xs text-gray-500 block">
+            Поиск чата (№ / название / ссылка Telegram)
+          </label>
           <input
             className="input w-full"
-            placeholder="напр. 59 или Фролкин"
+            placeholder="напр. 59, Фролкин или вставьте ссылку Telegram"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -1273,26 +1275,15 @@ function ChatScoreRow({
               {chat.chat_name}
             </span>
             {isTelegramLink(chat.chat_link) ? (
-              <>
-                <a
-                  href={tgHref(chat.chat_link!, tgClient)}
-                  target={tgWindowFor(chat.chat_link!)}
-                  rel="noreferrer"
-                  className="text-blue-600 hover:underline text-xs whitespace-nowrap"
-                  title="Открыть чат в одной вкладке Telegram (быстро)"
-                >
-                  Открыть ↗
-                </a>
-                {/* Copy the full Telegram link so it can be pasted into the
-                    «Добавить чат в QA» / Задачи search, or shared. The tooltip
-                    shows the full URL so it's visible without opening the chat. */}
-                <CopyButton
-                  text={chat.chat_link!.trim()}
-                  label="⧉ ссылка"
-                  className="text-blue-600 hover:underline text-xs whitespace-nowrap"
-                  title={chat.chat_link!.trim()}
-                />
-              </>
+              <a
+                href={tgHref(chat.chat_link!, tgClient)}
+                target={tgWindowFor(chat.chat_link!)}
+                rel="noreferrer"
+                className="text-blue-600 hover:underline text-xs whitespace-nowrap"
+                title="Открыть чат в одной вкладке Telegram (быстро)"
+              >
+                Открыть ↗
+              </a>
             ) : /whatsapp/i.test(chat.chat_link ?? "") ? (
               <span
                 className="text-gray-400 text-xs whitespace-nowrap"
@@ -1347,6 +1338,27 @@ function ChatScoreRow({
                 </button>
               ))}
           </div>
+          {/* Full Telegram link, shown in full so QA can read it, select/copy it,
+              or paste it into the search box above to jump straight to this chat. */}
+          {isTelegramLink(chat.chat_link) && (
+            <div className="flex items-center gap-2 mt-0.5 min-w-0">
+              <a
+                href={tgHref(chat.chat_link!, tgClient)}
+                target={tgWindowFor(chat.chat_link!)}
+                rel="noreferrer"
+                className="text-[11px] font-mono text-blue-600 hover:underline break-all select-all min-w-0"
+                title="Открыть чат / выделить и скопировать ссылку"
+              >
+                {chat.chat_link!.trim()}
+              </a>
+              <CopyButton
+                text={chat.chat_link!.trim()}
+                label="⧉"
+                className="text-[11px] text-blue-600 hover:underline whitespace-nowrap shrink-0"
+                title="Скопировать ссылку"
+              />
+            </div>
+          )}
           {/* Last REAL activity — a chat can read "Active" yet have gone quiet
               days ago. Flag that so it isn't mistaken for a live chat. */}
           <div className="text-xs mt-1">
