@@ -145,7 +145,13 @@ export async function listChatMailings(period: string): Promise<ChatMailing[]> {
     .from(TABLES.chatMailings)
     .select("*")
     .eq("period", period);
-  if (error) throw error;
+  // Non-critical scoring-form overlay (see listActiveInclusions): if the table
+  // is missing (migration not yet applied) or the read fails, degrade to "no
+  // detected mailings" rather than crashing the whole scoring page.
+  if (error) {
+    console.warn(`listChatMailings: ${error.message}`);
+    return [];
+  }
   return (data ?? []) as ChatMailing[];
 }
 
