@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Keyword-based mailing detector for Russian-language accountant messages.
+// Keyword-based mailing detector for Russian + Armenian accountant messages.
 //
 // Each rule tags a message with a signal TYPE — the API route counts signals
 // per (chat, category, type) across all messages in a period to derive the
@@ -28,7 +28,7 @@ interface Rule {
 }
 
 const RULES: Rule[] = [
-  // --- main_taxes -----------------------------------------------------------
+  // --- main_taxes (Russian) -------------------------------------------------
   {
     category: "main_taxes",
     type: "done",
@@ -37,8 +37,18 @@ const RULES: Rule[] = [
       /(отправ|подан|сдан|направил|загрузил|выгрузил|сдала|отправила)/i,
     ],
   },
+  // --- main_taxes (Armenian) ------------------------------------------------
+  // հարկ=tax, ԱԱՀ=VAT, հայտ=declaration, ուղարկ=sent, ներկայաց=submitted
+  {
+    category: "main_taxes",
+    type: "done",
+    all: [
+      /(հարկ|ԱԱՀ|հայտ|հռչ|հաշվետ)/,
+      /(ուղարկ|ներկայաց|հանձնե|բեռնե|ներբեռն)/,
+    ],
+  },
 
-  // --- salary ---------------------------------------------------------------
+  // --- salary (Russian) -----------------------------------------------------
   {
     category: "salary",
     type: "done",
@@ -55,13 +65,32 @@ const RULES: Rule[] = [
       /(запрос|прошу|просьб|нужн|пришлит|отправьт|скиньт|передайт|пожалуйст)/i,
     ],
   },
+  // --- salary (Armenian) ----------------------------------------------------
+  // աշխատավարձ=salary, հաշվետ=payroll, ստացական=receipt, ցուցակ=list
+  {
+    category: "salary",
+    type: "done",
+    all: [
+      /(աշխատավարձ|աշխ\.?\s*վ|ա\/վ|ա\.վ\.|հաշվ\.?\s*ց|ռոճիկ)/,
+      /(ստաց|ուղարկ|տրամ|ստ\.)/,
+    ],
+  },
+  {
+    category: "salary",
+    type: "req",
+    all: [
+      /(աշխատավարձ|աշխ\.?\s*վ|ա\/վ|ռոճիկ)/,
+      /(խնդրե|կարիք|ուղարկ|տրամ|պե՞տք)/,
+    ],
+  },
 
-  // --- primary_docs ---------------------------------------------------------
+  // --- primary_docs (Russian) -----------------------------------------------
   {
     category: "primary_docs",
     type: "done",
     all: [
-      /(первичн|первичк|акт[ыа]?\b|документ|накладн|счет-факт|счёт-факт)/i,
+      // Use lookbehind+lookahead — JS \b is ASCII-only and doesn't work for Cyrillic
+      /(первичн|первичк|(?<![а-яёА-ЯЁ])акт[а-яё]{0,3}(?![а-яёА-ЯЁ])|документ|накладн|счет-факт|счёт-факт)/i,
       /(получ|пришл|прислал|сдал|предоставил|скинул|передал|прислала|получила|пришла)/i,
     ],
   },
@@ -69,12 +98,30 @@ const RULES: Rule[] = [
     category: "primary_docs",
     type: "req",
     all: [
-      /(первичн|первичк|акт[ыа]?\b|документ|накладн)/i,
+      /(первичн|первичк|(?<![а-яёА-ЯЁ])акт[а-яё]{0,3}(?![а-яёА-ЯЁ])|документ|накладн)/i,
       /(запрос|прошу|просьб|нужн|пришлит|отправьт|скиньт|передайт|пожалуйст)/i,
     ],
   },
+  // --- primary_docs (Armenian) ----------------------------------------------
+  // փաստաթ=document, [աՈ][կք]տ=act, հաշիվ=invoice; iu = Unicode case-fold
+  {
+    category: "primary_docs",
+    type: "done",
+    all: [
+      /(փաստաթ|[աՈ][կք]տ|հաշիվ|[աՈ][կք]ներ|ն[եա]ր[կք]ա)/iu,
+      /(ստաց|ուղարկ|հանձնե|ստ\.)/iu,
+    ],
+  },
+  {
+    category: "primary_docs",
+    type: "req",
+    all: [
+      /(փաստաթ|[աՈ][կք]տ|հաշիվ)/iu,
+      /(խնդրե|կարիք|ուղարկ|պետք)/iu,
+    ],
+  },
 
-  // --- debts ----------------------------------------------------------------
+  // --- debts (Russian) ------------------------------------------------------
   {
     category: "debts",
     type: "paid",
@@ -99,15 +146,46 @@ const RULES: Rule[] = [
       /(написал|написала|напоминани|уведомил|сообщил|написали|напомнил)/i,
     ],
   },
+  // --- debts (Armenian) — iu = Unicode case-fold handles sentence-start capitals
+  // պարտք=debt, վճար=pay, զանգ=call, գր=wrote, հուշ=reminder
+  {
+    category: "debts",
+    type: "paid",
+    all: [
+      /(պարտք|պարտաբ)/iu,
+      /(վճար|մարե|փակե|չկա\s+պ|պարտք\s+չ)/iu,
+    ],
+  },
+  {
+    category: "debts",
+    type: "call",
+    all: [
+      /(պարտք|պարտաբ)/iu,
+      /(զանգ|զ\.)/iu,
+    ],
+  },
+  {
+    category: "debts",
+    type: "req",
+    all: [
+      /(պարտք|պարտաբ)/iu,
+      /(գր[եէ]|հուշ|տեղեկ|ծանուց)/iu,
+    ],
+  },
 ];
 
 /** All signals fired by a single message (may be several categories). */
 export function detectAllSignals(text: string): MailingSignal[] {
   if (!text || text.length < 4) return [];
   const out: MailingSignal[] = [];
+  const seen = new Set<string>(); // deduplicate (category, type) pairs
   for (const rule of RULES) {
     if (rule.all.every((re) => re.test(text))) {
-      out.push({ category: rule.category, type: rule.type });
+      const key = `${rule.category}|${rule.type}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push({ category: rule.category, type: rule.type });
+      }
     }
   }
   return out;

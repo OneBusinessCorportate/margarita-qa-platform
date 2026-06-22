@@ -103,16 +103,19 @@ export default function ScoringPanel({
 }) {
   const router = useRouter();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
-  // Index detected mailings for O(1) lookup: agr_no → category → status
+  const [date, setDate] = useState(latestActivityDate ?? today());
+  // Index detected mailings for O(1) lookup filtered to the selected date's period.
+  // Filters by period so switching months shows the right detections, not this month's.
   const mailingsByChat = useMemo(() => {
+    const selectedPeriod = date.slice(0, 7).replace("-", ""); // "2026-06-15" → "202606"
     const m = new Map<string, Record<string, string>>();
     for (const row of detectedMailings) {
+      if (row.period !== selectedPeriod) continue;
       if (!m.has(row.agr_no)) m.set(row.agr_no, {});
       m.get(row.agr_no)![row.category] = row.status;
     }
     return m;
-  }, [detectedMailings]);
-  const [date, setDate] = useState(latestActivityDate ?? today());
+  }, [detectedMailings, date]);
   // Default to the day view: Margarita works through one day's chats in time
   // order, bottom-to-top. "All active chats" stays a click away.
   const [scope, setScope] = useState<Scope>("day");

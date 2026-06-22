@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/supabase/server";
-import { detectAllSignals, deriveStatus } from "@/lib/mailings-detect";
+import { detectAllSignals, deriveStatus, type MailingSignal } from "@/lib/mailings-detect";
 import { telegramChatId } from "@/lib/chat-list";
+import { getAnthropic, CLAUDE_MODEL } from "@/lib/anthropic";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -22,6 +23,80 @@ export async function POST(req: Request) {
 }
 export async function GET() {
   return run();
+}
+
+/** Armenia is UTC+4, no DST. Returns UTC ISO strings for the Yerevan-month boundary. */
+function yerevanPeriodBounds(period: string): { start: string; end: string } {
+  const y = Number(period.slice(0, 4));
+  const m = Number(period.slice(4, 6)); // 1-based
+  const offsetMs = 4 * 60 * 60 * 1000; // UTC+4
+  const start = new Date(Date.UTC(y, m - 1, 1) - offsetMs);
+  const end = new Date(Date.UTC(y, m, 1) - offsetMs);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+/**
+ * Ask Claude to classify a batch of messages that matched no keyword rules.
+ * Returns signals (may be empty) for each message index.
+ */
+async function classifyWithAI(
+  messages: { text: string }[]
+): Promise<MailingSignal[][]> {
+  const ai = getAnthropic();
+  if (!ai || messages.length === 0) return messages.map(() => []);
+
+  const BATCH = 30;
+  const results: MailingSignal[][] = Array(messages.length).fill(null).map(() => []);
+
+  for (let i = 0; i < messages.length; i += BATCH) {
+    const batch = messages.slice(i, i + BATCH);
+    const numbered = batch
+      .map((m, idx) => `[${i + idx}] ${m.text.slice(0, 300)}`)
+      .join("\n---\n");
+
+    const prompt = `You are classifying accountant messages from an Armenian accounting firm's chat tool.
+For each numbered message below, identify mailing signals (if any).
+
+Signal categories and types:
+- main_taxes/done: accountant sent/submitted tax returns or VAT
+- salary/done: accountant received/provided salary docs/payroll
+- salary/req: accountant requested salary docs from client
+- primary_docs/done: accountant received/provided primary documents (acts, invoices)
+- primary_docs/req: accountant requested primary docs from client
+- debts/paid: client paid debt / debt is closed
+- debts/call: accountant called client about debt
+- debts/req: accountant wrote to client about debt
+
+Messages may be in Russian, Armenian, or mixed. Reply ONLY with a JSON array, one entry per message:
+[{"idx": 0, "signals": [{"category": "debts", "type": "req"}]}, ...]
+Omit entries with no signals. If uncertain, omit. Do NOT include markdown.
+
+Messages:
+${numbered}`;
+
+    try {
+      const resp = await ai.messages.create({
+        model: CLAUDE_MODEL,
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const raw = resp.content[0]?.type === "text" ? resp.content[0].text.trim() : "[]";
+      const parsed = JSON.parse(raw) as { idx: number; signals: MailingSignal[] }[];
+      for (const entry of parsed) {
+        if (Array.isArray(entry.signals) && entry.idx >= 0 && entry.idx < messages.length) {
+          results[entry.idx] = entry.signals.filter(
+            (s) =>
+              ["main_taxes", "salary", "primary_docs", "debts"].includes(s.category) &&
+              ["done", "req", "call", "paid"].includes(s.type)
+          );
+        }
+      }
+    } catch {
+      // AI unavailable or parse error — signals stay empty for this batch
+    }
+  }
+
+  return results;
 }
 
 async function run(req?: Request) {
@@ -49,17 +124,13 @@ async function run(req?: Request) {
     period = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
   }
 
-  const periodStart = `${period.slice(0, 4)}-${period.slice(4, 6)}-01`;
-  const nextMonth = new Date(
-    Date.UTC(Number(period.slice(0, 4)), Number(period.slice(4, 6)), 1)
-  );
-  const periodEnd = nextMonth.toISOString().slice(0, 10);
+  const { start: periodStart, end: periodEnd } = yerevanPeriodBounds(period);
 
-  // Load active chats and build chat_id → agr_no map.
+  // Load ALL chats (including inactive — a chat deactivated mid-month still had
+  // accountant messages we need to count).
   const { data: chats, error: chatsErr } = await sb
     .from("mqa_chats")
     .select("agr_no, chat_link")
-    .eq("status", "Active")
     .not("chat_link", "is", null);
   if (chatsErr) return NextResponse.json({ error: chatsErr.message }, { status: 502 });
 
@@ -72,9 +143,10 @@ async function run(req?: Request) {
     return NextResponse.json({ period, messages_scanned: 0, upserted: 0 });
   }
 
-  // Fetch accountant messages in the period.
+  // Fetch accountant messages in the period (Yerevan-timezone-bounded).
   const PAGE = 1000;
   const allMessages: { chat_id: string | number; text: string; created_at: string }[] = [];
+  let pageError: string | null = null;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await sb
       .from("messages")
@@ -84,24 +156,38 @@ async function run(req?: Request) {
       .lt("created_at", periodEnd)
       .not("text", "is", null)
       .range(from, from + PAGE - 1);
-    if (error) return NextResponse.json({ error: error.message }, { status: 502 });
+    if (error) {
+      pageError = error.message;
+      break;
+    }
     const batch = (data ?? []) as typeof allMessages;
     allMessages.push(...batch);
     if (batch.length < PAGE) break;
   }
+  if (pageError) return NextResponse.json({ error: pageError }, { status: 502 });
 
-  // Count signals per (agr_no, category, type).
+  // Count keyword-based signals per (agr_no, category, type).
   type CountKey = string; // `${agr_no}|${category}`
   const counters = new Map<
     CountKey,
     { agr_no: string; category: string; done: number; req: number; call: number; paid: number; latestAt: string }
   >();
 
+  // Track unmatched messages for AI fallback (only if Anthropic is configured).
+  const aiCandidates: { chat_id: string; text: string; created_at: string }[] = [];
+
   for (const msg of allMessages) {
     const agr_no = chatIdToAgr.get(String(msg.chat_id));
     if (!agr_no) continue;
 
-    for (const signal of detectAllSignals(msg.text)) {
+    const signals = detectAllSignals(msg.text);
+    if (signals.length === 0 && msg.text.length >= 20) {
+      // No keyword match — candidate for AI classification
+      aiCandidates.push({ chat_id: String(msg.chat_id), text: msg.text, created_at: msg.created_at });
+      continue;
+    }
+
+    for (const signal of signals) {
       const key: CountKey = `${agr_no}|${signal.category}`;
       if (!counters.has(key)) {
         counters.set(key, { agr_no, category: signal.category, done: 0, req: 0, call: 0, paid: 0, latestAt: msg.created_at });
@@ -109,6 +195,28 @@ async function run(req?: Request) {
       const c = counters.get(key)!;
       c[signal.type]++;
       if (msg.created_at > c.latestAt) c.latestAt = msg.created_at;
+    }
+  }
+
+  // AI fallback: classify unmatched messages in batches (cap at 200 to stay fast).
+  let aiCount = 0;
+  const aiCapped = aiCandidates.slice(0, 200);
+  if (aiCapped.length > 0) {
+    const aiSignalsList = await classifyWithAI(aiCapped.map((m) => ({ text: m.text })));
+    for (let i = 0; i < aiCapped.length; i++) {
+      const msg = aiCapped[i];
+      const agr_no = chatIdToAgr.get(msg.chat_id);
+      if (!agr_no) continue;
+      for (const signal of aiSignalsList[i] ?? []) {
+        aiCount++;
+        const key: CountKey = `${agr_no}|${signal.category}`;
+        if (!counters.has(key)) {
+          counters.set(key, { agr_no, category: signal.category, done: 0, req: 0, call: 0, paid: 0, latestAt: msg.created_at });
+        }
+        const c = counters.get(key)!;
+        c[signal.type]++;
+        if (msg.created_at > c.latestAt) c.latestAt = msg.created_at;
+      }
     }
   }
 
@@ -121,7 +229,7 @@ async function run(req?: Request) {
   }
 
   if (derived.length === 0) {
-    return NextResponse.json({ period, messages_scanned: allMessages.length, upserted: 0 });
+    return NextResponse.json({ period, messages_scanned: allMessages.length, upserted: 0, ai_classified: aiCount });
   }
 
   // Load manual rows so we never overwrite them.
@@ -157,9 +265,10 @@ async function run(req?: Request) {
   return NextResponse.json({
     period,
     messages_scanned: allMessages.length,
-    signals_counted: counters.size,
+    unique_signals: counters.size,
     statuses_derived: derived.length,
     upserted: upsertRows.length,
     skipped_manual: manualSet.size,
+    ai_classified: aiCount,
   });
 }
