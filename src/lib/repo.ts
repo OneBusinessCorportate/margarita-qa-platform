@@ -23,6 +23,7 @@ import {
   type ReportSnapshot,
 } from "./report";
 import { type Candidate, type UnansweredLabel, type Verdict } from "./unanswered";
+import { telegramChatId } from "./chat-list";
 import type { DebtTotals } from "./debts";
 import { debtsCellValue } from "./debts";
 import type {
@@ -144,6 +145,68 @@ export async function getChat(agrNo: string): Promise<Chat | null> {
     return (data as Chat) ?? null;
   }
   return store().chats.find((c) => c.agr_no === agrNo) ?? null;
+}
+
+/**
+ * Find — or create — a chat from a pasted Telegram link, so Margarita can pull a
+ * conversation into QA even when it never made it into mqa_chats (item 6: "не
+ * все чаты есть в платформе"; item 5: previous-day chats to flag). Idempotent:
+ * a link already present (matched by its Telegram chat id, across A/K/t.me) is
+ * returned as-is; otherwise a minimal chat row is inserted with a stable
+ * `TG…`-prefixed agr_no derived from the link id, so re-adding the same link
+ * never duplicates.
+ */
+export async function createChatFromLink(
+  link: string,
+  name?: string | null
+): Promise<Chat> {
+  const id = telegramChatId(link);
+  const agr_no = id ? `TG${id}` : `TG-${randomUUID().slice(0, 8)}`;
+
+  // Already in the system under this generated key → reuse it.
+  const byKey = await getChat(agr_no);
+  if (byKey) return byKey;
+  // Or already present under a different agr_no but the SAME Telegram chat id.
+  if (id) {
+    const all = await listChats();
+    const match = all.find((c) => telegramChatId(c.chat_link) === id);
+    if (match) return match;
+  }
+
+  // Minimal valid row (chat_name is NOT NULL; accountant left null so it doesn't
+  // hit the FK to mqa_accountants). debt_status is omitted — the debts sync fills
+  // it later. created_date marks it as a fresh, manually-added chat.
+  const row: Chat = {
+    agr_no,
+    hvhh: null,
+    name_agr: null,
+    name_tax: null,
+    status: "Active",
+    tax_activation_date: null,
+    chat_name: (name && name.trim()) || "Чат из Telegram (ручной)",
+    chat_link: link,
+    accountant: null,
+    manager: null,
+    debts: null,
+    created_date: new Date().toISOString().slice(0, 10),
+    last_activity_date: null,
+    last_activity_at: null,
+    last_sender_role: null,
+    unanswered: null,
+  };
+
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.chats)
+      .insert(row)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as Chat;
+  }
+  store().chats.push(row);
+  return row;
 }
 
 // --- Accountants -----------------------------------------------------------

@@ -127,9 +127,11 @@ export default function ScoringPanel({
   // The chat whose «Нарушение» popup is open (boss's request — log a violation
   // without leaving QA). null = closed.
   const [violationFor, setViolationFor] = useState<Chat | null>(null);
-  // "Добавить чат в QA" search box (open + query).
+  // "Добавить чат в QA" search box (open + query + busy/error for create-by-link).
   const [addOpen, setAddOpen] = useState(false);
   const [addQuery, setAddQuery] = useState("");
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
   // When on, hidden chats are shown again (with a "Вернуть" button) so QA can
   // review/undo what was hidden for the day.
   const [showHidden, setShowHidden] = useState(false);
@@ -417,6 +419,35 @@ export default function ScoringPanel({
     for (const agr of agrNos) setChatIncluded(agr, true);
     setAddOpen(false);
     setAddQuery("");
+  }
+
+  // Create a chat from a pasted Telegram link (chat missing from the system)
+  // and pull it into this day's list — then refresh so the new row renders.
+  // Accepts several links; creates them all before a single refresh.
+  async function createFromLinks(links: string[]) {
+    if (links.length === 0) return;
+    setAddBusy(true);
+    setAddError(null);
+    try {
+      for (const link of links) {
+        const res = await fetch("/api/chats/from-link", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ link, date }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || "Не удалось создать чат");
+        }
+      }
+      setAddOpen(false);
+      setAddQuery("");
+      router.refresh();
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setAddBusy(false);
+    }
   }
 
   // How many of the day's active chats QA has hidden (drives the "Скрытые (N)"
@@ -815,29 +846,54 @@ export default function ScoringPanel({
                     </div>
                   )}
                   {bulkResolved.unmatched.length > 0 && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-800">
-                      <div className="font-medium mb-1">
-                        Этих чатов нет в системе (нельзя добавить):
-                      </div>
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-800 space-y-1.5">
+                      <div className="font-medium">Этих чатов нет в системе:</div>
                       <ul className="space-y-0.5 break-all">
                         {bulkResolved.unmatched.map((t) => (
                           <li key={t}>• {t}</li>
                         ))}
                       </ul>
+                      {bulkResolved.unmatched.some((t) => isTelegramLink(t)) && (
+                        <button
+                          className="btn-primary !py-1 !px-2 text-xs"
+                          disabled={addBusy}
+                          onClick={() =>
+                            createFromLinks(
+                              bulkResolved.unmatched.filter((t) => isTelegramLink(t))
+                            )
+                          }
+                        >
+                          {addBusy
+                            ? "Создаю…"
+                            : `➕ Создать из ссылок и добавить (${bulkResolved.unmatched.filter((t) => isTelegramLink(t)).length})`}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
               )}
+              {addError && <div className="text-sm text-red-600">{addError}</div>}
 
               {/* Single search-as-you-type. */}
               {!bulkMode && addQuery.trim() && (
                 <div className="max-h-56 overflow-auto rounded-lg border border-gray-200 divide-y">
                   {addCandidates.length === 0 ? (
-                    <div className="px-3 py-2 text-sm text-gray-500">
-                      {/(web\.telegram\.org|t\.me)\//.test(addQuery)
-                        ? "Чат с этой ссылкой не найден в системе."
-                        : `Ничего не найдено (или чат уже в списке за ${date}).`}
-                    </div>
+                    isTelegramLink(addQuery.trim()) ? (
+                      <div className="px-3 py-2 text-sm text-gray-600 flex flex-wrap items-center gap-2">
+                        <span>Чат с этой ссылкой не найден в системе.</span>
+                        <button
+                          className="btn-primary !py-1 !px-2 text-xs"
+                          disabled={addBusy}
+                          onClick={() => createFromLinks([addQuery.trim()])}
+                        >
+                          {addBusy ? "Создаю…" : "➕ Создать чат из ссылки и добавить"}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="px-3 py-2 text-sm text-gray-500">
+                        Ничего не найдено (или чат уже в списке за {date}).
+                      </div>
+                    )
                   ) : (
                     addCandidates.map((c) => (
                       <button
