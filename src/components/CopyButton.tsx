@@ -6,10 +6,12 @@ export default function CopyButton({
   text,
   label = "Копировать",
   className = "btn-secondary",
+  title,
 }: {
   text: string;
   label?: string;
   className?: string;
+  title?: string;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -36,7 +38,7 @@ export default function CopyButton({
   }
 
   return (
-    <button type="button" onClick={copy} className={className}>
+    <button type="button" onClick={copy} className={className} title={title}>
       {copied ? "Скопировано ✓" : label}
     </button>
   );

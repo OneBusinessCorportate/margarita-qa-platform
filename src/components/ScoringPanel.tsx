@@ -42,6 +42,7 @@ import type {
   MonthlyStatus,
 } from "@/lib/types";
 import BandChip from "./BandChip";
+import CopyButton from "./CopyButton";
 import ViolationModal from "./ViolationModal";
 
 /** Everything carried forward from the most recent check before the chosen date. */
@@ -1272,15 +1273,26 @@ function ChatScoreRow({
               {chat.chat_name}
             </span>
             {isTelegramLink(chat.chat_link) ? (
-              <a
-                href={tgHref(chat.chat_link!, tgClient)}
-                target={tgWindowFor(chat.chat_link!)}
-                rel="noreferrer"
-                className="text-blue-600 hover:underline text-xs whitespace-nowrap"
-                title="Открыть чат в одной вкладке Telegram (быстро)"
-              >
-                Открыть ↗
-              </a>
+              <>
+                <a
+                  href={tgHref(chat.chat_link!, tgClient)}
+                  target={tgWindowFor(chat.chat_link!)}
+                  rel="noreferrer"
+                  className="text-blue-600 hover:underline text-xs whitespace-nowrap"
+                  title="Открыть чат в одной вкладке Telegram (быстро)"
+                >
+                  Открыть ↗
+                </a>
+                {/* Copy the full Telegram link so it can be pasted into the
+                    «Добавить чат в QA» / Задачи search, or shared. The tooltip
+                    shows the full URL so it's visible without opening the chat. */}
+                <CopyButton
+                  text={chat.chat_link!.trim()}
+                  label="⧉ ссылка"
+                  className="text-blue-600 hover:underline text-xs whitespace-nowrap"
+                  title={chat.chat_link!.trim()}
+                />
+              </>
             ) : /whatsapp/i.test(chat.chat_link ?? "") ? (
               <span
                 className="text-gray-400 text-xs whitespace-nowrap"
