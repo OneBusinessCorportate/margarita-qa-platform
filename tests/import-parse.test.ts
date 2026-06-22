@@ -7,6 +7,7 @@ import {
   parseDebtAmount,
   parseEvalRow,
   periodOf,
+  resolveChatLink,
   toIsoDate,
   toNum,
   type Cell,
@@ -87,6 +88,34 @@ test("parseChatRow falls back chat_name to the contract № and skips №-less r
   assert.equal(noName.chat_name, "B-3302");
   assert.equal(parseChatRow([null, "x", "y"]), null);
   assert.equal(parseChatRow(["", "x"]), null);
+});
+
+test("resolveChatLink prefers the hyperlink target over the display text", () => {
+  // The real-world bug: the cell shows "Telegram" but links to the actual URL.
+  assert.equal(
+    resolveChatLink("Telegram", "https://web.telegram.org/a/#-4983666095"),
+    "https://web.telegram.org/a/#-4983666095"
+  );
+  // A chat-name display with the URL in the hyperlink.
+  assert.equal(
+    resolveChatLink("ИП Гор Саргсян/В-4328 RU (telegram.org)", "https://web.telegram.org/a/#-5241781802"),
+    "https://web.telegram.org/a/#-5241781802"
+  );
+  // No hyperlink → keep the display (a plain typed URL, or a note like "не работаем").
+  assert.equal(resolveChatLink("https://web.telegram.org/a/#-1", null), "https://web.telegram.org/a/#-1");
+  assert.equal(resolveChatLink("не работаем", null), "не работаем");
+  assert.equal(resolveChatLink(null, null), null);
+});
+
+test("parseChatRow uses the hyperlink target for chat_link when present", () => {
+  const row: Cell[] = [
+    "59", null, null, null, "Active", null, "Гаяне", null,
+    "ИП Фролкин", "Telegram", // display text is the placeholder "Telegram"
+  ];
+  const c = parseChatRow(row, "https://web.telegram.org/a/#-4983666095")!;
+  assert.equal(c.chat_link, "https://web.telegram.org/a/#-4983666095");
+  // Without a hyperlink it falls back to the display text (legacy behaviour).
+  assert.equal(parseChatRow(row)!.chat_link, "Telegram");
 });
 
 // --- evaluation rows -------------------------------------------------------

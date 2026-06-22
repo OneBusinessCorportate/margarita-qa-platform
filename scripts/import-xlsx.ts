@@ -42,15 +42,39 @@ function sheetRows(wb: XLSX.WorkBook, name: string): Row[] {
   return XLSX.utils.sheet_to_json<Row>(ws, { header: 1, raw: true, defval: null });
 }
 
+// Hyperlink targets for one column, indexed to match sheet_to_json's row order
+// (both start at the sheet's first row). The "Chat LINK" cells are hyperlinks
+// whose display text often differs from the real URL, so we must read the
+// target, not the text.
+function linkColumn(ws: XLSX.WorkSheet, col: number): (string | null)[] {
+  const range = XLSX.utils.decode_range(ws["!ref"]!);
+  const out: (string | null)[] = [];
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    const cell = ws[XLSX.utils.encode_cell({ r: R, c: col })] as
+      | { l?: { Target?: string } }
+      | undefined;
+    const href = cell?.l?.Target;
+    out[R - range.s.r] = href ? String(href).trim() : null;
+  }
+  return out;
+}
+
 function main() {
   const wb = XLSX.readFile(FILE, { cellDates: true });
 
   // --- Чаты ---------------------------------------------------------------
   // parseChatRow drops rows with no contract № and never fabricates
   // manager/debts (the source sheet has neither column). See src/lib/import-parse.
-  const chats = sheetRows(wb, "Чаты")
-    .slice(1) // skip header
-    .map(parseChatRow)
+  const chatsWs = wb.Sheets["Чаты"];
+  if (!chatsWs) throw new Error(`Sheet "Чаты" not found. Tabs: ${wb.SheetNames}`);
+  const chatRows = XLSX.utils.sheet_to_json<Row>(chatsWs, {
+    header: 1,
+    raw: true,
+    defval: null,
+  });
+  const chatLinkHrefs = linkColumn(chatsWs, 9); // "Chat LINK" column (J)
+  const chats = chatRows
+    .map((r, i) => (i === 0 ? null : parseChatRow(r, chatLinkHrefs[i]))) // row 0 = header
     .filter((c): c is NonNullable<typeof c> => c !== null);
   // de-dupe by agr_no (keep first)
   const chatMap = new Map(chats.map((c) => [c.agr_no, c]));

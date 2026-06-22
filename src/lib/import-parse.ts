@@ -28,6 +28,18 @@ export function cleanStr(v: Cell): string | null {
   return s === "" || s === "--" || s === "—" ? null : s;
 }
 
+/**
+ * The real chat link. In Margarita's sheet the "Chat LINK" cell is usually a
+ * hyperlink whose DISPLAY text differs from its target — e.g. it reads
+ * "Telegram" or the chat's name while the actual web.telegram.org URL lives in
+ * the hyperlink. sheet_to_json only yields the display text, so we must prefer
+ * the hyperlink target and fall back to the display text only when the cell has
+ * no hyperlink (a plain URL typed in, or a note like "не работаем").
+ */
+export function resolveChatLink(display: Cell, hyperlink?: Cell): string | null {
+  return cleanStr(hyperlink) ?? cleanStr(display);
+}
+
 /** Coerce a cell to a number, or undefined when it isn't numeric. */
 export function toNum(v: Cell): number | undefined {
   if (typeof v === "number") return Number.isNaN(v) ? undefined : v;
@@ -86,7 +98,7 @@ export interface ParsedChat {
  * a manager column nor a debt-amount column (copying the accountant into
  * manager was the old bug).
  */
-export function parseChatRow(r: Cell[]): ParsedChat | null {
+export function parseChatRow(r: Cell[], linkHref?: Cell): ParsedChat | null {
   if (!cleanStr(r[0])) return null;
   const agr_no = String(r[0]).trim();
   return {
@@ -99,7 +111,8 @@ export function parseChatRow(r: Cell[]): ParsedChat | null {
     accountant: cleanStr(r[6]),
     created_date: toIsoDate(r[7]),
     chat_name: cleanStr(r[8]) ?? agr_no,
-    chat_link: cleanStr(r[9]),
+    // Prefer the cell's hyperlink target over its display text (see resolveChatLink).
+    chat_link: resolveChatLink(r[9], linkHref),
     manager: null,
     debts: null,
   };
