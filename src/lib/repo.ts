@@ -541,7 +541,12 @@ export async function listActiveExclusions(): Promise<ActiveExclusion[]> {
     const { data, error } = await sb
       .from(TABLES.activeExclusions)
       .select("agr_no, exclude_date");
-    if (error) throw error;
+    // Non-critical per-day overlay (see listActiveInclusions): degrade to "no
+    // manual exclusions" instead of crashing the scoring page.
+    if (error) {
+      console.warn(`listActiveExclusions: ${error.message}`);
+      return [];
+    }
     return (data ?? []).map((r: any) => ({
       chat_agr_no: r.agr_no,
       exclude_date: String(r.exclude_date).slice(0, 10),
@@ -603,7 +608,13 @@ export async function listActiveInclusions(): Promise<ActiveInclusion[]> {
     const { data, error } = await sb
       .from(TABLES.activeInclusions)
       .select("agr_no, include_date");
-    if (error) throw error;
+    // Non-critical per-day overlay: if the table is missing (migration not yet
+    // applied) or the read fails, degrade to "no manual inclusions" rather than
+    // taking down the whole scoring page.
+    if (error) {
+      console.warn(`listActiveInclusions: ${error.message}`);
+      return [];
+    }
     return (data ?? []).map((r: any) => ({
       chat_agr_no: r.agr_no,
       include_date: String(r.include_date).slice(0, 10),
