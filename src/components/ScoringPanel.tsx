@@ -10,6 +10,7 @@ import {
   computeOverall,
   daysBetween,
   isStaleActivity,
+  reviewDayOf,
   roleInfo,
   type CriteriaScores,
   type CriterionId,
@@ -357,17 +358,29 @@ export default function ScoringPanel({
   const activeTodaySet = useMemo(() => {
     const s = new Set<string>();
     const rep = (a: string) => repOf.get(a) ?? a;
-    for (const a of chatActivity) if (a.date === date) s.add(rep(a.chat_agr_no));
-    for (const c of mergedChats) if (lastActivityFor(c) === date) s.add(c.agr_no);
-    for (const t of taskActivity) if (t.date === date) s.add(rep(t.chat_agr_no));
+    // Bucket activity by its REVIEW day, not its raw date: weekend / RA-holiday
+    // activity rolls onto the next working day (e.g. Sat+Sun → Monday), since QA
+    // isn't done on non-working days. A working day maps to itself, so weekday
+    // behaviour is unchanged. reviewDayOf is memoised-cheap (pure).
+    for (const a of chatActivity)
+      if (reviewDayOf(a.date) === date) s.add(rep(a.chat_agr_no));
+    for (const c of mergedChats) {
+      const la = lastActivityFor(c);
+      if (la && reviewDayOf(la) === date) s.add(c.agr_no);
+    }
+    for (const t of taskActivity)
+      if (t.date && reviewDayOf(t.date) === date) s.add(rep(t.chat_agr_no));
     // Backlog: chats where the CLIENT had the last word (still unanswered) stay
     // in the day view even if their last message was on an earlier day, so the
     // "start from the bottom unanswered chat" workflow can reach yesterday's.
     for (const c of mergedChats) if (c.unanswered === true) s.add(c.agr_no);
     // Brand-new chats created on the reviewed day appear even before they have
-    // any message activity captured in the feed (item 6).
-    for (const c of mergedChats)
-      if ((c.created_date ?? "").slice(0, 10) === date) s.add(c.agr_no);
+    // any message activity captured in the feed (item 6). Created on a
+    // non-working day → reviewed on the next working day, same as activity.
+    for (const c of mergedChats) {
+      const cd = (c.created_date ?? "").slice(0, 10);
+      if (cd && reviewDayOf(cd) === date) s.add(c.agr_no);
+    }
     // Chats Margarita pulled in by hand for this day (item 5 / "ручное
     // добавление в QA") — surfaced even if the feed never reported them active.
     for (const c of mergedChats) if (included.has(`${c.agr_no}|${date}`)) s.add(c.agr_no);
@@ -381,7 +394,7 @@ export default function ScoringPanel({
   const activityAtForDay = useMemo(() => {
     const m = new Map<string, string>();
     for (const a of chatActivity) {
-      if (a.date !== date || !a.at) continue;
+      if (reviewDayOf(a.date) !== date || !a.at) continue;
       const key = repOf.get(a.chat_agr_no) ?? a.chat_agr_no;
       const cur = m.get(key);
       if (!cur || a.at > cur) m.set(key, a.at);

@@ -23,9 +23,11 @@ import {
   isStaleActivity,
   isTaskClosed,
   isTaskDue,
+  isNonWorkingDay,
   isoWeekLabel,
   kpiBonusEligible,
   mondayOf,
+  reviewDayOf,
 } from "../src/lib/scoring";
 
 test("two criteria, weights 50/50 summing to 100", () => {
@@ -198,6 +200,28 @@ test("mondayOf snaps any day to its ISO week Monday", () => {
   assert.equal(mondayOf("2026-06-16"), "2026-06-15"); // Tuesday → Monday
   assert.equal(mondayOf("2026-06-21"), "2026-06-15"); // Sunday → that Monday
   assert.equal(mondayOf("2026-06-22"), "2026-06-22"); // next Monday
+});
+
+test("isNonWorkingDay flags weekends and RA holidays", () => {
+  assert.equal(isNonWorkingDay("2026-06-22"), false); // Monday
+  assert.equal(isNonWorkingDay("2026-06-19"), false); // Friday
+  assert.equal(isNonWorkingDay("2026-06-20"), true); // Saturday
+  assert.equal(isNonWorkingDay("2026-06-21"), true); // Sunday
+  assert.equal(isNonWorkingDay("2026-05-01"), true); // Labour Day (weekday)
+  assert.equal(isNonWorkingDay("2026-01-06"), true); // Armenian Christmas
+});
+
+test("reviewDayOf rolls weekend/holiday activity to the next working day", () => {
+  // A working day is reviewed on itself.
+  assert.equal(reviewDayOf("2026-06-22"), "2026-06-22"); // Monday → Monday
+  assert.equal(reviewDayOf("2026-06-19"), "2026-06-19"); // Friday → Friday
+  // Weekend rolls onto the following Monday.
+  assert.equal(reviewDayOf("2026-06-20"), "2026-06-22"); // Saturday → Monday
+  assert.equal(reviewDayOf("2026-06-21"), "2026-06-22"); // Sunday → Monday
+  // A holiday rolls forward; consecutive non-working days chain through.
+  assert.equal(reviewDayOf("2026-05-01"), "2026-05-04"); // Fri holiday → Monday
+  // Christmas (Tue 2026-01-06) is a weekday holiday → next working day.
+  assert.equal(reviewDayOf("2026-01-06"), "2026-01-07");
 });
 
 test("isoWeekLabel gives the ISO-8601 week", () => {

@@ -673,3 +673,57 @@ export function isoWeekLabel(iso: string): string {
   const week = 1 + Math.round((d.getTime() - firstThursday.getTime()) / 604_800_000);
   return `${year}-W${String(week).padStart(2, "0")}`;
 }
+
+// --- Working-day helpers (daily QA "Активные за день" buckets) ---------------
+//
+// QA isn't done on non-working days, so a chat that was active on a weekend or
+// an RA public holiday is reviewed together on the NEXT working day (e.g. a
+// Saturday/Sunday chat shows up under Monday's checks). See reviewDayOf.
+
+/**
+ * Republic of Armenia public (non-working) holidays, as fixed MM-DD strings
+ * (RA Labour Code, Art. 16). Armenia does NOT shift these for weekends, and
+ * they're all fixed-date (Armenian Christmas is Jan 6, not movable Easter), so
+ * a static MM-DD list is exact. Edit here as the official calendar changes.
+ */
+export const ARMENIAN_HOLIDAYS_MMDD: ReadonlySet<string> = new Set([
+  "01-01", // Новый год
+  "01-02", // Новый год
+  "01-06", // Рождество (Армянская апостольская церковь)
+  "01-28", // День армии
+  "03-08", // Международный женский день
+  "04-24", // День памяти жертв геноцида армян
+  "05-01", // День труда
+  "05-09", // День Победы и мира
+  "05-28", // День Первой Республики
+  "07-05", // День Конституции
+  "09-21", // День независимости
+  "12-31", // Канун Нового года
+]);
+
+/** True when `iso` (YYYY-MM-DD) is a Saturday, Sunday, or RA public holiday. */
+export function isNonWorkingDay(iso: string): boolean {
+  const ymd = iso.slice(0, 10);
+  const d = new Date(ymd + "T00:00:00Z");
+  if (Number.isNaN(d.getTime())) return false;
+  const day = d.getUTCDay(); // 0=Sun … 6=Sat
+  if (day === 0 || day === 6) return true;
+  return ARMENIAN_HOLIDAYS_MMDD.has(ymd.slice(5)); // "MM-DD"
+}
+
+/**
+ * The QA review day for activity that happened on `iso`: the same day if it's a
+ * working day, otherwise the next working day (skipping weekends + holidays).
+ * Weekend/holiday activity is reviewed together on the next working day, so e.g.
+ * Sat+Sun roll onto Monday. Capped at 14 forward steps as a safety guard.
+ */
+export function reviewDayOf(iso: string): string {
+  let cur = iso.slice(0, 10);
+  if (Number.isNaN(new Date(cur + "T00:00:00Z").getTime())) return cur;
+  for (let i = 0; i < 14 && isNonWorkingDay(cur); i++) {
+    const d = new Date(cur + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + 1);
+    cur = d.toISOString().slice(0, 10);
+  }
+  return cur;
+}

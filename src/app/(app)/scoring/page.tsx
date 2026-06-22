@@ -10,6 +10,7 @@ import {
   listTasks,
 } from "@/lib/repo";
 import { trainAiModel } from "@/lib/ai";
+import { reviewDayOf } from "@/lib/scoring";
 
 export const dynamic = "force-dynamic";
 
@@ -61,10 +62,15 @@ export default async function ScoringPage() {
   // "today"), or a task touch. Evaluations are deliberately excluded: a QA
   // review isn't chat activity, and counting it made the day view default to
   // the last day something was reviewed and surface stale chats.
+  // Map each raw activity date to its QA review day (weekend / RA-holiday
+  // activity rolls onto the next working day), so the day view defaults to the
+  // most recent day chats are actually REVIEWED — never an empty weekend date.
   const activityDates = [
     ...chats.map((c) => c.last_activity_date ?? ""),
     ...tasks.map((t) => (t.checking_date ?? t.due_date_original ?? "").slice(0, 10)),
-  ].filter(Boolean);
+  ]
+    .filter(Boolean)
+    .map((d) => reviewDayOf(d));
   const latestActivityDate =
     activityDates.length > 0 ? activityDates.sort().at(-1)! : null;
 
