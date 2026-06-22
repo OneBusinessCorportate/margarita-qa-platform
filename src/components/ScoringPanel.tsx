@@ -1190,14 +1190,18 @@ function ChatScoreRow({
     for (const c of MONTHLY_CATEGORIES) {
       const prevVal = canonicalMonthlyStatus(c, prevStatuses[c.id]);
       // «Долги» is fully derived from the OneBusiness debts system (overdue +
-      // contact log) and wins over the carried/AI value — that's the column the
-      // user wants filled automatically end-to-end.
-      // Detected status from message scan is used when there's no previous check.
+      // contact log) and wins over everything — that's the column the user
+      // wants filled automatically end-to-end.
+      // For the other рассылки, the auto-detected status from THIS month's
+      // message scan fills the cell by default (it's month-specific evidence, so
+      // it beats a carried-over previous value and the deadline placeholder).
+      // Margarita only changes it when the detection is wrong; the 🔍 badge
+      // below the dropdown shows the same detected value for reference.
       const detected = canonicalMonthlyStatus(c, detectedStatuses[c.id] ?? null);
       const status =
         (c.id === "debts" ? canonicalMonthlyStatus(c, chat.debt_status) : "") ||
-        prevVal ||
         detected ||
+        prevVal ||
         autoMonthlyStatus(c, chat.status, chat.debts, date) ||
         canonicalMonthlyStatus(c, aiInit.monthly[c.id]?.status);
       if (status)
