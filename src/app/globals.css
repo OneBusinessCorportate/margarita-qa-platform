@@ -52,7 +52,10 @@ table.qa.sticky-head thead th.corner {
 table.qa.pairs td {
   border-bottom: 0;
   padding: 4px 6px;
-  vertical-align: middle;
+  /* Top-align so the editable row's controls all sit on ONE line, with the
+     auto-рассылка badge hanging strictly below its dropdown. (A Tailwind
+     align-top utility loses to this rule's specificity, so it must live here.) */
+  vertical-align: top;
 }
 /* A clear gap + heavy rule separates one chat from the next. */
 table.qa.pairs tr.chat-start > td {
@@ -64,6 +67,8 @@ table.qa.pairs tr.chat-start > td {
 table.qa.pairs td.chat-info {
   border-right: 1px solid #e5e7eb;
   border-left: 4px solid #818cf8;
+  /* This cell spans both lines (AI + you) — keep it centered across the block. */
+  vertical-align: middle;
 }
 table.qa.pairs tr:hover td {
   background: transparent;
