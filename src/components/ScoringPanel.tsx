@@ -1630,47 +1630,54 @@ function ChatScoreRow({
           </td>
         ))}
         {MONTHLY_CATEGORIES.map((c) => {
-          // Auto-detected рассылка status, read from the accountant's Telegram
-          // messages this month (mqa_detect_mailings). Surface it under the
-          // dropdown so Margarita can SEE what the system understood and apply
-          // it in one click — even when a carried-over previous check is what
-          // currently fills the field.
+          // Auto-detected рассылка status from THIS month's message scan
+          // (mqa_detect_mailings). It pre-fills the dropdown; the badge below
+          // shows the same value for reference on EVERY category that has a
+          // detection — green ✓ when the cell matches, amber 🔍 to re-apply
+          // after a manual change. The select + badge live in a fixed flex
+          // column and every mailing cell reserves the badge row, so all four
+          // dropdowns are exactly the same height and sit on one line with the
+          // info strictly below them.
           const detected = canonicalMonthlyStatus(c, detectedStatuses[c.id] ?? null);
           const current = monthly[c.id]?.status ?? "";
           const matches = Boolean(detected) && detected === current;
           return (
             <td key={c.id} className={`${youCell} text-center`}>
-              <select
-                className="input w-[96px] text-xs"
-                value={monthly[c.id]?.status ?? ""}
-                onChange={(e) => setMon(c.id, e.target.value)}
-                title={c.name}
-              >
-                <option value="">—</option>
-                {c.statuses.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-              {detected && (
-                <button
-                  type="button"
-                  onClick={() => setMon(c.id, detected)}
-                  title={
-                    matches
-                      ? `Авто-распознано из сообщений бухгалтера: «${detected}»`
-                      : `Авто-распознано из сообщений: «${detected}». Нажмите, чтобы применить.`
-                  }
-                  className={`mt-0.5 block w-[96px] truncate rounded px-1 text-[10px] leading-tight ${
-                    matches
-                      ? "text-green-600 cursor-default"
-                      : "bg-amber-50 text-amber-700 hover:bg-amber-100"
-                  }`}
+              <div className="flex flex-col items-center gap-0.5">
+                <select
+                  className="input w-[96px] text-xs"
+                  value={monthly[c.id]?.status ?? ""}
+                  onChange={(e) => setMon(c.id, e.target.value)}
+                  title={c.name}
                 >
-                  {matches ? `✓ ${detected}` : `🔍 ${detected}`}
-                </button>
-              )}
+                  <option value="">—</option>
+                  {c.statuses.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+                {detected ? (
+                  <button
+                    type="button"
+                    onClick={() => setMon(c.id, detected)}
+                    title={
+                      matches
+                        ? `Авто-распознано из сообщений бухгалтера: «${detected}»`
+                        : `Авто-распознано из сообщений: «${detected}». Нажмите, чтобы применить.`
+                    }
+                    className={`block h-[15px] w-[96px] truncate rounded px-1 text-[10px] leading-[15px] ${
+                      matches
+                        ? "text-green-600 cursor-default"
+                        : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                    }`}
+                  >
+                    {matches ? `✓ ${detected}` : `🔍 ${detected}`}
+                  </button>
+                ) : (
+                  <span className="block h-[15px]" aria-hidden="true" />
+                )}
+              </div>
             </td>
           );
         })}
