@@ -20,11 +20,17 @@ export default async function ScoringPage() {
     .toISOString()
     .slice(0, 10);
 
-  // Current Yerevan month for mailing detection pre-fill.
+  // Load mailings for both current and previous Yerevan month so the scoring
+  // form shows the right period's detections regardless of which date is selected.
   const nowYerevan = new Date(
     new Date().toLocaleString("en-US", { timeZone: "Asia/Yerevan" })
   );
-  const currentPeriod = `${nowYerevan.getFullYear()}${String(nowYerevan.getMonth() + 1).padStart(2, "0")}`;
+  const cy = nowYerevan.getFullYear();
+  const cm = nowYerevan.getMonth() + 1; // 1-based
+  const currentPeriod = `${cy}${String(cm).padStart(2, "0")}`;
+  const prevM = cm === 1 ? 12 : cm - 1;
+  const prevY = cm === 1 ? cy - 1 : cy;
+  const previousPeriod = `${prevY}${String(prevM).padStart(2, "0")}`;
 
   const [
     chats,
@@ -34,7 +40,8 @@ export default async function ScoringPage() {
     exclusions,
     inclusions,
     chatActivity,
-    detectedMailings,
+    detectedMailingsCurrent,
+    detectedMailingsPrev,
   ] = await Promise.all([
     listChats(),
     listAccountants(),
@@ -44,7 +51,10 @@ export default async function ScoringPage() {
     listActiveInclusions(),
     listChatActivity(activityFrom),
     listChatMailings(currentPeriod),
+    listChatMailings(previousPeriod),
   ]);
+
+  const detectedMailings = [...detectedMailingsCurrent, ...detectedMailingsPrev];
 
   // Default the day view to the most recent day chats were ACTUALLY active
   // (real chat activity from the live feed, kept current by the sync — normally
