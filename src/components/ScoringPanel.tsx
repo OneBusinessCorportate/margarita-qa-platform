@@ -10,6 +10,7 @@ import {
   computeOverall,
   daysBetween,
   isStaleActivity,
+  reviewDayForActivity,
   reviewDayOf,
   roleInfo,
   type CriteriaScores,
@@ -363,10 +364,11 @@ export default function ScoringPanel({
     // isn't done on non-working days. A working day maps to itself, so weekday
     // behaviour is unchanged. reviewDayOf is memoised-cheap (pure).
     for (const a of chatActivity)
-      if (reviewDayOf(a.date) === date) s.add(rep(a.chat_agr_no));
+      if (reviewDayForActivity(a.at, a.date) === date) s.add(rep(a.chat_agr_no));
     for (const c of mergedChats) {
       const la = lastActivityFor(c);
-      if (la && reviewDayOf(la) === date) s.add(c.agr_no);
+      if (la && reviewDayForActivity(c.last_activity_at, la) === date)
+        s.add(c.agr_no);
     }
     for (const t of taskActivity)
       if (t.date && reviewDayOf(t.date) === date) s.add(rep(t.chat_agr_no));
@@ -394,7 +396,7 @@ export default function ScoringPanel({
   const activityAtForDay = useMemo(() => {
     const m = new Map<string, string>();
     for (const a of chatActivity) {
-      if (reviewDayOf(a.date) !== date || !a.at) continue;
+      if (reviewDayForActivity(a.at, a.date) !== date || !a.at) continue;
       const key = repOf.get(a.chat_agr_no) ?? a.chat_agr_no;
       const cur = m.get(key);
       if (!cur || a.at > cur) m.set(key, a.at);

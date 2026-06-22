@@ -727,3 +727,50 @@ export function reviewDayOf(iso: string): string {
   }
   return cur;
 }
+
+/** End of the working day, Yerevan local hour (10:00–19:00). Activity at/after
+ *  this is "after close" and is reviewed the next working day. */
+export const WORK_DAY_END_HOUR = 19;
+
+/** Yerevan-local calendar date (YYYY-MM-DD) and 24h hour for an ISO instant. */
+function yerevanDayHour(at: string): { date: string; hour: number } | null {
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Yerevan",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  let hour = Number(get("hour"));
+  if (hour === 24) hour = 0; // some ICU builds emit "24" at midnight
+  return { date: `${get("year")}-${get("month")}-${get("day")}`, hour };
+}
+
+/**
+ * The QA review day for a piece of activity. Like reviewDayOf, but time-aware:
+ * Friday activity AFTER the working day closes (19:00 Yerevan) is already into
+ * the weekend, so it rolls onto the next working day (Monday) rather than
+ * sitting under Friday. `at` is the precise ISO instant; `date` is the fallback
+ * used when no time is known (then it behaves exactly like reviewDayOf).
+ */
+export function reviewDayForActivity(
+  at: string | null | undefined,
+  date: string
+): string {
+  if (!at) return reviewDayOf(date);
+  const p = yerevanDayHour(at);
+  if (!p) return reviewDayOf(date);
+  let day = p.date;
+  const dow = new Date(day + "T00:00:00Z").getUTCDay(); // 0=Sun … 6=Sat
+  if (dow === 5 && p.hour >= WORK_DAY_END_HOUR) {
+    // Friday after close → step to Saturday; reviewDayOf then rolls to Monday.
+    const d = new Date(day + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + 1);
+    day = d.toISOString().slice(0, 10);
+  }
+  return reviewDayOf(day);
+}

@@ -27,6 +27,7 @@ import {
   isoWeekLabel,
   kpiBonusEligible,
   mondayOf,
+  reviewDayForActivity,
   reviewDayOf,
 } from "../src/lib/scoring";
 
@@ -222,6 +223,33 @@ test("reviewDayOf rolls weekend/holiday activity to the next working day", () =>
   assert.equal(reviewDayOf("2026-05-01"), "2026-05-04"); // Fri holiday → Monday
   // Christmas (Tue 2026-01-06) is a weekday holiday → next working day.
   assert.equal(reviewDayOf("2026-01-06"), "2026-01-07");
+});
+
+test("reviewDayForActivity rolls Friday-after-19:00 activity to Monday", () => {
+  // Yerevan is UTC+4 (no DST). 2026-06-19 is a Friday.
+  // Before close (18:00 Yerevan = 14:00Z) → reviewed on Friday.
+  assert.equal(
+    reviewDayForActivity("2026-06-19T14:00:00Z", "2026-06-19"),
+    "2026-06-19"
+  );
+  // After close (19:30 Yerevan = 15:30Z) → rolls to Monday.
+  assert.equal(
+    reviewDayForActivity("2026-06-19T15:30:00Z", "2026-06-19"),
+    "2026-06-22"
+  );
+  // Late Friday (23:00 Yerevan = 19:00Z) → Monday.
+  assert.equal(
+    reviewDayForActivity("2026-06-19T19:00:00Z", "2026-06-19"),
+    "2026-06-22"
+  );
+  // A non-Friday weekday evening is unaffected (Tuesday stays Tuesday).
+  assert.equal(
+    reviewDayForActivity("2026-06-16T16:00:00Z", "2026-06-16"),
+    "2026-06-16"
+  );
+  // No timestamp → behaves exactly like reviewDayOf on the fallback date.
+  assert.equal(reviewDayForActivity(null, "2026-06-20"), "2026-06-22"); // Sat → Mon
+  assert.equal(reviewDayForActivity(undefined, "2026-06-16"), "2026-06-16"); // Tue
 });
 
 test("isoWeekLabel gives the ISO-8601 week", () => {

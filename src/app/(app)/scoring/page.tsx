@@ -10,7 +10,7 @@ import {
   listTasks,
 } from "@/lib/repo";
 import { trainAiModel } from "@/lib/ai";
-import { reviewDayOf } from "@/lib/scoring";
+import { reviewDayForActivity, reviewDayOf } from "@/lib/scoring";
 
 export const dynamic = "force-dynamic";
 
@@ -63,14 +63,19 @@ export default async function ScoringPage() {
   // review isn't chat activity, and counting it made the day view default to
   // the last day something was reviewed and surface stale chats.
   // Map each raw activity date to its QA review day (weekend / RA-holiday
-  // activity rolls onto the next working day), so the day view defaults to the
-  // most recent day chats are actually REVIEWED — never an empty weekend date.
+  // activity — and Friday activity after 19:00 — rolls onto the next working
+  // day), so the day view defaults to the most recent day chats are actually
+  // REVIEWED, never an empty weekend date. Chats carry a precise timestamp, so
+  // the Friday-evening roll applies; tasks only have a date.
   const activityDates = [
-    ...chats.map((c) => c.last_activity_date ?? ""),
-    ...tasks.map((t) => (t.checking_date ?? t.due_date_original ?? "").slice(0, 10)),
-  ]
-    .filter(Boolean)
-    .map((d) => reviewDayOf(d));
+    ...chats
+      .filter((c) => c.last_activity_date)
+      .map((c) => reviewDayForActivity(c.last_activity_at, c.last_activity_date!)),
+    ...tasks
+      .map((t) => (t.checking_date ?? t.due_date_original ?? "").slice(0, 10))
+      .filter(Boolean)
+      .map((d) => reviewDayOf(d)),
+  ].filter(Boolean);
   const latestActivityDate =
     activityDates.length > 0 ? activityDates.sort().at(-1)! : null;
 
