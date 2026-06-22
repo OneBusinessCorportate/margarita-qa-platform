@@ -121,3 +121,64 @@ describe("deriveStatus", () => {
     assert.equal(deriveStatus("unknown_cat", { done: 5, req: 5, call: 5, paid: 5 }), null);
   });
 });
+
+describe("detectAllSignals — акт false-positive guard", () => {
+  it("'Актив' company name does NOT fire primary_docs", () => {
+    const sigs = detectAllSignals("ООО Актив передало данные за квартал.");
+    assert.ok(!sigs.some((s) => s.category === "primary_docs"), "Актив must not match акт");
+  });
+
+  it("standalone акт still fires primary_docs/done", () => {
+    const sigs = detectAllSignals("Акт выполненных работ получен от клиента.");
+    assert.ok(sigs.some((s) => s.category === "primary_docs" && s.type === "done"));
+  });
+
+  it("акты plural fires primary_docs/done", () => {
+    const sigs = detectAllSignals("Акты за квартал получены от клиента.");
+    assert.ok(sigs.some((s) => s.category === "primary_docs" && s.type === "done"));
+  });
+
+  it("акты plural fires primary_docs/req", () => {
+    const sigs = detectAllSignals("Прошу прислать акты за прошлый период.");
+    assert.ok(sigs.some((s) => s.category === "primary_docs" && s.type === "req"));
+  });
+});
+
+describe("detectAllSignals — Armenian req excludes done-action words", () => {
+  it("salary/done fires on Armenian sent word; salary/req does NOT", () => {
+    const sigs = detectAllSignals("աշխատավարձ ուղարկ.");
+    assert.ok(sigs.some((s) => s.category === "salary" && s.type === "done"));
+    assert.ok(!sigs.some((s) => s.category === "salary" && s.type === "req"));
+  });
+
+  it("salary/done fires on Armenian provide word; salary/req does NOT", () => {
+    const sigs = detectAllSignals("աշխատավարձ տրամ.");
+    assert.ok(sigs.some((s) => s.category === "salary" && s.type === "done"));
+    assert.ok(!sigs.some((s) => s.category === "salary" && s.type === "req"));
+  });
+
+  it("primary_docs/done fires on Armenian sent word; primary_docs/req does NOT", () => {
+    const sigs = detectAllSignals("փաստաթ ուղարկ.");
+    assert.ok(sigs.some((s) => s.category === "primary_docs" && s.type === "done"));
+    assert.ok(!sigs.some((s) => s.category === "primary_docs" && s.type === "req"));
+  });
+
+  it("salary/req still fires with a genuine Armenian request word", () => {
+    const sigs = detectAllSignals("աշխատավարձ խնդրե.");
+    assert.ok(sigs.some((s) => s.category === "salary" && s.type === "req"));
+  });
+});
+
+describe("deriveStatus — additional edge cases", () => {
+  it("debts: call takes priority over req>=2", () => {
+    assert.equal(deriveStatus("debts", { done: 0, req: 2, call: 1, paid: 0 }), "1-й позвонил");
+  });
+
+  it("salary: req>2 still returns Запросил 2, не получил", () => {
+    assert.equal(deriveStatus("salary", { done: 0, req: 5, call: 0, paid: 0 }), "Запросил 2, не получил");
+  });
+
+  it("main_taxes: only done triggers a status; req/call/paid alone return null", () => {
+    assert.equal(deriveStatus("main_taxes", { done: 0, req: 5, call: 3, paid: 2 }), null);
+  });
+});

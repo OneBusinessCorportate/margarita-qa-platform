@@ -25,7 +25,7 @@ export async function GET() {
   return run();
 }
 
-/** Armenia is UTC+4, no DST. Returns UTC ISO strings for the Yerevan-month boundary. */
+/** Armenia is UTC+4 (no DST). Subtracts 4 h so UTC midnight = Yerevan month start. */
 function yerevanPeriodBounds(period: string): { start: string; end: string } {
   const y = Number(period.slice(0, 4));
   const m = Number(period.slice(4, 6)); // 1-based
@@ -83,7 +83,7 @@ ${numbered}`;
       const raw = resp.content[0]?.type === "text" ? resp.content[0].text.trim() : "[]";
       const parsed = JSON.parse(raw) as { idx: number; signals: MailingSignal[] }[];
       for (const entry of parsed) {
-        if (Array.isArray(entry.signals) && entry.idx >= 0 && entry.idx < messages.length) {
+        if (Array.isArray(entry.signals) && entry.idx >= i && entry.idx < i + batch.length) {
           results[entry.idx] = entry.signals.filter(
             (s) =>
               ["main_taxes", "salary", "primary_docs", "debts"].includes(s.category) &&
@@ -207,8 +207,9 @@ async function run(req?: Request) {
       const msg = aiCapped[i];
       const agr_no = chatIdToAgr.get(msg.chat_id);
       if (!agr_no) continue;
-      for (const signal of aiSignalsList[i] ?? []) {
-        aiCount++;
+      const msgSignals = aiSignalsList[i] ?? [];
+      if (msgSignals.length > 0) aiCount++;
+      for (const signal of msgSignals) {
         const key: CountKey = `${agr_no}|${signal.category}`;
         if (!counters.has(key)) {
           counters.set(key, { agr_no, category: signal.category, done: 0, req: 0, call: 0, paid: 0, latestAt: msg.created_at });
