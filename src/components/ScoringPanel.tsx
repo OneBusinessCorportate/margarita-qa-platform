@@ -718,6 +718,12 @@ export default function ScoringPanel({
           >
             {detectingMailings ? "Сканирую…" : "Рассылки ↺"}
           </button>
+          <span
+            className="text-[11px] text-gray-500"
+            title="Под каждым статусом рассылки в строке чата появляется авто-распознанное из сообщений бухгалтера значение. 🔍 — нажмите, чтобы применить; ✓ — уже совпадает."
+          >
+            🔍 авто-рассылки
+          </span>
           {scope === "day" && (hiddenCount > 0 || showHidden) && (
             <button
               className="btn-secondary"
@@ -1597,23 +1603,51 @@ function ChatScoreRow({
             </select>
           </td>
         ))}
-        {MONTHLY_CATEGORIES.map((c) => (
-          <td key={c.id} className={`${youCell} text-center`}>
-            <select
-              className="input w-[96px] text-xs"
-              value={monthly[c.id]?.status ?? ""}
-              onChange={(e) => setMon(c.id, e.target.value)}
-              title={c.name}
-            >
-              <option value="">—</option>
-              {c.statuses.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </td>
-        ))}
+        {MONTHLY_CATEGORIES.map((c) => {
+          // Auto-detected рассылка status, read from the accountant's Telegram
+          // messages this month (mqa_detect_mailings). Surface it under the
+          // dropdown so Margarita can SEE what the system understood and apply
+          // it in one click — even when a carried-over previous check is what
+          // currently fills the field.
+          const detected = canonicalMonthlyStatus(c, detectedStatuses[c.id] ?? null);
+          const current = monthly[c.id]?.status ?? "";
+          const matches = Boolean(detected) && detected === current;
+          return (
+            <td key={c.id} className={`${youCell} text-center align-top`}>
+              <select
+                className="input w-[96px] text-xs"
+                value={monthly[c.id]?.status ?? ""}
+                onChange={(e) => setMon(c.id, e.target.value)}
+                title={c.name}
+              >
+                <option value="">—</option>
+                {c.statuses.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              {detected && (
+                <button
+                  type="button"
+                  onClick={() => setMon(c.id, detected)}
+                  title={
+                    matches
+                      ? `Авто-распознано из сообщений бухгалтера: «${detected}»`
+                      : `Авто-распознано из сообщений: «${detected}». Нажмите, чтобы применить.`
+                  }
+                  className={`mt-0.5 block w-[96px] truncate rounded px-1 text-[10px] leading-tight ${
+                    matches
+                      ? "text-green-600 cursor-default"
+                      : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                  }`}
+                >
+                  {matches ? `✓ ${detected}` : `🔍 ${detected}`}
+                </button>
+              )}
+            </td>
+          );
+        })}
         <td className={`${youCell} text-center`}>
           <input
             className="input w-[50px] tabular-nums text-center"
