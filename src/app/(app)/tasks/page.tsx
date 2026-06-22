@@ -22,7 +22,7 @@ export default async function TasksPage() {
       <TasksPanel
         chats={chats}
         accountants={accountants}
-        initialTasks={tasks.slice(0, 100)}
+        initialTasks={tasks.slice(0, 1000)}
       />
     </div>
   );

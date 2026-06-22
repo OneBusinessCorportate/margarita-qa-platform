@@ -16,6 +16,7 @@ export const TABLES = {
   users: `${PREFIX}users`,
   violations: `${PREFIX}violations`,
   activeExclusions: `${PREFIX}active_exclusions`,
+  activeInclusions: `${PREFIX}active_inclusions`,
   reportSnapshots: `${PREFIX}report_snapshots`,
   chatActivity: `${PREFIX}chat_activity`,
   unanswered: `${PREFIX}unanswered`,

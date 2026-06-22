@@ -2,6 +2,7 @@ import ScoringPanel from "@/components/ScoringPanel";
 import {
   listAccountants,
   listActiveExclusions,
+  listActiveInclusions,
   listChatActivity,
   listChats,
   listEvaluations,
@@ -17,15 +18,23 @@ export default async function ScoringPage() {
   const activityFrom = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
-  const [chats, accountants, evaluations, tasks, exclusions, chatActivity] =
-    await Promise.all([
-      listChats(),
-      listAccountants(),
-      listEvaluations({}),
-      listTasks(),
-      listActiveExclusions(),
-      listChatActivity(activityFrom),
-    ]);
+  const [
+    chats,
+    accountants,
+    evaluations,
+    tasks,
+    exclusions,
+    inclusions,
+    chatActivity,
+  ] = await Promise.all([
+    listChats(),
+    listAccountants(),
+    listEvaluations({}),
+    listTasks(),
+    listActiveExclusions(),
+    listActiveInclusions(),
+    listChatActivity(activityFrom),
+  ]);
 
   // Default the day view to the most recent day chats were ACTUALLY active
   // (real chat activity from the live feed, kept current by the sync — normally
@@ -58,6 +67,7 @@ export default async function ScoringPage() {
         aiModel={aiModel}
         latestActivityDate={latestActivityDate}
         initialExclusions={exclusions}
+        initialInclusions={inclusions}
         chatActivity={chatActivity}
         taskActivity={tasks.map((t) => ({
           chat_agr_no: t.chat_agr_no,

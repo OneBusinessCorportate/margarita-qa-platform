@@ -28,6 +28,7 @@ import { debtsCellValue } from "./debts";
 import type {
   Accountant,
   ActiveExclusion,
+  ActiveInclusion,
   Chat,
   Evaluation,
   ManagerEvaluation,
@@ -527,6 +528,68 @@ export async function removeActiveExclusion(
   const s = store();
   s.activeExclusions = s.activeExclusions.filter(
     (r) => !(r.chat_agr_no === chatAgrNo && r.exclude_date === excludeDate)
+  );
+}
+
+// --- Active-list inclusions ("Добавить чат в QA вручную") -------------------
+
+/** Chats Margarita manually pulled into "Активные за день", per (chat, day). */
+export async function listActiveInclusions(): Promise<ActiveInclusion[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.activeInclusions)
+      .select("agr_no, include_date");
+    if (error) throw error;
+    return (data ?? []).map((r: any) => ({
+      chat_agr_no: r.agr_no,
+      include_date: String(r.include_date).slice(0, 10),
+    }));
+  }
+  return store().activeInclusions;
+}
+
+export async function addActiveInclusion(
+  chatAgrNo: string,
+  includeDate: string
+): Promise<void> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { error } = await sb
+      .from(TABLES.activeInclusions)
+      .upsert(
+        { agr_no: chatAgrNo, include_date: includeDate },
+        { onConflict: "agr_no,include_date" }
+      );
+    if (error) throw error;
+    return;
+  }
+  const rows = store().activeInclusions;
+  if (
+    !rows.some(
+      (r) => r.chat_agr_no === chatAgrNo && r.include_date === includeDate
+    )
+  )
+    rows.push({ chat_agr_no: chatAgrNo, include_date: includeDate });
+}
+
+export async function removeActiveInclusion(
+  chatAgrNo: string,
+  includeDate: string
+): Promise<void> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { error } = await sb
+      .from(TABLES.activeInclusions)
+      .delete()
+      .eq("agr_no", chatAgrNo)
+      .eq("include_date", includeDate);
+    if (error) throw error;
+    return;
+  }
+  const s = store();
+  s.activeInclusions = s.activeInclusions.filter(
+    (r) => !(r.chat_agr_no === chatAgrNo && r.include_date === includeDate)
   );
 }
 

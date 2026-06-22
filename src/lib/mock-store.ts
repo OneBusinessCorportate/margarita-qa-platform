@@ -3,6 +3,7 @@
 import type {
   Accountant,
   ActiveExclusion,
+  ActiveInclusion,
   Chat,
   Evaluation,
   ManagerEvaluation,
@@ -31,6 +32,7 @@ interface Store {
   violations: Violation[];
   managerEvaluations: ManagerEvaluation[];
   activeExclusions: ActiveExclusion[];
+  activeInclusions: ActiveInclusion[];
   reportSnapshots: ReportSnapshot[];
 }
 
@@ -48,6 +50,7 @@ export function store(): Store {
       violations: [],
       managerEvaluations: [],
       activeExclusions: [],
+      activeInclusions: [],
       reportSnapshots: [],
     };
   }

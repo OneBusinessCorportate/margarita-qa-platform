@@ -27,17 +27,20 @@ import {
   isNewChat,
   isTelegramLink,
   latestActivityKey,
+  matchesChatQuery,
   waitingLabel,
   type SortBy,
 } from "@/lib/chat-list";
 import type {
   Accountant,
   ActiveExclusion,
+  ActiveInclusion,
   Chat,
   Evaluation,
   MonthlyStatus,
 } from "@/lib/types";
 import BandChip from "./BandChip";
+import ViolationModal from "./ViolationModal";
 
 /** Everything carried forward from the most recent check before the chosen date. */
 interface PrevCheck {
@@ -80,6 +83,7 @@ export default function ScoringPanel({
   chatActivity = [],
   latestActivityDate = null,
   initialExclusions = [],
+  initialInclusions = [],
 }: {
   chats: Chat[];
   accountants: Accountant[];
@@ -89,6 +93,7 @@ export default function ScoringPanel({
   chatActivity?: { chat_agr_no: string; date: string; at?: string | null }[];
   latestActivityDate?: string | null;
   initialExclusions?: ActiveExclusion[];
+  initialInclusions?: ActiveInclusion[];
 }) {
   const router = useRouter();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
@@ -112,6 +117,17 @@ export default function ScoringPanel({
   const [excluded, setExcluded] = useState<Set<string>>(
     () => new Set(initialExclusions.map((e) => `${e.chat_agr_no}|${e.exclude_date}`))
   );
+  // Chats QA manually ADDED to "Активные за день" (item 5 / "ручное добавление в
+  // QA"), keyed `${agr_no}|${date}` — the mirror of `excluded`.
+  const [included, setIncluded] = useState<Set<string>>(
+    () => new Set(initialInclusions.map((e) => `${e.chat_agr_no}|${e.include_date}`))
+  );
+  // The chat whose «Нарушение» popup is open (boss's request — log a violation
+  // without leaving QA). null = closed.
+  const [violationFor, setViolationFor] = useState<Chat | null>(null);
+  // "Добавить чат в QA" search box (open + query).
+  const [addOpen, setAddOpen] = useState(false);
+  const [addQuery, setAddQuery] = useState("");
   // When on, hidden chats are shown again (with a "Вернуть" button) so QA can
   // review/undo what was hidden for the day.
   const [showHidden, setShowHidden] = useState(false);
@@ -320,8 +336,11 @@ export default function ScoringPanel({
     // any message activity captured in the feed (item 6).
     for (const c of mergedChats)
       if ((c.created_date ?? "").slice(0, 10) === date) s.add(c.agr_no);
+    // Chats Margarita pulled in by hand for this day (item 5 / "ручное
+    // добавление в QA") — surfaced even if the feed never reported them active.
+    for (const c of mergedChats) if (included.has(`${c.agr_no}|${date}`)) s.add(c.agr_no);
     return s;
-  }, [chatActivity, mergedChats, lastActivityFor, taskActivity, date, repOf]);
+  }, [chatActivity, mergedChats, lastActivityFor, taskActivity, date, repOf, included]);
 
   // Precise activity time for a chat ON the selected day (from the per-day feed),
   // so the day view sorts by when the chat was actually active that day — not by
@@ -339,6 +358,47 @@ export default function ScoringPanel({
   }, [chatActivity, date, repOf]);
 
   const isHidden = (agrNo: string) => excluded.has(`${agrNo}|${date}`);
+  const isIncluded = (agrNo: string) => included.has(`${agrNo}|${date}`);
+
+  // Manually add / remove a chat to "Активные за день" for the selected day.
+  // Optimistic, with a background persist that reverts on failure — same shape
+  // as setChatHidden. Adding also clears any same-day exclusion so the chat
+  // can't be both hidden and added.
+  async function setChatIncluded(agrNo: string, include: boolean) {
+    const key = `${agrNo}|${date}`;
+    setIncluded((s) => {
+      const next = new Set(s);
+      if (include) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+    if (include && excluded.has(key)) setChatHidden(agrNo, false);
+    try {
+      const res = await fetch("/api/active-inclusions", {
+        method: include ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agr_no: agrNo, date }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+    } catch {
+      setIncluded((s) => {
+        const next = new Set(s);
+        if (include) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+    }
+  }
+
+  // Chats matching the "add to QA" query that aren't already in the day view —
+  // the picker's result list. Search by №, name or a pasted Telegram link.
+  const addCandidates = useMemo(() => {
+    const q = addQuery.trim();
+    if (!q) return [];
+    return mergedChats
+      .filter((c) => !activeTodaySet.has(c.agr_no) && matchesChatQuery(c, q))
+      .slice(0, 12);
+  }, [mergedChats, addQuery, activeTodaySet]);
 
   // How many of the day's active chats QA has hidden (drives the "Скрытые (N)"
   // toggle). Only meaningful in the day view.
@@ -665,6 +725,74 @@ export default function ScoringPanel({
         </label>
       </div>
 
+      {/* Manual "add chat to QA" (item 5 / boss: «функция ручного добавления в
+          QA»). Day view only — pull a chat into THIS day's list even if the feed
+          never surfaced it (a previous-day chat, or one missing entirely).
+          Search by № / название / вставленная ссылка Telegram. */}
+      {scope === "day" && (
+        <div className="card p-2">
+          {!addOpen ? (
+            <button
+              className="btn-secondary text-sm"
+              onClick={() => setAddOpen(true)}
+              title="Добавить чат в список «Активные за день» вручную — по № договора, названию или ссылке Telegram"
+            >
+              ➕ Добавить чат в QA
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  autoFocus
+                  className="input grow"
+                  placeholder="№ договора, название или ссылка Telegram…"
+                  value={addQuery}
+                  onChange={(e) => setAddQuery(e.target.value)}
+                />
+                <button
+                  className="btn-secondary text-sm"
+                  onClick={() => {
+                    setAddOpen(false);
+                    setAddQuery("");
+                  }}
+                >
+                  Закрыть
+                </button>
+              </div>
+              {addQuery.trim() && (
+                <div className="max-h-56 overflow-auto rounded-lg border border-gray-200 divide-y">
+                  {addCandidates.length === 0 ? (
+                    <div className="px-3 py-2 text-sm text-gray-500">
+                      Ничего не найдено (или чат уже в списке за {date}).
+                    </div>
+                  ) : (
+                    addCandidates.map((c) => (
+                      <button
+                        key={c.agr_no}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-blue-50"
+                        onClick={() => {
+                          setChatIncluded(c.agr_no, true);
+                          setAddOpen(false);
+                          setAddQuery("");
+                        }}
+                      >
+                        <span className="font-medium whitespace-nowrap">№ {c.agr_no}</span>
+                        <span className="text-gray-600 truncate">{c.chat_name}</span>
+                        {!isTelegramLink(c.chat_link) && (
+                          <span className="ml-auto text-xs text-gray-400 whitespace-nowrap">
+                            нет ссылки
+                          </span>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Scroll the wide grid inside its own box so the sticky HEADER ROW pins
           relative to THIS container. The box fills the remaining viewport
           height (flex-1), so the page never scrolls — only the grid does. The
@@ -738,6 +866,9 @@ export default function ScoringPanel({
                 aiModel={aiModel}
                 tgClient={tgClient}
                 onSaved={onSaved}
+                onLogViolation={() => setViolationFor(chat)}
+                manualAdded={scope === "day" && isIncluded(chat.agr_no)}
+                onRemoveManual={() => setChatIncluded(chat.agr_no, false)}
                 duplicateAgrs={mergedAgrs.get(chat.agr_no) ?? []}
                 hideControl={
                   scope === "day"
@@ -764,6 +895,16 @@ export default function ScoringPanel({
           </button>
         </div>
       )}
+
+      {violationFor && (
+        <ViolationModal
+          chatAgrNo={violationFor.agr_no}
+          client={violationFor.chat_name}
+          accountant={violationFor.accountant ?? null}
+          defaultDate={date}
+          onClose={() => setViolationFor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -785,6 +926,9 @@ function ChatScoreRow({
   aiModel,
   tgClient,
   onSaved,
+  onLogViolation,
+  manualAdded = false,
+  onRemoveManual,
   duplicateAgrs = [],
   hideControl = null,
 }: {
@@ -798,6 +942,9 @@ function ChatScoreRow({
   aiModel: AiModel;
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
+  onLogViolation?: () => void;
+  manualAdded?: boolean;
+  onRemoveManual?: () => void;
   duplicateAgrs?: string[];
   hideControl?: HideControl;
 }) {
@@ -1144,6 +1291,34 @@ function ChatScoreRow({
               ← перенесено с {prev?.date}
             </div>
           )}
+          {manualAdded && (
+            <div className="text-xs mt-1 flex items-center gap-1.5">
+              <span
+                className="inline-block rounded bg-emerald-100 text-emerald-700 font-medium px-1.5 py-0.5"
+                title="Чат добавлен в QA вручную за этот день"
+              >
+                ➕ добавлен вручную
+              </span>
+              {onRemoveManual && (
+                <button
+                  onClick={onRemoveManual}
+                  className="text-gray-400 hover:text-red-600 hover:underline"
+                  title="Убрать чат из списка за этот день"
+                >
+                  убрать
+                </button>
+              )}
+            </div>
+          )}
+          <div className="mt-1.5">
+            <button
+              onClick={onLogViolation}
+              className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs font-medium px-2 py-1"
+              title="Добавить нарушение по этому чату — откроется окно, запись уйдёт в «Нарушения»"
+            >
+              ⚠️ Нарушение
+            </button>
+          </div>
         </td>
         <td className={`${aiCell} text-center`}>
           <span
@@ -1453,6 +1628,9 @@ function ChatGroup({
   aiModel,
   tgClient,
   onSaved,
+  onLogViolation,
+  manualAdded = false,
+  onRemoveManual,
   duplicateAgrs = [],
   hideControl = null,
 }: {
@@ -1470,6 +1648,9 @@ function ChatGroup({
   aiModel: AiModel;
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
+  onLogViolation?: () => void;
+  manualAdded?: boolean;
+  onRemoveManual?: () => void;
   duplicateAgrs?: string[];
   hideControl?: HideControl;
 }) {
@@ -1490,6 +1671,9 @@ function ChatGroup({
         aiModel={aiModel}
         tgClient={tgClient}
         onSaved={onSaved}
+        onLogViolation={onLogViolation}
+        manualAdded={manualAdded}
+        onRemoveManual={onRemoveManual}
         duplicateAgrs={duplicateAgrs}
         hideControl={hideControl}
       />

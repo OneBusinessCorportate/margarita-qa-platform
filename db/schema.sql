@@ -173,6 +173,16 @@ create table if not exists mqa_active_exclusions (
   primary key (agr_no, exclude_date)
 );
 
+-- Chats manually pulled INTO the scoring "Активные за день" list, per (chat,
+-- day) — the mirror of mqa_active_exclusions. See
+-- db/migrations/20260622_mqa_active_inclusions.sql.
+create table if not exists mqa_active_inclusions (
+  agr_no       text not null,
+  include_date date not null,
+  created_at   timestamptz not null default now(),
+  primary key (agr_no, include_date)
+);
+
 -- Saved Отчёт snapshots (report history). The full computed report is stored as
 -- JSON so a past period can be re-opened as-was. See
 -- db/migrations/20260617_mqa_report_snapshots.sql.
@@ -189,6 +199,7 @@ create table if not exists mqa_report_snapshots (
 alter table mqa_accountants         enable row level security;
 alter table mqa_violations          enable row level security;
 alter table mqa_active_exclusions   enable row level security;
+alter table mqa_active_inclusions   enable row level security;
 alter table mqa_report_snapshots    enable row level security;
 alter table mqa_chats               enable row level security;
 alter table mqa_criteria            enable row level security;

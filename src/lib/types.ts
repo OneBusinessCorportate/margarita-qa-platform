@@ -223,3 +223,14 @@ export interface ActiveExclusion {
   chat_agr_no: string;
   exclude_date: string; // ISO date
 }
+
+/**
+ * A chat Margarita manually pulled INTO the scoring page's "Активные за день"
+ * list for a specific day — even though the activity feed didn't surface it
+ * (a chat from a previous day, or one missing from the feed). Per-(chat, day),
+ * the mirror image of ActiveExclusion. Removing it just deletes the row.
+ */
+export interface ActiveInclusion {
+  chat_agr_no: string;
+  include_date: string; // ISO date
+}

@@ -7,6 +7,7 @@ import {
   isTaskClosed,
   isTaskDue,
 } from "@/lib/scoring";
+import { matchesChatQuery } from "@/lib/chat-list";
 import type { Accountant, Chat, Task } from "@/lib/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -53,22 +54,42 @@ export default function TasksPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openOnly, setOpenOnly] = useState(true);
+  // Quick find by contract № / название / бухгалтер (item 7 — искать нужный чат
+  // среди 100+ задач вручную было неудобно; «Поиск по номеру договора — ок»).
+  const [search, setSearch] = useState("");
 
   const chatMap = useMemo(() => new Map(chats.map((c) => [c.agr_no, c])), [chats]);
   const asOf = today();
+
+  // Does a task match the search box? Matches the chat (№ / name / link via
+  // matchesChatQuery), plus the task's own accountant and description text.
+  const taskMatches = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (t: Task): boolean => {
+      if (!q) return true;
+      const chat = chatMap.get(t.chat_agr_no);
+      if (chat && matchesChatQuery(chat, q)) return true;
+      return (
+        t.chat_agr_no.toLowerCase().includes(q) ||
+        (t.accountant ?? "").toLowerCase().includes(q) ||
+        (t.description ?? "").toLowerCase().includes(q)
+      );
+    };
+  }, [search, chatMap]);
 
   // Open tasks first, with the most-overdue at the top — Margarita's chase list.
   const sorted = useMemo(() => {
     const dueKey = (t: Task) => t.due_date_postponed || t.due_date_original || "9999-99-99";
     return [...tasks]
       .filter((t) => (openOnly ? !isTaskClosed(t) : true))
+      .filter(taskMatches)
       .sort((a, b) => {
         const ao = isTaskClosed(a) ? 1 : 0;
         const bo = isTaskClosed(b) ? 1 : 0;
         if (ao !== bo) return ao - bo; // open before closed
         return dueKey(a).localeCompare(dueKey(b)); // soonest / most overdue first
       });
-  }, [tasks, openOnly]);
+  }, [tasks, openOnly, taskMatches]);
 
   const openCount = useMemo(() => tasks.filter((t) => !isTaskClosed(t)).length, [tasks]);
   const dueCount = useMemo(
@@ -141,6 +162,17 @@ export default function TasksPanel({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3 text-sm">
+        <input
+          className="input min-w-[240px] grow max-w-md"
+          placeholder="Поиск: № договора, название чата, бухгалтер…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {search && (
+          <button className="btn-secondary text-xs" onClick={() => setSearch("")}>
+            Сброс
+          </button>
+        )}
         <label className="flex items-center gap-1.5 text-gray-600">
           <input
             type="checkbox"
@@ -155,6 +187,9 @@ export default function TasksPanel({
         <span className="inline-block rounded bg-red-50 text-red-700 font-medium px-2 py-1 text-xs">
           Подошёл срок: {dueCount}
         </span>
+        {search && (
+          <span className="text-xs text-gray-400">Найдено: {sorted.length}</span>
+        )}
       </div>
 
       {error && <div className="text-sm text-red-600 px-1">{error}</div>}

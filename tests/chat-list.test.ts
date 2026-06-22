@@ -14,6 +14,8 @@ import {
   isTelegramLink,
   isUnanswered,
   latestActivityKey,
+  matchesChatQuery,
+  telegramChatId,
   waitingLabel,
 } from "../src/lib/chat-list";
 import type { Chat } from "../src/lib/types";
@@ -145,6 +147,47 @@ test("isTelegramLink accepts only real Telegram links", () => {
   assert.equal(isTelegramLink(""), false);
   assert.equal(isTelegramLink(null), false);
   assert.equal(isTelegramLink(undefined), false);
+});
+
+test("telegramChatId extracts the chat id from any Telegram link form", () => {
+  // The exact links Margarita pasted in the feedback (item 5).
+  assert.equal(telegramChatId("https://web.telegram.org/a/#-5171468893"), "-5171468893");
+  // Same conversation via the "K" client must yield the SAME id.
+  assert.equal(telegramChatId("https://web.telegram.org/k/#-5171468893"), "-5171468893");
+  // t.me invite / handle (lower-cased).
+  assert.equal(telegramChatId("https://t.me/+ajvcAOzUVsNkMzVi"), "+ajvcaozuvsnkmzvi");
+  assert.equal(telegramChatId("https://t.me/SomeHandle"), "somehandle");
+  // No id / junk values.
+  assert.equal(telegramChatId("не работаем"), null);
+  assert.equal(telegramChatId(null), null);
+  assert.equal(telegramChatId(undefined), null);
+});
+
+test("matchesChatQuery matches by №, name, agreement name and chat link", () => {
+  const c = chat({
+    agr_no: "N-6",
+    chat_name: "ИП Александр Пачин N-6 RU",
+    name_agr: "Пачин А.",
+    chat_link: "https://web.telegram.org/a/#-5171468893",
+  });
+  assert.equal(matchesChatQuery(c, ""), true); // empty query matches all
+  assert.equal(matchesChatQuery(c, "n-6"), true); // contract №, case-insensitive
+  assert.equal(matchesChatQuery(c, "пачин"), true); // chat name
+  assert.equal(matchesChatQuery(c, "Пачин А."), true); // agreement name
+  assert.equal(matchesChatQuery(c, "777"), false); // no match
+});
+
+test("matchesChatQuery finds a chat by a pasted Telegram link across clients", () => {
+  const c = chat({
+    agr_no: "59",
+    chat_name: "Chat 59",
+    // stored as the "K" client...
+    chat_link: "https://web.telegram.org/k/#-5171468893",
+  });
+  // ...but Margarita pastes the "A" client link → still matches by chat id.
+  assert.equal(matchesChatQuery(c, "https://web.telegram.org/a/#-5171468893"), true);
+  // A different chat id must NOT match.
+  assert.equal(matchesChatQuery(c, "https://web.telegram.org/a/#-4962919740"), false);
 });
 
 test("isUnanswered is true only when the client had the last word", () => {

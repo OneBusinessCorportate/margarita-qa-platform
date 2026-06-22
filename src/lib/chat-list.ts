@@ -106,6 +106,46 @@ export function hasNewMessageAfterEval(
 }
 
 /**
+ * Pull the Telegram chat id out of a link so two links to the SAME conversation
+ * match even when they use different web clients ("/a/" vs "/k/") or the chat is
+ * referenced as a t.me invite. Returns the numeric group id ("-5171468893") for
+ * web.telegram.org links, or the t.me slug, else null. Used by the search /
+ * "add to QA" box so Margarita can paste a Telegram link and land on the chat.
+ */
+export function telegramChatId(link?: string | null): string | null {
+  if (!link) return null;
+  const s = link.trim();
+  const hash = s.match(/#(-?\d+)/); // web.telegram.org/a/#-5171468893
+  if (hash) return hash[1];
+  const tme = s.match(/t\.me\/([+A-Za-z0-9_-]+)/i); // t.me/+invite or t.me/handle
+  if (tme) return tme[1].toLowerCase();
+  return null;
+}
+
+/**
+ * Does a chat match a free-text query? Matches contract №, chat name, agreement
+ * name, the raw chat link, OR — when a Telegram link is pasted — the chat's
+ * Telegram id (so a "/a/" link finds a chat stored with a "/k/" or t.me link).
+ * Shared by the scoring "add to QA" search and the Задачи search so both behave
+ * the same way. An empty query matches everything.
+ */
+export function matchesChatQuery(chat: Chat, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (
+    chat.agr_no.toLowerCase().includes(q) ||
+    chat.chat_name.toLowerCase().includes(q) ||
+    (chat.name_agr ?? "").toLowerCase().includes(q) ||
+    (chat.chat_link ?? "").toLowerCase().includes(q)
+  )
+    return true;
+  // Telegram-link paste: compare by the chat id so A/K/t.me variants all match.
+  const qid = telegramChatId(query);
+  const cid = telegramChatId(chat.chat_link);
+  return Boolean(qid && cid && qid === cid);
+}
+
+/**
  * Is `link` a usable Telegram chat link we can actually open? Many mqa_chats
  * carry a non-Telegram value in chat_link — a WhatsApp URL, placeholder text
  * ("не работаем"), or a chat name someone pasted by mistake. Rendering an
