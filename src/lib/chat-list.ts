@@ -146,6 +146,49 @@ export function matchesChatQuery(chat: Chat, query: string): boolean {
 }
 
 /**
+ * Split a pasted blob into individual search tokens — one per line, comma or
+ * semicolon. Lets Margarita paste several chats at once (her feedback listed 5
+ * Telegram links) and add them all in one go. Single spaces are NOT split, so a
+ * pasted chat name with spaces stays intact.
+ */
+export function splitQueryTokens(text: string): string[] {
+  return text
+    .split(/[\n,;|]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** A pasted token resolved to a chat (or not). */
+export interface TokenResolution {
+  matched: { token: string; chat: Chat }[];
+  /** Tokens that matched no chat in the system — surfaced to the user (item 6:
+   *  "не все чаты есть в платформе" — tells her exactly which ones are missing). */
+  unmatched: string[];
+}
+
+/**
+ * Resolve a multi-token paste to chats. Each token is matched with
+ * matchesChatQuery (№ / name / Telegram link); the first not-yet-used chat
+ * wins, so pasting N distinct links yields N distinct chats. Tokens that match
+ * nothing come back in `unmatched`.
+ */
+export function resolveChatTokens(chats: Chat[], text: string): TokenResolution {
+  const matched: { token: string; chat: Chat }[] = [];
+  const unmatched: string[] = [];
+  const used = new Set<string>();
+  for (const token of splitQueryTokens(text)) {
+    const hit = chats.find((c) => !used.has(c.agr_no) && matchesChatQuery(c, token));
+    if (hit) {
+      matched.push({ token, chat: hit });
+      used.add(hit.agr_no);
+    } else {
+      unmatched.push(token);
+    }
+  }
+  return { matched, unmatched };
+}
+
+/**
  * Is `link` a usable Telegram chat link we can actually open? Many mqa_chats
  * carry a non-Telegram value in chat_link — a WhatsApp URL, placeholder text
  * ("не работаем"), or a chat name someone pasted by mistake. Rendering an

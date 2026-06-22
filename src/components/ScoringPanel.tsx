@@ -28,6 +28,8 @@ import {
   isTelegramLink,
   latestActivityKey,
   matchesChatQuery,
+  resolveChatTokens,
+  splitQueryTokens,
   waitingLabel,
   type SortBy,
 } from "@/lib/chat-list";
@@ -390,15 +392,32 @@ export default function ScoringPanel({
     }
   }
 
-  // Chats matching the "add to QA" query that aren't already in the day view —
-  // the picker's result list. Search by №, name or a pasted Telegram link.
+  // The "add to QA" box runs in two modes:
+  //  • single token  → search-as-you-type list of matching chats not yet shown.
+  //  • multiple tokens (lines / commas — e.g. several pasted Telegram links) →
+  //    bulk: resolve each token to a chat and offer "add all", listing any that
+  //    aren't in the system (item 6 — tells her which chats are missing).
+  const addTokens = useMemo(() => splitQueryTokens(addQuery), [addQuery]);
+  const bulkMode = addTokens.length > 1;
+
   const addCandidates = useMemo(() => {
     const q = addQuery.trim();
-    if (!q) return [];
+    if (bulkMode || !q) return [];
     return mergedChats
       .filter((c) => !activeTodaySet.has(c.agr_no) && matchesChatQuery(c, q))
       .slice(0, 12);
-  }, [mergedChats, addQuery, activeTodaySet]);
+  }, [mergedChats, addQuery, activeTodaySet, bulkMode]);
+
+  const bulkResolved = useMemo(
+    () => (bulkMode ? resolveChatTokens(mergedChats, addQuery) : null),
+    [bulkMode, mergedChats, addQuery]
+  );
+
+  function addManyToQa(agrNos: string[]) {
+    for (const agr of agrNos) setChatIncluded(agr, true);
+    setAddOpen(false);
+    setAddQuery("");
+  }
 
   // How many of the day's active chats QA has hidden (drives the "Скрытые (N)"
   // toggle). Only meaningful in the day view.
@@ -741,11 +760,12 @@ export default function ScoringPanel({
             </button>
           ) : (
             <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <input
+              <div className="flex items-start gap-2">
+                <textarea
                   autoFocus
-                  className="input grow"
-                  placeholder="№ договора, название или ссылка Telegram…"
+                  rows={addQuery.includes("\n") ? 4 : 1}
+                  className="input grow resize-y min-h-[38px]"
+                  placeholder="№ договора, название или ссылка Telegram. Несколько — по одной в строке."
                   value={addQuery}
                   onChange={(e) => setAddQuery(e.target.value)}
                 />
@@ -759,11 +779,64 @@ export default function ScoringPanel({
                   Закрыть
                 </button>
               </div>
-              {addQuery.trim() && (
+
+              {/* Bulk mode: several tokens pasted (e.g. her 5 Telegram links). */}
+              {bulkMode && bulkResolved && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm">
+                    <button
+                      className="btn-primary"
+                      disabled={bulkResolved.matched.length === 0}
+                      onClick={() =>
+                        addManyToQa(bulkResolved.matched.map((m) => m.chat.agr_no))
+                      }
+                    >
+                      ➕ Добавить все ({bulkResolved.matched.length})
+                    </button>
+                    {bulkResolved.unmatched.length > 0 && (
+                      <span className="text-amber-700">
+                        не найдено в системе: {bulkResolved.unmatched.length}
+                      </span>
+                    )}
+                  </div>
+                  {bulkResolved.matched.length > 0 && (
+                    <div className="max-h-40 overflow-auto rounded-lg border border-gray-200 divide-y text-sm">
+                      {bulkResolved.matched.map((m) => (
+                        <div key={m.chat.agr_no} className="flex items-center gap-2 px-3 py-1.5">
+                          <span className="font-medium whitespace-nowrap">№ {m.chat.agr_no}</span>
+                          <span className="text-gray-600 truncate">{m.chat.chat_name}</span>
+                          {activeTodaySet.has(m.chat.agr_no) && (
+                            <span className="ml-auto text-xs text-green-600 whitespace-nowrap">
+                              уже в списке
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {bulkResolved.unmatched.length > 0 && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-800">
+                      <div className="font-medium mb-1">
+                        Этих чатов нет в системе (нельзя добавить):
+                      </div>
+                      <ul className="space-y-0.5 break-all">
+                        {bulkResolved.unmatched.map((t) => (
+                          <li key={t}>• {t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Single search-as-you-type. */}
+              {!bulkMode && addQuery.trim() && (
                 <div className="max-h-56 overflow-auto rounded-lg border border-gray-200 divide-y">
                   {addCandidates.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-gray-500">
-                      Ничего не найдено (или чат уже в списке за {date}).
+                      {/(web\.telegram\.org|t\.me)\//.test(addQuery)
+                        ? "Чат с этой ссылкой не найден в системе."
+                        : `Ничего не найдено (или чат уже в списке за ${date}).`}
                     </div>
                   ) : (
                     addCandidates.map((c) => (
@@ -901,6 +974,7 @@ export default function ScoringPanel({
           chatAgrNo={violationFor.agr_no}
           client={violationFor.chat_name}
           accountant={violationFor.accountant ?? null}
+          chatLink={violationFor.chat_link ?? null}
           defaultDate={date}
           onClose={() => setViolationFor(null)}
         />

@@ -5,6 +5,7 @@ import {
   VIOLATION_SEVERITIES,
   violationTypeOptions,
 } from "@/lib/violations";
+import { isTelegramLink } from "@/lib/chat-list";
 import type { Violation } from "@/lib/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -20,6 +21,7 @@ export default function ViolationModal({
   chatAgrNo,
   client,
   accountant,
+  chatLink = null,
   defaultDate,
   onClose,
   onSaved,
@@ -27,6 +29,7 @@ export default function ViolationModal({
   chatAgrNo: string | null;
   client: string | null;
   accountant: string | null;
+  chatLink?: string | null;
   defaultDate?: string;
   onClose: () => void;
   onSaved?: (v: Violation) => void;
@@ -111,9 +114,22 @@ export default function ViolationModal({
           </button>
         </div>
 
-        <div className="text-xs text-gray-500">
-          {client ?? chatAgrNo ?? "—"}
-          {chatAgrNo && <span className="text-gray-400"> · № {chatAgrNo}</span>}
+        <div className="text-xs text-gray-500 flex items-center gap-2">
+          <span>
+            {client ?? chatAgrNo ?? "—"}
+            {chatAgrNo && <span className="text-gray-400"> · № {chatAgrNo}</span>}
+          </span>
+          {isTelegramLink(chatLink) && (
+            <a
+              href={chatLink!}
+              target="telegram_chat"
+              rel="noreferrer"
+              className="text-blue-600 hover:underline whitespace-nowrap"
+              title="Открыть чат в Telegram, чтобы перепроверить перед фиксацией"
+            >
+              Открыть в Telegram ↗
+            </a>
+          )}
         </div>
 
         {done ? (

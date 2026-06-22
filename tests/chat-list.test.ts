@@ -15,6 +15,8 @@ import {
   isUnanswered,
   latestActivityKey,
   matchesChatQuery,
+  resolveChatTokens,
+  splitQueryTokens,
   telegramChatId,
   waitingLabel,
 } from "../src/lib/chat-list";
@@ -188,6 +190,41 @@ test("matchesChatQuery finds a chat by a pasted Telegram link across clients", (
   assert.equal(matchesChatQuery(c, "https://web.telegram.org/a/#-5171468893"), true);
   // A different chat id must NOT match.
   assert.equal(matchesChatQuery(c, "https://web.telegram.org/a/#-4962919740"), false);
+});
+
+test("splitQueryTokens splits on lines / commas but keeps names with spaces", () => {
+  assert.deepEqual(
+    splitQueryTokens("https://web.telegram.org/a/#-1\nhttps://web.telegram.org/a/#-2"),
+    ["https://web.telegram.org/a/#-1", "https://web.telegram.org/a/#-2"]
+  );
+  assert.deepEqual(splitQueryTokens("59, 118 ; N-6"), ["59", "118", "N-6"]);
+  // A single chat name with spaces is one token, not split.
+  assert.deepEqual(splitQueryTokens("ИП Александр Пачин"), ["ИП Александр Пачин"]);
+  assert.deepEqual(splitQueryTokens("   "), []);
+});
+
+test("resolveChatTokens resolves a multi-link paste to distinct chats", () => {
+  const chats = [
+    chat({ agr_no: "1", chat_link: "https://web.telegram.org/a/#-5171468893" }),
+    chat({ agr_no: "2", chat_link: "https://web.telegram.org/k/#-4962919740" }),
+    chat({ agr_no: "59", chat_name: "ИП Пачин" }),
+  ];
+  const { matched, unmatched } = resolveChatTokens(
+    chats,
+    // two of her pasted links (one via the other web client) + a № + a missing one
+    "https://web.telegram.org/a/#-5171468893\nhttps://web.telegram.org/a/#-4962919740\n59\nhttps://web.telegram.org/a/#-9999999999"
+  );
+  assert.deepEqual(matched.map((m) => m.chat.agr_no), ["1", "2", "59"]);
+  // The chat absent from the system is reported back (item 6 transparency).
+  assert.deepEqual(unmatched, ["https://web.telegram.org/a/#-9999999999"]);
+});
+
+test("resolveChatTokens never returns the same chat twice", () => {
+  const chats = [chat({ agr_no: "1", chat_name: "Дубль" })];
+  const { matched, unmatched } = resolveChatTokens(chats, "1\nДубль");
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].chat.agr_no, "1");
+  assert.deepEqual(unmatched, ["Дубль"]); // second token had no unused chat left
 });
 
 test("isUnanswered is true only when the client had the last word", () => {
