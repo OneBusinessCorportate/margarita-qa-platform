@@ -1,26 +1,29 @@
 // ---------------------------------------------------------------------------
 // Keyword-based mailing detector for Russian-language accountant messages.
 //
-// Maps a message text to a list of (category, status, priority) signals.
-// Each rule fires when ALL its required patterns match (case-insensitive).
-// Where two rules match the same category, the one with higher priority wins.
-//
-// Used both by the TypeScript API route (/api/mailings/detect) and as a
-// reference spec — the SQL function in the migration mirrors these patterns.
+// Each rule tags a message with a signal TYPE — the API route counts signals
+// per (chat, category, type) across all messages in a period to derive the
+// correct graduated status ("Запросил 2" after two requests, "2-й написал"
+// after two debt follow-ups, etc.).
 // ---------------------------------------------------------------------------
+
+/**
+ * Signal type tags — describe what the accountant did in the message:
+ *   done  — completed the action (sent taxes, received docs, received salary)
+ *   req   — made a request / wrote the client (asked for docs, wrote about debt)
+ *   call  — made a phone call (called about debt)
+ *   paid  — client paid the debt (no debt remaining)
+ */
+export type SignalType = "done" | "req" | "call" | "paid";
 
 export interface MailingSignal {
   category: "main_taxes" | "salary" | "primary_docs" | "debts";
-  status: string;
-  /** Higher = take this status over a lower-priority one for the same category. */
-  priority: number;
+  type: SignalType;
 }
 
 interface Rule {
   category: MailingSignal["category"];
-  status: string;
-  priority: number;
-  /** All regex must match the message (AND logic). */
+  type: SignalType;
   all: RegExp[];
 }
 
@@ -28,8 +31,7 @@ const RULES: Rule[] = [
   // --- main_taxes -----------------------------------------------------------
   {
     category: "main_taxes",
-    status: "Отправил",
-    priority: 20,
+    type: "done",
     all: [
       /(налог|декларац|ндс|налогов)/i,
       /(отправ|подан|сдан|направил|загрузил|выгрузил|сдала|отправила)/i,
@@ -39,8 +41,7 @@ const RULES: Rule[] = [
   // --- salary ---------------------------------------------------------------
   {
     category: "salary",
-    status: "Получил",
-    priority: 20,
+    type: "done",
     all: [
       /(зарплат|ведомост|\bзп\b|авансовый\s+отчет|авансов)/i,
       /(получ|пришл|прислал|подпис|сдал|предоставил|скинул|сбросил|прислала|получила|пришла)/i,
@@ -48,8 +49,7 @@ const RULES: Rule[] = [
   },
   {
     category: "salary",
-    status: "Запросил 1, не получил",
-    priority: 10,
+    type: "req",
     all: [
       /(зарплат|ведомост|\bзп\b)/i,
       /(запрос|прошу|просьб|нужн|пришлит|отправьт|скиньт|передайт|пожалуйст)/i,
@@ -59,8 +59,7 @@ const RULES: Rule[] = [
   // --- primary_docs ---------------------------------------------------------
   {
     category: "primary_docs",
-    status: "Получил",
-    priority: 20,
+    type: "done",
     all: [
       /(первичн|первичк|акт[ыа]?\b|документ|накладн|счет-факт|счёт-факт)/i,
       /(получ|пришл|прислал|сдал|предоставил|скинул|передал|прислала|получила|пришла)/i,
@@ -68,8 +67,7 @@ const RULES: Rule[] = [
   },
   {
     category: "primary_docs",
-    status: "Запросил 1, не получил",
-    priority: 10,
+    type: "req",
     all: [
       /(первичн|первичк|акт[ыа]?\b|документ|накладн)/i,
       /(запрос|прошу|просьб|нужн|пришлит|отправьт|скиньт|передайт|пожалуйст)/i,
@@ -79,8 +77,15 @@ const RULES: Rule[] = [
   // --- debts ----------------------------------------------------------------
   {
     category: "debts",
-    status: "1-й позвонил",
-    priority: 20,
+    type: "paid",
+    all: [
+      /(долг|задолженност|задолж)/i,
+      /(оплатил|оплатила|оплата\s+прошла|погашен|погасил|закрыт|закрыта|нет\s+долга|нет\s+задолж)/i,
+    ],
+  },
+  {
+    category: "debts",
+    type: "call",
     all: [
       /(долг|задолженност)/i,
       /(позвон|звонил|звонок|обзвон|перезвон)/i,
@@ -88,8 +93,7 @@ const RULES: Rule[] = [
   },
   {
     category: "debts",
-    status: "1-й написал",
-    priority: 10,
+    type: "req",
     all: [
       /(долг|задолженност)/i,
       /(написал|написала|напоминани|уведомил|сообщил|написали|напомнил)/i,
@@ -97,21 +101,51 @@ const RULES: Rule[] = [
   },
 ];
 
-/** Classify a single message text. Returns one signal per matching category (highest priority). */
-export function detectMailings(text: string): MailingSignal[] {
+/** All signals fired by a single message (may be several categories). */
+export function detectAllSignals(text: string): MailingSignal[] {
   if (!text || text.length < 4) return [];
-
-  const best = new Map<MailingSignal["category"], MailingSignal>();
+  const out: MailingSignal[] = [];
   for (const rule of RULES) {
-    if (!rule.all.every((re) => re.test(text))) continue;
-    const prev = best.get(rule.category);
-    if (!prev || rule.priority > prev.priority) {
-      best.set(rule.category, {
-        category: rule.category,
-        status: rule.status,
-        priority: rule.priority,
-      });
+    if (rule.all.every((re) => re.test(text))) {
+      out.push({ category: rule.category, type: rule.type });
     }
   }
-  return [...best.values()];
+  return out;
+}
+
+/**
+ * Derive the final mailing status for a category from accumulated signal
+ * counts across all messages in a period. Call this after counting signals
+ * from every message.
+ */
+export function deriveStatus(
+  category: string,
+  counts: { done: number; req: number; call: number; paid: number }
+): string | null {
+  switch (category) {
+    case "main_taxes":
+      return counts.done >= 1 ? "Отправил" : null;
+
+    case "salary":
+      if (counts.done >= 1) return "Получил";
+      if (counts.req >= 2) return "Запросил 2, не получил";
+      if (counts.req === 1) return "Запросил 1, не получил";
+      return null;
+
+    case "primary_docs":
+      if (counts.done >= 1) return "Получил";
+      if (counts.req >= 2) return "Запросил 2, не получил";
+      if (counts.req === 1) return "Запросил 1, не получил";
+      return null;
+
+    case "debts":
+      if (counts.paid >= 1) return "Нет долга";
+      if (counts.call >= 1) return "1-й позвонил";
+      if (counts.req >= 2) return "2-й написал";
+      if (counts.req === 1) return "1-й написал";
+      return null;
+
+    default:
+      return null;
+  }
 }

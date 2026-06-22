@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/supabase/server";
-import { detectMailings } from "@/lib/mailings-detect";
+import { detectAllSignals, deriveStatus } from "@/lib/mailings-detect";
 import { telegramChatId } from "@/lib/chat-list";
 
 export const dynamic = "force-dynamic";
@@ -11,11 +11,11 @@ export const maxDuration = 120;
  * Body (optional): { period?: "YYYYMM" }   defaults to current Yerevan month
  *
  * Scans accountant messages in public.messages for the given period,
- * classifies them by mailing category (taxes / salary / docs / debts), and
- * upserts the best-detected status per (chat, category) into mqa_chat_mailings.
- * Manual-confirmed rows (source = 'manual') are never overwritten.
+ * counts signal types per (chat, category), derives the graduated mailing
+ * status (e.g. "Запросил 2" after two requests), and upserts into
+ * mqa_chat_mailings. Manual-confirmed rows (source='manual') are protected.
  *
- * Also callable as GET for a quick health / trigger (body is ignored).
+ * Also callable as GET for a quick health-check or scheduled trigger.
  */
 export async function POST(req: Request) {
   return run(req);
@@ -55,30 +55,26 @@ async function run(req?: Request) {
   );
   const periodEnd = nextMonth.toISOString().slice(0, 10);
 
-  // Load all active chats + their Telegram chat ids.
+  // Load active chats and build chat_id → agr_no map.
   const { data: chats, error: chatsErr } = await sb
     .from("mqa_chats")
     .select("agr_no, chat_link")
     .eq("status", "Active")
     .not("chat_link", "is", null);
-  if (chatsErr) {
-    return NextResponse.json({ error: chatsErr.message }, { status: 502 });
-  }
+  if (chatsErr) return NextResponse.json({ error: chatsErr.message }, { status: 502 });
 
-  // Build a map: Telegram chat_id (string) → agr_no
   const chatIdToAgr = new Map<string, string>();
   for (const c of chats ?? []) {
     const cid = telegramChatId(c.chat_link as string | null);
     if (cid) chatIdToAgr.set(cid, c.agr_no as string);
   }
-
   if (chatIdToAgr.size === 0) {
     return NextResponse.json({ period, messages_scanned: 0, upserted: 0 });
   }
 
-  // Fetch accountant messages in the period (page through PostgREST limit).
+  // Fetch accountant messages in the period.
   const PAGE = 1000;
-  const allMessages: { chat_id: string; text: string; created_at: string }[] = [];
+  const allMessages: { chat_id: string | number; text: string; created_at: string }[] = [];
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await sb
       .from("messages")
@@ -94,51 +90,41 @@ async function run(req?: Request) {
     if (batch.length < PAGE) break;
   }
 
-  // Classify messages and accumulate best signal per (agr_no, category).
-  type BestKey = string; // `${agr_no}|${category}`
-  const best = new Map<
-    BestKey,
-    { agr_no: string; category: string; status: string; priority: number; detected_at: string }
+  // Count signals per (agr_no, category, type).
+  type CountKey = string; // `${agr_no}|${category}`
+  const counters = new Map<
+    CountKey,
+    { agr_no: string; category: string; done: number; req: number; call: number; paid: number; latestAt: string }
   >();
 
   for (const msg of allMessages) {
     const agr_no = chatIdToAgr.get(String(msg.chat_id));
     if (!agr_no) continue;
 
-    for (const signal of detectMailings(msg.text)) {
-      const key: BestKey = `${agr_no}|${signal.category}`;
-      const prev = best.get(key);
-      if (!prev || signal.priority > prev.priority) {
-        best.set(key, {
-          agr_no,
-          category: signal.category,
-          status: signal.status,
-          priority: signal.priority,
-          detected_at: msg.created_at,
-        });
+    for (const signal of detectAllSignals(msg.text)) {
+      const key: CountKey = `${agr_no}|${signal.category}`;
+      if (!counters.has(key)) {
+        counters.set(key, { agr_no, category: signal.category, done: 0, req: 0, call: 0, paid: 0, latestAt: msg.created_at });
       }
+      const c = counters.get(key)!;
+      c[signal.type]++;
+      if (msg.created_at > c.latestAt) c.latestAt = msg.created_at;
     }
   }
 
-  if (best.size === 0) {
+  // Derive graduated status from counts.
+  type Derived = { agr_no: string; category: string; status: string; detected_at: string };
+  const derived: Derived[] = [];
+  for (const [, c] of counters) {
+    const status = deriveStatus(c.category, c);
+    if (status) derived.push({ agr_no: c.agr_no, category: c.category, status, detected_at: c.latestAt });
+  }
+
+  if (derived.length === 0) {
     return NextResponse.json({ period, messages_scanned: allMessages.length, upserted: 0 });
   }
 
-  // Upsert detected rows into mqa_chat_mailings.
-  // Manual-confirmed rows are excluded via the SQL WHERE clause.
-  const rows = [...best.values()].map(({ agr_no, category, status, detected_at }) => ({
-    agr_no,
-    period,
-    category,
-    status,
-    source: "telegram",
-    detected_at,
-    updated_at: new Date().toISOString(),
-  }));
-
-  // We can't express "only update if source != 'manual'" in a single PostgREST
-  // upsert, so we use a raw SQL call via rpc, falling back to a manual filter loop.
-  // Strategy: first load existing manual rows, then skip those in the upsert.
+  // Load manual rows so we never overwrite them.
   const { data: manualRows } = await sb
     .from("mqa_chat_mailings")
     .select("agr_no, category")
@@ -149,23 +135,30 @@ async function run(req?: Request) {
     (manualRows ?? []).map((r: { agr_no: string; category: string }) => `${r.agr_no}|${r.category}`)
   );
 
-  const upsertRows = rows.filter(
-    (r) => !manualSet.has(`${r.agr_no}|${r.category}`)
-  );
+  const upsertRows = derived
+    .filter((r) => !manualSet.has(`${r.agr_no}|${r.category}`))
+    .map((r) => ({
+      agr_no: r.agr_no,
+      period,
+      category: r.category,
+      status: r.status,
+      source: "telegram",
+      detected_at: r.detected_at,
+      updated_at: new Date().toISOString(),
+    }));
 
   if (upsertRows.length > 0) {
     const { error: upsertErr } = await sb
       .from("mqa_chat_mailings")
       .upsert(upsertRows, { onConflict: "agr_no,period,category" });
-    if (upsertErr) {
-      return NextResponse.json({ error: upsertErr.message }, { status: 502 });
-    }
+    if (upsertErr) return NextResponse.json({ error: upsertErr.message }, { status: 502 });
   }
 
   return NextResponse.json({
     period,
     messages_scanned: allMessages.length,
-    signals_detected: best.size,
+    signals_counted: counters.size,
+    statuses_derived: derived.length,
     upserted: upsertRows.length,
     skipped_manual: manualSet.size,
   });

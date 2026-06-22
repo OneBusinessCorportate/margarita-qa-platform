@@ -145,6 +145,7 @@ export default function ScoringPanel({
   const [addQuery, setAddQuery] = useState("");
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [detectingMailings, setDetectingMailings] = useState(false);
   // When on, hidden chats are shown again (with a "Вернуть" button) so QA can
   // review/undo what was hidden for the day.
   const [showHidden, setShowHidden] = useState(false);
@@ -166,6 +167,17 @@ export default function ScoringPanel({
       window.localStorage.setItem("qa_tg_client", c);
     } catch {
       /* ignore storage errors */
+    }
+  }
+
+  // Trigger a mailing detection scan for the current month, then refresh.
+  async function runMailingDetect() {
+    setDetectingMailings(true);
+    try {
+      await fetch("/api/mailings/detect", { method: "POST" });
+      router.refresh();
+    } finally {
+      setDetectingMailings(false);
     }
   }
 
@@ -679,6 +691,14 @@ export default function ScoringPanel({
             title="Список обновляется автоматически каждые 40 минут"
           >
             Обновить ⟳
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={runMailingDetect}
+            disabled={detectingMailings}
+            title="Сканировать сообщения бухгалтеров за текущий месяц и обновить статусы рассылок (налоги / ЗП / первичка / долги)"
+          >
+            {detectingMailings ? "Сканирую…" : "Рассылки ↺"}
           </button>
           {scope === "day" && (hiddenCount > 0 || showHidden) && (
             <button
