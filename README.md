@@ -112,6 +112,22 @@ Web Service, регион **Frankfurt**, Node runtime:
 
 Файл `render.yaml` присутствует для blueprint-деплоя.
 
+## Деплой на Vercel (бесплатно)
+
+Приложение — обычный Next.js (App Router), Vercel определяет всё
+автоматически и собирает без лимита на минуты сборки (бесплатный тариф
+Hobby). `render.yaml` / `start`-команда там не нужны — игнорируются.
+
+1. Зайдите на **vercel.com** и войдите через GitHub (бесплатно).
+2. **Add New → Project** → импортируйте репозиторий
+   `OneBusinessCorportate/margarita-qa-platform`, ветка **main**.
+3. Framework определится как **Next.js** — Build/Output оставьте по умолчанию.
+4. Добавьте переменные окружения (Environment Variables) — те же, что в
+   таблице выше. Секреты (`SUPABASE_SERVICE_ROLE_KEY`, `AUTH_USERS`,
+   `ANTHROPIC_API_KEY`, `ONEBUSINESS_*`) скопируйте из Render → Environment.
+   `AUTH_SECRET` сгенерируйте заново: `openssl rand -base64 32`.
+5. **Deploy**. Дальше каждый push в `main` деплоится автоматически.
+
 ## Открытые вопросы (требуют ввода Маргариты)
 
 Помечены в коде как `// TODO(margarita):`:
