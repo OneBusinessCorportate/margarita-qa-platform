@@ -125,6 +125,9 @@ export default function ScoringPanel({
   const [search, setSearch] = useState("");
   const [accFilters, setAccFilters] = useState<string[]>([]);
   const [onlyUnscored, setOnlyUnscored] = useState(false);
+  // Complement of onlyUnscored: show ONLY chats already rated for this date.
+  // The two are mutually exclusive (toggling one clears the other).
+  const [onlyRated, setOnlyRated] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
   const [hideStale, setHideStale] = useState(false);
   // Default to the link's NATIVE "A" client. Rewriting the stored web.telegram.org/a/
@@ -520,6 +523,7 @@ export default function ScoringPanel({
       if (accFilters.length && !(c.accountant && accFilters.includes(c.accountant)))
         return false;
       if (onlyUnscored && evalForDate.has(c.agr_no)) return false;
+      if (onlyRated && !evalForDate.has(c.agr_no)) return false;
       // Free-text search incl. a pasted Telegram link: matchesChatQuery matches
       // №, chat name, agreement name, the raw chat link AND the Telegram chat id
       // (so an /a/, /k/ or t.me link all find the chat). Plus a merged sibling's
@@ -532,7 +536,7 @@ export default function ScoringPanel({
         return false;
       return true;
     });
-  }, [mergedChats, mergedAgrs, search, accFilters, onlyUnscored, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
+  }, [mergedChats, mergedAgrs, search, accFilters, onlyUnscored, onlyRated, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
 
   // The list order. By default chats are ordered by most recent real activity
   // (the order Margarita expects); she can switch to "problem chats on top" or
@@ -554,11 +558,12 @@ export default function ScoringPanel({
         activeOnly,
         hideStale,
         onlyUnscored,
+        onlyRated,
         showHidden,
         accFilters,
         search,
       ]),
-    [scope, date, sortBy, activeOnly, hideStale, onlyUnscored, showHidden, accFilters, search]
+    [scope, date, sortBy, activeOnly, hideStale, onlyUnscored, onlyRated, showHidden, accFilters, search]
   );
   const orderRef = useRef<{ sig: string; ids: string[] }>({ sig: "", ids: [] });
 
@@ -619,7 +624,7 @@ export default function ScoringPanel({
   // When the filtered set changes, snap back to the first page.
   useEffect(() => {
     setVisibleCount(PAGE);
-  }, [search, accFilters, onlyUnscored, activeOnly, hideStale, scope, date, sortBy]);
+  }, [search, accFilters, onlyUnscored, onlyRated, activeOnly, hideStale, scope, date, sortBy]);
 
   // Changing the day (or leaving the day view) re-hides hidden chats.
   useEffect(() => {
@@ -809,9 +814,26 @@ export default function ScoringPanel({
           <input
             type="checkbox"
             checked={onlyUnscored}
-            onChange={(e) => setOnlyUnscored(e.target.checked)}
+            onChange={(e) => {
+              setOnlyUnscored(e.target.checked);
+              if (e.target.checked) setOnlyRated(false);
+            }}
           />
           Только неоценённые
+        </label>
+        <label
+          className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5"
+          title="Показать только чаты, уже оценённые за выбранную дату"
+        >
+          <input
+            type="checkbox"
+            checked={onlyRated}
+            onChange={(e) => {
+              setOnlyRated(e.target.checked);
+              if (e.target.checked) setOnlyUnscored(false);
+            }}
+          />
+          Только оценённые
         </label>
         <label className="flex items-center gap-1.5 text-sm text-gray-600 pb-1.5">
           <input
