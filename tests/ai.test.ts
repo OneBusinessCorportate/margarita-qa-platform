@@ -14,6 +14,7 @@ function evalRow(over: Partial<Evaluation>): Evaluation {
     chat_agr_no: "59",
     period: "202606",
     checking_date: "2026-06-10",
+    role: "accountant",
     accountant: "Գայանե",
     scores: {},
     total_score: 100,
@@ -158,7 +159,7 @@ test("recency: recent evaluations outweigh old ones", () => {
   const p = predictEvaluation("Գայանե", {}, model);
   // The recent 2/2 dominates the 5-month-old 5/5 → prediction is low, not the
   // plain mean (which would round to 4).
-  assert.ok(p.criteria.accuracy <= 3, `accuracy ${p.criteria.accuracy} should be low`);
+  assert.ok(p.criteria.accuracy! <= 3, `accuracy ${p.criteria.accuracy} should be low`);
 });
 
 test("shrinkage: a 1-sample accountant is pulled toward the global average", () => {
@@ -171,7 +172,7 @@ test("shrinkage: a 1-sample accountant is pulled toward the global average", () 
   const model = trainAiModel(history);
   // B has a single perfect chat, but the global average is ~2.75 → shrunk below 5.
   const b = predictEvaluation("B", {}, model);
-  assert.ok(b.criteria.accuracy < 5, `B accuracy ${b.criteria.accuracy} should be shrunk`);
+  assert.ok(b.criteria.accuracy! < 5, `B accuracy ${b.criteria.accuracy} should be shrunk`);
   // A has 3 consistent chats → stays at its own pattern.
   const a = predictEvaluation("A", {}, model);
   assert.equal(a.criteria.accuracy, 2);

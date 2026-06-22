@@ -117,6 +117,11 @@ export function telegramChatId(link?: string | null): string | null {
   const s = link.trim();
   const hash = s.match(/#(-?\d+)/); // web.telegram.org/a/#-5171468893
   if (hash) return hash[1];
+  // Private group/channel link (t.me/c/<internal id>/<msg>): the id is the
+  // digits after "/c/", not the literal "c" the generic rule below would grab —
+  // otherwise every private chat would collapse to the same id.
+  const privateGroup = s.match(/t\.me\/c\/(\d+)/i);
+  if (privateGroup) return `c${privateGroup[1]}`;
   const tme = s.match(/t\.me\/([+A-Za-z0-9_-]+)/i); // t.me/+invite or t.me/handle
   if (tme) return tme[1].toLowerCase();
   return null;

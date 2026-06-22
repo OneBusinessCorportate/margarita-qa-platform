@@ -25,7 +25,6 @@ import type { Chat } from "../src/lib/types";
 // Minimal chat factory — only the fields the list helpers read.
 function chat(partial: Partial<Chat> & { agr_no: string }): Chat {
   return {
-    agr_no: partial.agr_no,
     hvhh: null,
     name_agr: null,
     name_tax: null,
@@ -159,6 +158,13 @@ test("telegramChatId extracts the chat id from any Telegram link form", () => {
   // t.me invite / handle (lower-cased).
   assert.equal(telegramChatId("https://t.me/+ajvcAOzUVsNkMzVi"), "+ajvcaozuvsnkmzvi");
   assert.equal(telegramChatId("https://t.me/SomeHandle"), "somehandle");
+  // Private group links (t.me/c/<id>/<msg>) keep their real id — distinct chats
+  // must NOT collapse to the literal "c" segment.
+  assert.equal(telegramChatId("https://t.me/c/2171468893/100"), "c2171468893");
+  assert.notEqual(
+    telegramChatId("https://t.me/c/2171468893/100"),
+    telegramChatId("https://t.me/c/9999999999/5")
+  );
   // No id / junk values.
   assert.equal(telegramChatId("не работаем"), null);
   assert.equal(telegramChatId(null), null);
