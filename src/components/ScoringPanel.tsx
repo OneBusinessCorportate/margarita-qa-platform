@@ -38,6 +38,7 @@ import type {
   ActiveExclusion,
   ActiveInclusion,
   Chat,
+  ChatMailing,
   Evaluation,
   MonthlyStatus,
 } from "@/lib/types";
@@ -87,6 +88,7 @@ export default function ScoringPanel({
   latestActivityDate = null,
   initialExclusions = [],
   initialInclusions = [],
+  detectedMailings = [],
 }: {
   chats: Chat[];
   accountants: Accountant[];
@@ -97,9 +99,19 @@ export default function ScoringPanel({
   latestActivityDate?: string | null;
   initialExclusions?: ActiveExclusion[];
   initialInclusions?: ActiveInclusion[];
+  detectedMailings?: ChatMailing[];
 }) {
   const router = useRouter();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
+  // Index detected mailings for O(1) lookup: agr_no → category → status
+  const mailingsByChat = useMemo(() => {
+    const m = new Map<string, Record<string, string>>();
+    for (const row of detectedMailings) {
+      if (!m.has(row.agr_no)) m.set(row.agr_no, {});
+      m.get(row.agr_no)![row.category] = row.status;
+    }
+    return m;
+  }, [detectedMailings]);
   const [date, setDate] = useState(latestActivityDate ?? today());
   // Default to the day view: Margarita works through one day's chats in time
   // order, bottom-to-top. "All active chats" stays a click away.
@@ -1002,6 +1014,7 @@ export default function ScoringPanel({
                 manualAdded={scope === "day" && isIncluded(chat.agr_no)}
                 onRemoveManual={() => setChatIncluded(chat.agr_no, false)}
                 duplicateAgrs={mergedAgrs.get(chat.agr_no) ?? []}
+                detectedStatuses={mailingsByChat.get(chat.agr_no) ?? {}}
                 hideControl={
                   scope === "day"
                     ? {
@@ -1064,6 +1077,7 @@ function ChatScoreRow({
   onRemoveManual,
   duplicateAgrs = [],
   hideControl = null,
+  detectedStatuses = {},
 }: {
   chat: Chat;
   accountants: Accountant[];
@@ -1080,6 +1094,7 @@ function ChatScoreRow({
   onRemoveManual?: () => void;
   duplicateAgrs?: string[];
   hideControl?: HideControl;
+  detectedStatuses?: Record<string, string>;
 }) {
   const prevStatuses = prev?.monthly ?? {};
   // No saved check for this date yet, but a previous one exists → pre-fill from
@@ -1111,9 +1126,12 @@ function ChatScoreRow({
       // «Долги» is fully derived from the OneBusiness debts system (overdue +
       // contact log) and wins over the carried/AI value — that's the column the
       // user wants filled automatically end-to-end.
+      // Detected status from message scan is used when there's no previous check.
+      const detected = canonicalMonthlyStatus(c, detectedStatuses[c.id] ?? null);
       const status =
         (c.id === "debts" ? canonicalMonthlyStatus(c, chat.debt_status) : "") ||
         prevVal ||
+        detected ||
         autoMonthlyStatus(c, chat.status, chat.debts, date) ||
         canonicalMonthlyStatus(c, aiInit.monthly[c.id]?.status);
       if (status)
@@ -1787,6 +1805,7 @@ function ChatGroup({
   onRemoveManual,
   duplicateAgrs = [],
   hideControl = null,
+  detectedStatuses = {},
 }: {
   chat: Chat;
   accountants: Accountant[];
@@ -1807,6 +1826,7 @@ function ChatGroup({
   onRemoveManual?: () => void;
   duplicateAgrs?: string[];
   hideControl?: HideControl;
+  detectedStatuses?: Record<string, string>;
 }) {
   const [showManager, setShowManager] = useState(Boolean(managerEval));
   const [showLawyer, setShowLawyer] = useState(Boolean(lawyerEval));
@@ -1830,6 +1850,7 @@ function ChatGroup({
         onRemoveManual={onRemoveManual}
         duplicateAgrs={duplicateAgrs}
         hideControl={hideControl}
+        detectedStatuses={detectedStatuses}
       />
       {showManager && (
         <RoleQaRow

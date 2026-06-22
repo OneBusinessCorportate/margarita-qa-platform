@@ -4,6 +4,7 @@ import {
   listActiveExclusions,
   listActiveInclusions,
   listChatActivity,
+  listChatMailings,
   listChats,
   listEvaluations,
   listTasks,
@@ -18,6 +19,13 @@ export default async function ScoringPage() {
   const activityFrom = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
+
+  // Current Yerevan month for mailing detection pre-fill.
+  const nowYerevan = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Yerevan" })
+  );
+  const currentPeriod = `${nowYerevan.getFullYear()}${String(nowYerevan.getMonth() + 1).padStart(2, "0")}`;
+
   const [
     chats,
     accountants,
@@ -26,6 +34,7 @@ export default async function ScoringPage() {
     exclusions,
     inclusions,
     chatActivity,
+    detectedMailings,
   ] = await Promise.all([
     listChats(),
     listAccountants(),
@@ -34,6 +43,7 @@ export default async function ScoringPage() {
     listActiveExclusions(),
     listActiveInclusions(),
     listChatActivity(activityFrom),
+    listChatMailings(currentPeriod),
   ]);
 
   // Default the day view to the most recent day chats were ACTUALLY active
@@ -69,6 +79,7 @@ export default async function ScoringPage() {
         initialExclusions={exclusions}
         initialInclusions={inclusions}
         chatActivity={chatActivity}
+        detectedMailings={detectedMailings}
         taskActivity={tasks.map((t) => ({
           chat_agr_no: t.chat_agr_no,
           date: (t.checking_date ?? t.due_date_original ?? "").slice(0, 10),

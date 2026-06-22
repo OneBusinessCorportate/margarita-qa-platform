@@ -234,3 +234,20 @@ export interface ActiveInclusion {
   chat_agr_no: string;
   include_date: string; // ISO date
 }
+
+/**
+ * One detected or manually-confirmed mailing event per (chat, period, category).
+ * Auto-detected rows (source='telegram') are overwritten on each scan;
+ * manual rows (source='manual') are locked and never overwritten.
+ */
+export interface ChatMailing {
+  agr_no: string;
+  period: string; // YYYYMM
+  category: string; // main_taxes / salary / primary_docs / debts
+  status: string; // mailing status string
+  source: "telegram" | "manual";
+  confirmed: boolean;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  detected_at: string | null;
+}

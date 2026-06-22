@@ -31,6 +31,7 @@ import type {
   ActiveExclusion,
   ActiveInclusion,
   Chat,
+  ChatMailing,
   Evaluation,
   ManagerEvaluation,
   NewEvaluationInput,
@@ -131,6 +132,21 @@ export async function listChatActivity(
       date: c.last_activity_date!.slice(0, 10),
       at: c.last_activity_at ?? c.last_activity_date ?? null,
     }));
+}
+
+/**
+ * Load all detected/confirmed mailing rows for a given period (YYYYMM).
+ * Returns an empty array when Supabase is not configured (local dev / mock store).
+ */
+export async function listChatMailings(period: string): Promise<ChatMailing[]> {
+  const sb = getServiceClient();
+  if (!sb) return [];
+  const { data, error } = await sb
+    .from(TABLES.chatMailings)
+    .select("*")
+    .eq("period", period);
+  if (error) throw error;
+  return (data ?? []) as ChatMailing[];
 }
 
 export async function getChat(agrNo: string): Promise<Chat | null> {

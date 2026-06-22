@@ -22,4 +22,5 @@ export const TABLES = {
   unanswered: `${PREFIX}unanswered`,
   unansweredLabels: `${PREFIX}unanswered_labels`,
   debts: `${PREFIX}debts`,
+  chatMailings: `${PREFIX}chat_mailings`,
 } as const;
