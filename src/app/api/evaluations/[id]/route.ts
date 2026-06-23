@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { updateEvaluation } from "@/lib/repo";
+import { deleteEvaluation, updateEvaluation } from "@/lib/repo";
 import type { NewEvaluationInput } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +55,21 @@ export async function PUT(
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message ?? "Update failed" },
+      { status: 404 }
+    );
+  }
+}
+
+export async function DELETE(
+  _req: Request,
+  { params }: { params: { id: string } }
+) {
+  try {
+    await deleteEvaluation(params.id);
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message ?? "Delete failed" },
       { status: 404 }
     );
   }

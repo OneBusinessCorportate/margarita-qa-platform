@@ -47,6 +47,7 @@ import type {
 import BandChip from "./BandChip";
 import CopyButton from "./CopyButton";
 import ViolationModal from "./ViolationModal";
+import TaskModal from "./TaskModal";
 
 /** Everything carried forward from the most recent check before the chosen date. */
 interface PrevCheck {
@@ -148,6 +149,8 @@ export default function ScoringPanel({
   // The chat whose «Нарушение» popup is open (boss's request — log a violation
   // without leaving QA). null = closed.
   const [violationFor, setViolationFor] = useState<Chat | null>(null);
+  // The chat whose «Задача» popup is open — add a task without leaving QA.
+  const [taskFor, setTaskFor] = useState<Chat | null>(null);
   // "Добавить чат в QA" search box (open + query + busy/error for create-by-link).
   const [addOpen, setAddOpen] = useState(false);
   const [addQuery, setAddQuery] = useState("");
@@ -1077,6 +1080,8 @@ export default function ScoringPanel({
                 tgClient={tgClient}
                 onSaved={onSaved}
                 onLogViolation={() => setViolationFor(chat)}
+                onLogTask={() => setTaskFor(chat)}
+                onDeleted={(id) => setEvaluations((prev) => prev.filter((e) => e.id !== id))}
                 manualAdded={scope === "day" && isIncluded(chat.agr_no)}
                 onRemoveManual={() => setChatIncluded(chat.agr_no, false)}
                 duplicateAgrs={mergedAgrs.get(chat.agr_no) ?? []}
@@ -1117,6 +1122,15 @@ export default function ScoringPanel({
           onClose={() => setViolationFor(null)}
         />
       )}
+      {taskFor && (
+        <TaskModal
+          chatAgrNo={taskFor.agr_no}
+          client={taskFor.chat_name}
+          accountant={taskFor.accountant ?? null}
+          defaultDate={date}
+          onClose={() => setTaskFor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1138,7 +1152,9 @@ function ChatScoreRow({
   aiModel,
   tgClient,
   onSaved,
+  onDeleted,
   onLogViolation,
+  onLogTask,
   manualAdded = false,
   onRemoveManual,
   duplicateAgrs = [],
@@ -1155,7 +1171,9 @@ function ChatScoreRow({
   aiModel: AiModel;
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
+  onDeleted?: (id: string) => void;
   onLogViolation?: () => void;
+  onLogTask?: () => void;
   manualAdded?: boolean;
   onRemoveManual?: () => void;
   duplicateAgrs?: string[];
@@ -1167,9 +1185,17 @@ function ChatScoreRow({
   // it so Margarita only edits what changed.
   const prefilledFromPrev = !existing && !!prev;
 
+  // On weekends (Sat/Sun) the duty accountant "Алик" handles reviews.
+  const isWeekend = useMemo(() => {
+    const d = new Date(date + "T00:00:00Z");
+    const dow = d.getUTCDay();
+    return dow === 0 || dow === 6;
+  }, [date]);
+  const weekendDefault = "Алик";
   const [accountant, setAccountant] = useState(
-    existing?.accountant ?? chat.accountant ?? ""
+    existing?.accountant ?? (isWeekend ? weekendDefault : chat.accountant ?? "")
   );
+  const [deletingEval, setDeletingEval] = useState(false);
   const [criteria, setCriteria] = useState<CriteriaScores>(
     existing?.scores.criteria ?? prev?.criteria ?? {}
   );
@@ -1295,7 +1321,6 @@ function ChatScoreRow({
       chat_agr_no: chat.agr_no,
       checking_date: date,
       accountant: accountant || null,
-      // The AI snapshot is stored with her answer — the training pair.
       scores: {
         criteria,
         monthly: monthlyWithPrev,
@@ -1321,10 +1346,39 @@ function ChatScoreRow({
       const saved: Evaluation = await res.json();
       setSavedId(saved.id);
       onSaved(saved);
+      // Also update the chat's assigned accountant when it changed — so the
+      // change persists across all views, not just this evaluation row.
+      const newAcc = accountant || null;
+      if (newAcc !== (chat.accountant ?? null)) {
+        fetch("/api/chats/accountant", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agr_no: chat.agr_no, accountant: newAcc }),
+        }).catch(() => {/* best-effort */});
+      }
     } catch {
       setError("Сеть");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deleteEval() {
+    if (!savedId) return;
+    if (!confirm("Удалить эту оценку? Действие необратимо.")) return;
+    setDeletingEval(true);
+    try {
+      const res = await fetch(`/api/evaluations/${savedId}`, { method: "DELETE" });
+      if (res.ok) {
+        onDeleted?.(savedId);
+        setSavedId(null);
+      } else {
+        setError("Не удалось удалить");
+      }
+    } catch {
+      setError("Сеть");
+    } finally {
+      setDeletingEval(false);
     }
   }
 
@@ -1339,7 +1393,7 @@ function ChatScoreRow({
       <tr className={`chat-start ${savedId ? "bg-green-100" : ""}`}>
         <td
           rowSpan={2}
-          className={`chat-info align-top min-w-[190px] max-w-[230px] ${
+          className={`chat-info align-top min-w-[190px] max-w-[240px] ${
             savedId ? "bg-green-100 border-l-8 border-green-600" : "bg-white"
           }`}
         >
@@ -1390,41 +1444,6 @@ function ChatScoreRow({
             {chat.status !== "Active" && (
               <span className="text-xs text-gray-400 whitespace-nowrap">(неактивен)</span>
             )}
-            {hideControl &&
-              (hideControl.hidden ? (
-                <button
-                  onClick={hideControl.onToggle}
-                  className="inline-flex items-center gap-1 text-emerald-600 hover:underline text-xs whitespace-nowrap"
-                  title="Вернуть чат в список «Активные за день»"
-                >
-                  ↩ Вернуть
-                </button>
-              ) : (
-                <button
-                  onClick={hideControl.onToggle}
-                  aria-label="Убрать чат из «Активные за день»"
-                  title="Убрать этот чат из списка «Активные за день» на этот день (неважный чат)"
-                  className="inline-flex items-center justify-center rounded p-1 text-gray-400 hover:text-red-600 hover:bg-red-50"
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M3 6h18" />
-                    <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
-                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                    <path d="M10 11v6" />
-                    <path d="M14 11v6" />
-                  </svg>
-                </button>
-              ))}
           </div>
           {/* Full Telegram link, shown in full so QA can read it, select/copy it,
               or paste it into the search box above to jump straight to this chat. */}
@@ -1552,7 +1571,22 @@ function ChatScoreRow({
               )}
             </div>
           )}
-          <div className="mt-1.5">
+          {/* Detected mailing statuses summary — quick reference in the info cell */}
+          {MONTHLY_CATEGORIES.some((c) => c.id !== "debts" && detectedStatuses[c.id]) && (
+            <div className="text-xs mt-1 flex flex-wrap gap-1">
+              {MONTHLY_CATEGORIES.filter((c) => c.id !== "debts" && detectedStatuses[c.id]).map((c) => (
+                <span
+                  key={c.id}
+                  className="inline-block rounded bg-sky-50 text-sky-700 px-1.5 py-0.5"
+                  title={`Авто-рассылка ${c.name}: ${detectedStatuses[c.id]}`}
+                >
+                  📧 {c.shortName}: {detectedStatuses[c.id]}
+                </span>
+              ))}
+            </div>
+          )}
+          {/* Action buttons: violation / task / hide / delete */}
+          <div className="mt-1.5 flex flex-wrap gap-1">
             <button
               onClick={onLogViolation}
               className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs font-medium px-2 py-1"
@@ -1560,6 +1594,36 @@ function ChatScoreRow({
             >
               ⚠️ Нарушение
             </button>
+            <button
+              onClick={onLogTask}
+              className="inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-medium px-2 py-1"
+              title="Добавить задачу по этому чату"
+            >
+              📋 Задача
+            </button>
+            {hideControl && (
+              <button
+                onClick={hideControl.onToggle}
+                className={`inline-flex items-center gap-1 rounded border text-xs font-medium px-2 py-1 ${
+                  hideControl.hidden
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                    : "border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"
+                }`}
+                title={hideControl.hidden ? "Вернуть чат в список за этот день" : "Скрыть чат из списка за этот день"}
+              >
+                {hideControl.hidden ? "↩ Вернуть" : "🙈 Скрыть"}
+              </button>
+            )}
+            {savedId && (
+              <button
+                onClick={deleteEval}
+                disabled={deletingEval}
+                className="inline-flex items-center gap-1 rounded border border-red-300 bg-white text-red-500 hover:bg-red-50 text-xs font-medium px-2 py-1"
+                title="Удалить оценку за этот день"
+              >
+                {deletingEval ? "…" : "🗑️"}
+              </button>
+            )}
           </div>
         </td>
         <td className={`${aiCell} text-center`}>
@@ -1575,16 +1639,31 @@ function ChatScoreRow({
             {ai.criteria[c.id]}
           </td>
         ))}
-        {MONTHLY_CATEGORIES.map((c) => (
-          <td key={c.id} className={`${aiCell} text-xs text-center`}>
-            <span
-              className="block truncate w-[96px] mx-auto"
-              title={ai.monthly[c.id]?.status}
-            >
-              {ai.monthly[c.id]?.status || "—"}
-            </span>
-          </td>
-        ))}
+        {MONTHLY_CATEGORIES.map((c) => {
+          const detected = canonicalMonthlyStatus(c, detectedStatuses[c.id] ?? null);
+          return (
+            <td key={c.id} className={`${aiCell} text-xs text-center`}>
+              <div className="flex flex-col items-center gap-0.5">
+                <span
+                  className="block truncate w-[96px] mx-auto"
+                  title={ai.monthly[c.id]?.status}
+                >
+                  {ai.monthly[c.id]?.status || "—"}
+                </span>
+                {detected ? (
+                  <span
+                    className="block h-[15px] w-[96px] truncate rounded px-1 text-[10px] leading-[15px] text-indigo-400"
+                    title={`Авто-рассылка: ${detected}`}
+                  >
+                    🔍 {detected}
+                  </span>
+                ) : (
+                  <span className="block h-[15px]" aria-hidden="true" />
+                )}
+              </div>
+            </td>
+          );
+        })}
         <td className={`${aiCell} text-center tabular-nums font-semibold`}>{ai.total}</td>
         <td className={`${aiCell} text-center`}>
           <BandChip band={ai.band} />
@@ -1906,6 +1985,8 @@ function ChatGroup({
   tgClient,
   onSaved,
   onLogViolation,
+  onLogTask,
+  onDeleted,
   manualAdded = false,
   onRemoveManual,
   duplicateAgrs = [],
@@ -1927,6 +2008,8 @@ function ChatGroup({
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
   onLogViolation?: () => void;
+  onLogTask?: () => void;
+  onDeleted?: (id: string) => void;
   manualAdded?: boolean;
   onRemoveManual?: () => void;
   duplicateAgrs?: string[];
@@ -1951,6 +2034,8 @@ function ChatGroup({
         tgClient={tgClient}
         onSaved={onSaved}
         onLogViolation={onLogViolation}
+        onLogTask={onLogTask}
+        onDeleted={onDeleted}
         manualAdded={manualAdded}
         onRemoveManual={onRemoveManual}
         duplicateAgrs={duplicateAgrs}

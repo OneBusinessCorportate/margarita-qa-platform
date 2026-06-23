@@ -322,9 +322,19 @@ export function buildReport(
     : 0;
 
   // Critical chats — the actionable "what went wrong" list. One row per chat
-  // (its worst evaluation in the window), worst score first.
-  const worstByChat = new Map<string, Evaluation>();
+  // (its LATEST evaluation per day, worst score first).
+  // Use latest-per-(chat,date) so that a re-score on the same day replaces the
+  // old one: if a chat was marked Критично, then re-evaluated as good, it drops
+  // off the list without needing a manual remove. (Bug fix: previously the
+  // "worst" was used, so a later good score didn't clear the critical flag.)
+  const latestByKey = new Map<string, Evaluation>();
   for (const e of evals) {
+    const key = `${e.chat_agr_no}|${e.checking_date.slice(0, 10)}`;
+    const cur = latestByKey.get(key);
+    if (!cur || e.created_at > cur.created_at) latestByKey.set(key, e);
+  }
+  const worstByChat = new Map<string, Evaluation>();
+  for (const e of latestByKey.values()) {
     if (bandFor(e.total_score) !== "Критично") continue;
     const cur = worstByChat.get(e.chat_agr_no);
     if (!cur || e.total_score < cur.total_score) worstByChat.set(e.chat_agr_no, e);

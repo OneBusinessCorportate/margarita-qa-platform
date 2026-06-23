@@ -372,6 +372,36 @@ export async function updateEvaluation(
   return rows[idx];
 }
 
+export async function deleteEvaluation(id: string): Promise<void> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { error } = await sb.from(TABLES.evaluations).delete().eq("id", id);
+    if (error) throw error;
+    return;
+  }
+  const rows = store().evaluations;
+  const idx = rows.findIndex((e) => e.id === id);
+  if (idx !== -1) rows.splice(idx, 1);
+}
+
+/** Update the chat's assigned accountant in mqa_chats. */
+export async function updateChatAccountant(
+  agrNo: string,
+  accountant: string | null
+): Promise<void> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { error } = await sb
+      .from(TABLES.chats)
+      .update({ accountant })
+      .eq("agr_no", agrNo);
+    if (error) throw error;
+    return;
+  }
+  const chat = store().chats.find((c) => c.agr_no === agrNo);
+  if (chat) chat.accountant = accountant;
+}
+
 // --- Manager evaluations (Регистрация — еженедельно) -----------------------
 
 function normalizeManagerEval(row: any): ManagerEvaluation {
