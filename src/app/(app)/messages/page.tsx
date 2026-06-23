@@ -8,6 +8,7 @@ import {
 } from "@/lib/templates";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
+import PrintComparisonButton from "@/components/PrintComparisonButton";
 
 export const dynamic = "force-dynamic";
 
@@ -283,8 +284,15 @@ export default async function MessagesPage({
 
       {/* Visual week-over-week comparison — shown whenever a preceding period exists. */}
       {previous && comparisonRows.length > 0 && (
-        <div className="card p-3 space-y-3">
-          <div className="text-sm font-medium">📊 Сравнение с предыдущим периодом</div>
+        <div id="comparison-section" className="card p-3 space-y-3">
+          <div className="print-only mb-2">
+            <div className="text-base font-bold">📊 Сравнение с предыдущим периодом</div>
+            <div className="text-sm text-gray-500">{periodLabel}</div>
+          </div>
+          <div className="flex items-center justify-between gap-2 no-print">
+            <div className="text-sm font-medium">📊 Сравнение с предыдущим периодом</div>
+            <PrintComparisonButton />
+          </div>
 
           {/* Service quality bar */}
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">

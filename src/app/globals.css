@@ -122,4 +122,15 @@ table.qa.pairs.dense tr.chat-start > td {
   @page {
     margin: 14mm;
   }
+
+  /* Comparison-only print mode — triggered by PrintComparisonButton. */
+  body.print-comparison-mode nav {
+    display: none !important;
+  }
+  body.print-comparison-mode main .space-y-4 > * {
+    display: none !important;
+  }
+  body.print-comparison-mode main #comparison-section {
+    display: block !important;
+  }
 }

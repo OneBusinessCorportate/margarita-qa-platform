@@ -85,27 +85,46 @@ function chatLabel(agrNo: string, name: string | null): string {
 }
 
 /**
- * Daily accounting analytics message, redesigned to lead with what Margarita
- * must ACT on — trend, coverage, who needs attention, which chats failed, who
- * is still waiting on a reply — before the full per-accountant roster. Backwards
- * compatible: the sheet metric labels and the per-accountant block are kept.
+ * Maps the worst severity in a violation group to the action label shown in
+ * the message: Грубое → Строгий выговор, Критичное → Выговор, else Предупреждение.
+ */
+function worstViolationAction(sevMap: Map<string, number>): string {
+  for (const sev of sevMap.keys()) {
+    const s = sev.toLowerCase();
+    if (s.includes("груб")) return "Строгий выговор";
+    if (s.includes("критич")) return "Выговор";
+  }
+  return "Предупреждение";
+}
+
+/**
+ * Daily accounting analytics message.
+ *
+ * Format:
+ *   📊 Аналитика качества бухгалтерии
+ *   🗓 DD.MM
+ *
+ *   🏆 Сервис Бухгалтерии: X%  ▲ +N п.п. к DD.MM
+ *   👁 Охват: оценено N из M активных (K%)
+ *
+ *   Звезда дня
+ *
+ *
+ *   ⭐️ Имя: X% оценка
+ *   ...
+ *
+ *
+ *   Нарушения:
+ *
+ *   — Имя: ActionType (N severity)
+ *   ...
  */
 export function buildReportMessage(
   report: DailyReport,
   options: ReportMessageOptions = {}
 ): string {
-  const {
-    totals,
-    distribution,
-    serviceQualityPct,
-    coveragePct,
-    perAccountant,
-    needsAttention = [],
-    criticalChats = [],
-    tasks,
-    filters,
-  } = report;
-  const { violations = [], sheetUrl, previous, maxList = 8 } = options;
+  const { totals, serviceQualityPct, coveragePct, perAccountant, filters } = report;
+  const { violations = [], sheetUrl, previous } = options;
   const dateISO =
     options.date ??
     filters.to ??
@@ -115,53 +134,13 @@ export function buildReportMessage(
 
   lines.push("📊 Аналитика качества бухгалтерии");
   lines.push(`🗓 ${periodHeader(report, dateISO)}`);
-  if (filters.accountant) lines.push(`Бухгалтер: ${filters.accountant}`);
   lines.push("");
-
-  // ── Headline: service %, trend, coverage ───────────────────────────────
   lines.push(`🏆 Сервис Бухгалтерии: ${serviceQualityPct}%${fmtTrend(serviceQualityPct, previous)}`);
   lines.push(
     `👁 Охват: оценено ${totals.evaluatedChats} из ${totals.activeChats} активных (${coveragePct}%)`
   );
-  lines.push("");
 
-  // ── Sheet metrics (kept) ───────────────────────────────────────────────
-  // Active/new/without-responsible/evaluated are already covered by the
-  // headline + coverage line above; Margarita asked to drop this block.
-
-  const evalCount = scoredCount(report);
-  const lowShare =
-    evalCount > 0
-      ? Math.round(((distribution.Плохо + distribution.Критично) / evalCount) * 100)
-      : 0;
-  lines.push(
-    `Отлично: ${distribution.Отлично} | Хорошо: ${distribution.Хорошо} | Плохо: ${distribution.Плохо} | Критично: ${distribution.Критично} (проблемных: ${lowShare}%)`
-  );
-
-  // ── 🚨 Требует внимания — the coaching to-do list (most urgent first) ────
-  if (needsAttention.length) {
-    lines.push("");
-    lines.push(`🚨 Требует внимания (${needsAttention.length})`);
-    for (const a of needsAttention.slice(0, maxList)) {
-      const emoji = a.band ? BAND_EMOJI[a.band] : "🔴";
-      lines.push(`${emoji} ${a.accountant} — ${a.reasons.join("; ")}`);
-    }
-    overflow(lines, needsAttention.length, maxList);
-  }
-
-  // ── ⛔️ Критичные чаты — what actually went wrong, openable per chat ──────
-  if (criticalChats.length) {
-    lines.push("");
-    lines.push(`⛔️ Критичные чаты (${criticalChats.length})`);
-    for (const c of criticalChats.slice(0, maxList)) {
-      const who = c.accountant ? ` — ${c.accountant}` : "";
-      const why = c.reasons.length ? `: ${c.reasons.join("; ")}` : ` (оценка ${c.score}%)`;
-      lines.push(`• ${chatLabel(c.chat_agr_no, c.chat_name)}${who}${why}`);
-    }
-    overflow(lines, criticalChats.length, maxList);
-  }
-
-  // ── ⭐ Звёзды дня — perfect scorers (fallback: top scorer) ───────────────
+  // ── Stars of the day ───────────────────────────────────────────────────────
   const scored = perAccountant.filter((a) => a.count > 0 && a.avgScore >= 0);
   const topScore = scored.reduce((m, a) => Math.max(m, a.avgScore), 0);
   const perfect = scored.filter((a) => a.avgScore === 100);
@@ -172,55 +151,39 @@ export function buildReportMessage(
       : [];
   if (stars.length) {
     lines.push("");
-    lines.push("⭐ Звёзды дня");
-    for (const a of stars)
-      lines.push(`🌟 ${a.accountant} — ${a.avgScore}% (чатов: ${a.count})`);
-  }
-
-  // ── 🧮 Сервис Бухгалтерии — full roster, worst first so problems lead ────
-  lines.push("");
-  lines.push(`🧮 Сервис Бухгалтерии: ${serviceQualityPct}% (по бухгалтерам)`);
-  if (scored.length === 0) {
-    lines.push("— нет оценок за период —");
-  }
-  const roster = [...scored].sort((a, b) => a.avgScore - b.avgScore);
-  for (const a of roster) {
-    const emoji = BAND_EMOJI[bandFor(a.avgScore)];
-    const low = a.lowCount > 0 ? `, низких: ${a.lowCount}` : "";
-    lines.push(`${emoji} ${a.accountant} — ${a.avgScore}% (оценено: ${a.count}${low})`);
-  }
-
-  // ── ✅ Задачи Бухгалтерии (only when there are tasks) ────────────────────
-  if (tasks.total > 0) {
+    lines.push("Звезда дня");
     lines.push("");
-    lines.push(
-      `✅ Задачи Бухгалтерии: всего ${tasks.total} (в срок: ${tasks.onTime}, с опозданием: ${tasks.late}, просрочено: ${tasks.overdue})`
-    );
-    for (const a of tasks.perAccountant) {
-      lines.push(
-        `• ${a.accountant}: ${a.total} (в срок: ${a.onTime}, опозд.: ${a.late}, просроч.: ${a.overdue})`
-      );
+    lines.push("");
+    for (let i = 0; i < stars.length; i++) {
+      lines.push(`⭐️ ${stars[i].accountant}: ${stars[i].avgScore}% оценка`);
+      if (i < stars.length - 1) lines.push("");
     }
   }
 
-  // ── ⚠️ Нарушения — grouped per accountant, counted by severity ───────────
+  // ── Violations ─────────────────────────────────────────────────────────────
   const withAcc = violations.filter((v) => v.accountant);
   if (withAcc.length) {
     const byAcc = new Map<string, Map<string, number>>();
     for (const v of withAcc) {
       const acc = v.accountant as string;
-      const sev = v.severity ?? "нарушение";
+      const sev = v.severity ?? "среднее";
       const m = byAcc.get(acc) ?? new Map<string, number>();
       m.set(sev, (m.get(sev) ?? 0) + 1);
       byAcc.set(acc, m);
     }
     lines.push("");
-    lines.push("⚠️ Нарушения");
-    for (const [acc, sevs] of byAcc) {
-      const parts = [...sevs.entries()]
+    lines.push("");
+    lines.push("Нарушения: ");
+    lines.push("");
+    const entries = [...byAcc.entries()];
+    for (let i = 0; i < entries.length; i++) {
+      const [acc, sevMap] = entries[i];
+      const action = worstViolationAction(sevMap);
+      const parts = [...sevMap.entries()]
         .map(([s, n]) => `${n} ${s.toLowerCase()}`)
         .join(", ");
-      lines.push(`— ${acc}: ${parts}`);
+      lines.push(`— ${acc}: ${action} (${parts}) `);
+      if (i < entries.length - 1) lines.push("");
     }
   }
 
@@ -235,12 +198,6 @@ export function buildReportMessage(
 /** Append "    + ещё N" when a list was truncated to `shown`. */
 function overflow(lines: string[], total: number, shown: number): void {
   if (total > shown) lines.push(`    + ещё ${total - shown}`);
-}
-
-/** How many evaluations the distribution covers (for the "problem share"). */
-function scoredCount(report: DailyReport): number {
-  const d = report.distribution;
-  return d.Отлично + d.Хорошо + d.Плохо + d.Критично;
 }
 
 /**

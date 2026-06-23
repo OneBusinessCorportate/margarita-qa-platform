@@ -11,31 +11,25 @@ import {
 import { buildReport } from "../src/lib/report";
 import { seedChats, seedEvaluations, seedTasks } from "../src/lib/seed-data";
 
-test("report message contains the headline metrics + both blocks", () => {
+test("report message contains the headline metrics", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks);
   const msg = buildReportMessage(report);
-  // The redundant sheet block (Активных/Новых/Без ответственных/Оценено) was
-  // dropped at Margarita's request — coverage + service lines cover it.
-  assert.doesNotMatch(msg, /^Активных чатов:/m);
-  assert.doesNotMatch(msg, /^Новых чатов:/m);
-  assert.doesNotMatch(msg, /^Чаты без ответственных:/m);
-  assert.doesNotMatch(msg, /^Оценено чатов всего:/m);
+  assert.match(msg, /📊 Аналитика качества бухгалтерии/);
+  assert.match(msg, /🏆 Сервис Бухгалтерии:/);
   assert.match(msg, /👁 Охват:/);
-  assert.match(msg, /Сервис Бухгалтерии:/);
-  assert.match(msg, /Задачи Бухгалтерии:/);
-  assert.match(msg, /Отлично:/);
+  // New simplified format does not include the distribution line or task roster.
+  assert.doesNotMatch(msg, /Отлично: \d+/);
+  assert.doesNotMatch(msg, /Задачи Бухгалтерии:/);
 });
 
-test("report message leads with coverage and critical chats, no «без ответа»", () => {
+test("report message shows coverage and stars, no critical-chats section", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report);
   assert.match(msg, /👁 Охват:/);
-  assert.doesNotMatch(msg, /Без ответа клиенту/); // unreliable signal removed
-  assert.match(msg, /⛔️ Критичные чаты \(2\)/);
-  assert.match(msg, /проблемных:/); // distribution problem share
-  // The two gated chats appear by contract number.
-  assert.match(msg, /№180/);
-  assert.match(msg, /№28/);
+  assert.doesNotMatch(msg, /Без ответа клиенту/);
+  // Critical chats and distribution are no longer in the report message.
+  assert.doesNotMatch(msg, /⛔️ Критичные чаты/);
+  assert.doesNotMatch(msg, /проблемных:/);
 });
 
 test("report message shows ▲/▼ trend vs the previous period", () => {
