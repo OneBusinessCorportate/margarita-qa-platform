@@ -1,4 +1,4 @@
-import { getDailyAnalytics, listViolations } from "@/lib/repo";
+import { getDailyAnalytics, listAccountants, listViolations } from "@/lib/repo";
 import type { DaySummary } from "@/lib/report";
 import {
   accountantsToMessage,
@@ -69,10 +69,15 @@ export default async function MessagesPage({
     client: searchParams.client || undefined,
   };
 
-  const [{ report, previous, resolved }, violations] = await Promise.all([
+  const [{ report, previous, resolved }, violations, allAccountants] = await Promise.all([
     getDailyAnalytics(filters),
     listViolations({ from: filters.from, to: filters.to, accountant: filters.accountant }),
+    listAccountants(),
   ]);
+
+  const canonicalAccountants = allAccountants.filter(
+    (a) => a.active && a.role === "accountant"
+  );
 
   const reportMessage = buildReportMessage(report, {
     violations,
@@ -114,24 +119,23 @@ export default async function MessagesPage({
     for (const d of report.perDay) dayMap.set(d.date, d);
   }
 
-  // Accountants sorted by overall avg score desc
+  // Accountants in canonical DB order (matches the source spreadsheet row order)
   const periodAccountants = isMultiDay
-    ? [...new Set((report.perDayPerAccountant ?? []).map((d) => d.accountant))]
-        .filter((a) => a !== "—")
-        .sort((a, b) => {
-          const sa = report.perAccountant.find((x) => x.accountant === a)?.avgScore ?? -1;
-          const sb = report.perAccountant.find((x) => x.accountant === b)?.avgScore ?? -1;
-          return sb - sa || a.localeCompare(b);
-        })
+    ? canonicalAccountants.map((a) => a.name)
     : [];
 
   // ── Single-day comparison data ─────────────────────────────────────────────
   const prevMap = previous
     ? new Map(previous.perAccountant.map((a) => [a.accountant, a.avgScore]))
     : new Map<string, number>();
-  const comparisonRows = report.perAccountant
-    .filter((a) => a.count > 0 && a.avgScore >= 0)
-    .sort((a, b) => b.avgScore - a.avgScore);
+
+  const currentScoreMap = new Map(report.perAccountant.map((a) => [a.accountant, a]));
+  // All active accountants in canonical order; those without evaluations show —
+  const comparisonRows = filters.accountant
+    ? report.perAccountant.filter((a) => a.accountant === filters.accountant && a.count > 0)
+    : canonicalAccountants.map(
+        (a) => currentScoreMap.get(a.name) ?? { accountant: a.name, avgScore: -1, count: 0, lowCount: 0 }
+      );
 
   // Stars (used in single-day comparison section)
   const starsList: Array<{ name: string; desc: string }> = [];
@@ -436,7 +440,7 @@ export default async function MessagesPage({
       )}
 
       {/* ── Single-day comparison with previous period ───────────────────────── */}
-      {!isMultiDay && previous && comparisonRows.length > 0 && (
+      {!isMultiDay && previous && report.perAccountant.some((a) => a.count > 0) && (
         <div id="comparison-section" className="card p-3 space-y-3">
           <div className="print-only mb-2">
             <div className="text-base font-bold">📊 Сравнение с предыдущим периодом</div>
@@ -479,16 +483,19 @@ export default async function MessagesPage({
             </thead>
             <tbody>
               {comparisonRows.map((a) => {
+                const hasScore = a.count > 0;
                 const prev = prevMap.get(a.accountant);
-                const delta = prev !== undefined ? Math.round((a.avgScore - prev) * 10) / 10 : null;
+                const delta = hasScore && prev !== undefined
+                  ? Math.round((a.avgScore - prev) * 10) / 10
+                  : null;
                 return (
                   <tr key={a.accountant}>
                     <td className="px-3 py-1.5 border border-gray-200 font-medium whitespace-nowrap">{a.accountant}</td>
                     <td className={`px-2 py-1.5 border border-gray-200 text-center ${scoreCellClass(prev)}`}>
                       {prev !== undefined ? prev : "—"}
                     </td>
-                    <td className={`px-2 py-1.5 border border-gray-200 text-center ${scoreCellClass(a.avgScore)}`}>
-                      {a.avgScore}
+                    <td className={`px-2 py-1.5 border border-gray-200 text-center ${hasScore ? scoreCellClass(a.avgScore) : ""}`}>
+                      {hasScore ? a.avgScore : "—"}
                     </td>
                     <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${
                       delta === null ? "text-slate-300" :
