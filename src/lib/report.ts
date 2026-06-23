@@ -79,6 +79,7 @@ export interface UnansweredChat {
 export interface DaySummary {
   date: string;
   evaluatedChats: number;
+  newChats: number;
   distribution: Record<QualityBand, number>;
   serviceQualityPct: number;
 }
@@ -502,11 +503,21 @@ export function buildReport(
         });
       }
     }
+    const dayNewChats = new Map<string, number>();
+    for (const c of scopedChats) {
+      if (c.created_date) {
+        const d = c.created_date.slice(0, 10);
+        if ((!from || d >= from) && (!to || d <= to)) {
+          dayNewChats.set(d, (dayNewChats.get(d) ?? 0) + 1);
+        }
+      }
+    }
     perDay = [...dayMap.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, a]) => ({
         date,
         evaluatedChats: a.count,
+        newChats: dayNewChats.get(date) ?? 0,
         distribution: a.dist,
         serviceQualityPct: a.count ? Math.round((a.sum / a.count) * 10) / 10 : 0,
       }));

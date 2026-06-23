@@ -39,28 +39,18 @@ function rangeDates(from: string, to: string): string[] {
   return result;
 }
 
-const DAY_ABBR = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
-function dayHeader(iso: string): string {
-  const d = new Date(iso + "T00:00:00Z");
-  return `${DAY_ABBR[d.getUTCDay()]} ${d.getUTCDate()}`;
+function fmtShortDate(iso: string): string {
+  const [, m, d] = iso.slice(0, 10).split("-");
+  return `${d}.${m}`;
 }
 
 function scoreCellClass(score: number | undefined): string {
-  if (score === undefined || score < 0) return "text-slate-300 bg-white";
-  if (score >= 98) return "bg-emerald-100 text-emerald-800 font-semibold";
-  if (score >= 90) return "bg-slate-50 text-slate-700";
-  if (score >= 80) return "bg-amber-100 text-amber-700";
-  return "bg-rose-100 text-rose-700";
+  if (score === undefined || score < 0) return "bg-white text-gray-300";
+  if (score >= 98) return "bg-green-100 text-green-800 font-semibold";
+  if (score >= 90) return "bg-white text-gray-700";
+  if (score >= 80) return "bg-yellow-100 text-yellow-800";
+  return "bg-red-100 text-red-700";
 }
-
-const BAND_ROW: Record<string, string> = {
-  Оценено:            "bg-slate-50 text-slate-700",
-  Отлично:            "bg-emerald-50 text-emerald-800",
-  Хорошо:             "bg-amber-50 text-amber-800",
-  Плохо:              "bg-orange-100 text-orange-800",
-  Критично:           "bg-rose-100 text-rose-800 font-medium",
-  "Сервис Бухгалтерии": "bg-indigo-700 text-white font-bold",
-};
 
 export default async function MessagesPage({
   searchParams,
@@ -177,8 +167,6 @@ export default async function MessagesPage({
     if (t.overdue > 0) overdueByAcc.set(t.accountant, t.overdue);
   }
 
-  const BANDS = ["Отлично", "Хорошо", "Плохо", "Критично"] as const;
-
   return (
     <div className="space-y-4">
       <div>
@@ -222,102 +210,200 @@ export default async function MessagesPage({
       {/* ── Spreadsheet view for multi-day periods ───────────────────────────── */}
       {isMultiDay && periodAccountants.length > 0 && (
         <div id="comparison-section" className="card overflow-x-auto">
-          {/* Print-only title */}
-          <div className="print-only px-3 pt-3 pb-1">
-            <div className="text-base font-bold">📊 Оценки по периоду</div>
-            <div className="text-sm text-gray-500">{periodLabel}</div>
-          </div>
-          {/* Screen header */}
-          <div className="flex items-center justify-between px-3 pt-3 pb-2 no-print">
-            <div className="text-sm font-semibold">📊 Оценки по периоду</div>
+          {/* Print-only header */}
+          <div className="print-only px-3 pt-3 pb-1 text-sm text-gray-500">{periodLabel}</div>
+          {/* PDF button */}
+          <div className="flex justify-end px-3 pt-2 pb-1 no-print">
             <PrintComparisonButton />
           </div>
 
           <table className="text-xs border-collapse w-full">
             <thead>
               <tr>
-                <th className="sticky left-0 z-10 text-left px-3 py-2 border border-gray-200 bg-gray-100 font-semibold whitespace-nowrap min-w-[130px]">
-                  Показатель
-                </th>
+                <th className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-gray-50 whitespace-nowrap min-w-[150px]" />
                 {periodDates.map((d) => (
-                  <th key={d} className="px-2 py-2 border border-gray-200 bg-gray-100 font-semibold text-center whitespace-nowrap">
-                    {dayHeader(d)}
+                  <th key={d} className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
+                    {fmtShortDate(d)}
                   </th>
                 ))}
-                <th className="px-2 py-2 border border-gray-200 bg-gray-100 font-semibold text-center whitespace-nowrap">
+                <th className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
                   Итого
                 </th>
               </tr>
             </thead>
             <tbody>
-              {/* Оценено row */}
+              {/* Активных чатов */}
               <tr>
-                <td className={`sticky left-0 z-10 px-3 py-1.5 border border-gray-200 whitespace-nowrap ${BAND_ROW["Оценено"]}`}>
-                  Оценено чатов
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
+                  Активных чатов
+                </td>
+                {periodDates.map((d) => (
+                  <td key={d} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                ))}
+                <td className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  {report.totals.activeChats}
+                </td>
+              </tr>
+
+              {/* Новых чатов */}
+              <tr>
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
+                  Новых чатов
                 </td>
                 {periodDates.map((d) => {
                   const day = dayMap.get(d);
                   return (
-                    <td key={d} className={`px-2 py-1.5 border border-gray-200 text-center ${BAND_ROW["Оценено"]}`}>
-                      {day ? day.evaluatedChats : <span className="text-slate-300">—</span>}
+                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                      {day?.newChats ?? <span className="text-gray-300">—</span>}
                     </td>
                   );
                 })}
-                <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${BAND_ROW["Оценено"]}`}>
+                <td className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  {report.totals.newChats}
+                </td>
+              </tr>
+
+              {/* Без ответственных */}
+              <tr>
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
+                  Без ответственных
+                </td>
+                {periodDates.map((d) => (
+                  <td key={d} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                ))}
+                <td className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+              </tr>
+
+              {/* Нет ссылки */}
+              <tr>
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
+                  Нет ссылки
+                </td>
+                {periodDates.map((d) => (
+                  <td key={d} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                ))}
+                <td className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+              </tr>
+
+              {/* Оценено чатов всего — bold */}
+              <tr className="font-bold">
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
+                  Оценено чатов всего
+                </td>
+                {periodDates.map((d) => {
+                  const day = dayMap.get(d);
+                  return (
+                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                      {day ? day.evaluatedChats : <span className="text-gray-300 font-normal">—</span>}
+                    </td>
+                  );
+                })}
+                <td className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                   {report.totals.evaluatedChats}
                 </td>
               </tr>
 
-              {/* Distribution rows */}
-              {BANDS.map((band) => (
-                <tr key={band}>
-                  <td className={`sticky left-0 z-10 px-3 py-1.5 border border-gray-200 whitespace-nowrap ${BAND_ROW[band]}`}>
-                    {band}
-                  </td>
-                  {periodDates.map((d) => {
-                    const day = dayMap.get(d);
-                    const count = day?.distribution[band] ?? 0;
-                    return (
-                      <td key={d} className={`px-2 py-1.5 border border-gray-200 text-center ${BAND_ROW[band]}`}>
-                        {count > 0 ? count : <span className="opacity-40">0</span>}
-                      </td>
-                    );
-                  })}
-                  <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${BAND_ROW[band]}`}>
-                    {report.distribution[band] > 0 ? report.distribution[band] : <span className="opacity-40">0</span>}
-                  </td>
-                </tr>
-              ))}
-
-              {/* Сервис Бухгалтерии row */}
+              {/* Отлично */}
               <tr>
-                <td className={`sticky left-0 z-10 px-3 py-2 border border-gray-300 whitespace-nowrap text-sm ${BAND_ROW["Сервис Бухгалтерии"]}`}>
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
+                  Отлично
+                </td>
+                {periodDates.map((d) => {
+                  const day = dayMap.get(d);
+                  return (
+                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                      {day?.distribution.Отлично ?? <span className="text-gray-300">—</span>}
+                    </td>
+                  );
+                })}
+                <td className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  {report.distribution.Отлично}
+                </td>
+              </tr>
+
+              {/* Хорошо — yellow row */}
+              <tr className="bg-yellow-100">
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-yellow-100 whitespace-nowrap">
+                  Хорошо
+                </td>
+                {periodDates.map((d) => {
+                  const day = dayMap.get(d);
+                  return (
+                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center">
+                      {day?.distribution.Хорошо ?? "—"}
+                    </td>
+                  );
+                })}
+                <td className="px-2 py-1.5 border border-gray-200 text-center">
+                  {report.distribution.Хорошо}
+                </td>
+              </tr>
+
+              {/* Плохо */}
+              <tr>
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
+                  Плохо
+                </td>
+                {periodDates.map((d) => {
+                  const day = dayMap.get(d);
+                  return (
+                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                      {day?.distribution.Плохо ?? <span className="text-gray-300">—</span>}
+                    </td>
+                  );
+                })}
+                <td className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  {report.distribution.Плохо}
+                </td>
+              </tr>
+
+              {/* Критично — red row */}
+              <tr className="bg-red-100">
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-red-100 whitespace-nowrap">
+                  Критично
+                </td>
+                {periodDates.map((d) => {
+                  const day = dayMap.get(d);
+                  return (
+                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center">
+                      {day?.distribution.Критично ?? "—"}
+                    </td>
+                  );
+                })}
+                <td className="px-2 py-1.5 border border-gray-200 text-center">
+                  {report.distribution.Критично}
+                </td>
+              </tr>
+
+              {/* Сервис Бухгалтерии — bold, score-coloured cells */}
+              <tr className="font-bold border-t-2 border-gray-300">
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-white whitespace-nowrap">
                   Сервис Бухгалтерии
                 </td>
                 {periodDates.map((d) => {
                   const day = dayMap.get(d);
                   return (
-                    <td key={d} className={`px-2 py-2 border border-gray-300 text-center text-sm font-bold ${day ? scoreCellClass(day.serviceQualityPct) : "bg-white text-slate-300"}`}>
+                    <td key={d} className={`px-2 py-2 border border-gray-300 text-center ${day ? scoreCellClass(day.serviceQualityPct) : "bg-white text-gray-300"}`}>
                       {day ? day.serviceQualityPct : "—"}
                     </td>
                   );
                 })}
-                <td className={`px-2 py-2 border border-gray-300 text-center text-sm font-bold ${scoreCellClass(report.serviceQualityPct)}`}>
+                <td className={`px-2 py-2 border border-gray-300 text-center ${scoreCellClass(report.serviceQualityPct)}`}>
                   {report.serviceQualityPct}
                 </td>
               </tr>
 
-              {/* Divider */}
+              {/* Separator */}
               <tr>
-                <td colSpan={periodDates.length + 2} className="p-0 h-0 border-t-2 border-indigo-200" />
+                <td colSpan={periodDates.length + 2} className="h-2 bg-gray-100 border-t border-gray-200" />
               </tr>
 
               {/* Per-accountant rows */}
               {periodAccountants.map((acc) => {
                 const accData = report.perAccountant.find((a) => a.accountant === acc);
                 return (
-                  <tr key={acc} className="hover:brightness-95 transition-all">
-                    <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 font-medium whitespace-nowrap bg-white">
+                  <tr key={acc}>
+                    <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 whitespace-nowrap bg-white">
                       {acc}
                     </td>
                     {periodDates.map((d) => {
@@ -327,9 +413,9 @@ export default async function MessagesPage({
                           {cell ? (
                             <>
                               {cell.score}
-                              <sup className="text-[8px] text-slate-400 ml-0.5">{cell.count}</sup>
+                              <sup className="text-[8px] opacity-50 ml-0.5">{cell.count}</sup>
                             </>
-                          ) : <span className="text-slate-200">—</span>}
+                          ) : <span className="text-gray-200">—</span>}
                         </td>
                       );
                     })}
@@ -337,19 +423,15 @@ export default async function MessagesPage({
                       {accData && accData.avgScore >= 0 ? (
                         <>
                           {accData.avgScore}
-                          <sup className="text-[8px] text-slate-400 ml-0.5">{accData.count}</sup>
+                          <sup className="text-[8px] opacity-50 ml-0.5">{accData.count}</sup>
                         </>
-                      ) : <span className="text-slate-300">—</span>}
+                      ) : <span className="text-gray-300">—</span>}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-
-          <p className="text-[11px] text-slate-400 px-3 py-2 no-print">
-            🟩 ≥ 98 · 🟨 90–97 · 🟧 80–89 · 🟥 &lt; 80 · надстрочная цифра — кол-во оценок
-          </p>
         </div>
       )}
 
