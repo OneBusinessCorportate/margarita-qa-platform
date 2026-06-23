@@ -324,6 +324,177 @@ export function accountantsToMessage(report: DailyReport): string[] {
     .map(([name]) => name);
 }
 
+/** "16–22 июн 2026" from Mon ISO date. */
+function weekLabelFromISO(from: string, to: string): string {
+  const MONTHS = [
+    "янв","фев","мар","апр","май","июн",
+    "июл","авг","сен","окт","ноя","дек",
+  ];
+  const f = new Date(from + "T00:00:00Z");
+  const t = new Date(to + "T00:00:00Z");
+  const m1 = MONTHS[f.getUTCMonth()];
+  const m2 = MONTHS[t.getUTCMonth()];
+  if (f.getUTCMonth() === t.getUTCMonth() && f.getUTCFullYear() === t.getUTCFullYear()) {
+    return `${f.getUTCDate()}–${t.getUTCDate()} ${m1} ${f.getUTCFullYear()}`;
+  }
+  return `${f.getUTCDate()} ${m1}–${t.getUTCDate()} ${m2} ${f.getUTCFullYear()}`;
+}
+
+export interface WeeklyReportOptions {
+  /** Override the week label shown in the header. */
+  weekLabel?: string;
+}
+
+/**
+ * Weekly summary message for Emilia — the one Margarita sends each Monday.
+ * Shows last-vs-this-week service %, who improved/worsened, stars of the week,
+ * and top recurring problems. Designed to match the Google Sheets format she
+ * used to fill manually.
+ */
+export function buildWeeklyReportMessage(
+  report: DailyReport,
+  previous: DailyReport | null,
+  options: WeeklyReportOptions = {}
+): string {
+  const { from, to } = report.filters;
+  const label =
+    options.weekLabel ??
+    (from && to ? weekLabelFromISO(from, to) : fmtDateRange(from, to));
+  const lines: string[] = [];
+
+  lines.push(`📊 Еженедельный отчёт | ${label}`);
+  lines.push("");
+
+  // ── Service quality comparison ───────────────────────────────────────────
+  if (previous) {
+    const prevPct = previous.serviceQualityPct;
+    const curPct = report.serviceQualityPct;
+    const delta = Math.round((curPct - prevPct) * 10) / 10;
+    const arrow = delta > 0 ? `▲ +${delta} п.п.` : delta < 0 ? `▼ ${delta} п.п.` : "→ без изменений";
+    lines.push(`📈 Качество сервиса:`);
+    lines.push(`  Прошлая неделя: ${prevPct}%`);
+    lines.push(`  Эта неделя: ${curPct}%  ${arrow}`);
+  } else {
+    lines.push(`📈 Качество сервиса: ${report.serviceQualityPct}%`);
+  }
+
+  // ── Per-accountant trend ─────────────────────────────────────────────────
+  if (previous) {
+    const prevMap = new Map(previous.perAccountant.map((a) => [a.accountant, a.avgScore]));
+    const scored = report.perAccountant.filter((a) => a.count > 0 && a.avgScore >= 0);
+
+    const improved = scored
+      .filter((a) => {
+        const p = prevMap.get(a.accountant);
+        return p !== undefined && a.avgScore > p;
+      })
+      .sort((a, b) => {
+        const da = a.avgScore - (prevMap.get(a.accountant) ?? 0);
+        const db = b.avgScore - (prevMap.get(b.accountant) ?? 0);
+        return db - da;
+      });
+
+    const worsened = scored
+      .filter((a) => {
+        const p = prevMap.get(a.accountant);
+        return p !== undefined && a.avgScore < p;
+      })
+      .sort((a, b) => {
+        const da = a.avgScore - (prevMap.get(a.accountant) ?? 0);
+        const db = b.avgScore - (prevMap.get(b.accountant) ?? 0);
+        return da - db;
+      });
+
+    if (improved.length) {
+      lines.push("");
+      lines.push("✅ Улучшили показатели:");
+      for (const a of improved) {
+        const p = prevMap.get(a.accountant)!;
+        lines.push(`• ${a.accountant}: ${p}% → ${a.avgScore}%`);
+      }
+    }
+
+    if (worsened.length) {
+      lines.push("");
+      lines.push("⚠️ Ухудшили показатели:");
+      for (const a of worsened) {
+        const p = prevMap.get(a.accountant)!;
+        lines.push(`• ${a.accountant}: ${p}% → ${a.avgScore}%`);
+      }
+    }
+
+    // ── Full roster ────────────────────────────────────────────────────────
+    lines.push("");
+    lines.push("👥 Результаты по бухгалтерам:");
+    const roster = [...report.perAccountant.filter((a) => a.count > 0 && a.avgScore >= 0)]
+      .sort((a, b) => b.avgScore - a.avgScore);
+    for (const a of roster) {
+      const emoji = BAND_EMOJI[bandFor(a.avgScore)];
+      const prev = prevMap.get(a.accountant);
+      const prevStr = prev !== undefined ? `${prev}% → ` : "";
+      lines.push(`${emoji} ${a.accountant}: ${prevStr}${a.avgScore}%`);
+    }
+  } else {
+    lines.push("");
+    lines.push("👥 Результаты по бухгалтерам:");
+    for (const a of [...report.perAccountant].sort((x, y) => y.avgScore - x.avgScore)) {
+      if (a.count === 0 || a.avgScore < 0) continue;
+      const emoji = BAND_EMOJI[bandFor(a.avgScore)];
+      lines.push(`${emoji} ${a.accountant}: ${a.avgScore}%`);
+    }
+  }
+
+  // ── Stars of the week — accountants with all daily scores ≥ 98 ──────────
+  if (report.perDayPerAccountant && report.perDayPerAccountant.length > 0) {
+    const accDays = new Map<string, number[]>();
+    for (const d of report.perDayPerAccountant) {
+      if (d.accountant === "—") continue;
+      const scores = accDays.get(d.accountant) ?? [];
+      scores.push(d.avgScore);
+      accDays.set(d.accountant, scores);
+    }
+    const stars = [...accDays.entries()]
+      .filter(([, scores]) => scores.length >= 3 && scores.every((s) => s >= 98))
+      .sort((a, b) => {
+        const avgA = a[1].reduce((s, x) => s + x, 0) / a[1].length;
+        const avgB = b[1].reduce((s, x) => s + x, 0) / b[1].length;
+        return avgB - avgA || a[0].localeCompare(b[0]);
+      });
+
+    if (stars.length > 0) {
+      lines.push("");
+      lines.push("⭐ Звёзды недели:");
+      for (const [name, scores] of stars) {
+        const countByScore = new Map<number, number>();
+        for (const s of scores) countByScore.set(s, (countByScore.get(s) ?? 0) + 1);
+        const desc = [...countByScore.entries()]
+          .sort((a, b) => b[0] - a[0])
+          .map(([s, n]) => `${n}×${s}`)
+          .join(", ");
+        lines.push(`🌟 ${name} (${desc})`);
+      }
+    }
+  }
+
+  // ── Top recurring problems ────────────────────────────────────────────────
+  const probFreq = new Map<string, number>();
+  for (const c of report.criticalChats) {
+    for (const r of c.reasons) {
+      probFreq.set(r, (probFreq.get(r) ?? 0) + 1);
+    }
+  }
+  if (probFreq.size > 0) {
+    lines.push("");
+    lines.push("❗ Основные проблемы:");
+    const sorted = [...probFreq.entries()].sort((a, b) => b[1] - a[1]);
+    for (const [prob, cnt] of sorted.slice(0, 5)) {
+      lines.push(`• ${prob}${cnt > 1 ? ` (×${cnt})` : ""}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 /** Per-chat / per-accountant score message. */
 export function buildScoreMessage(
   evaluation: Evaluation,

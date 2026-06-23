@@ -76,6 +76,13 @@ export interface UnansweredChat {
   waitingDays: number | null;
 }
 
+export interface DayAccountantScore {
+  date: string;       // ISO yyyy-mm-dd
+  accountant: string;
+  avgScore: number;   // 0..100
+  count: number;
+}
+
 export interface DailyReport {
   filters: ReportFilters;
   totals: {
@@ -109,6 +116,8 @@ export interface DailyReport {
   criticalChats: CriticalChat[];
   /** Live chats still awaiting a reply, longest wait first. May be empty. */
   unansweredChats: UnansweredChat[];
+  /** Per-day × per-accountant scores; populated for multi-day windows (weekly view, stars). */
+  perDayPerAccountant?: DayAccountantScore[];
   tasks: {
     total: number;
     onTime: number;
@@ -448,6 +457,34 @@ export function buildReport(
     ? Math.round((evaluatedChats / activeChats) * 1000) / 10
     : 0;
 
+  // Per-day × per-accountant scores — used for the weekly report visual table
+  // and "stars of the week" calculation. Only computed for multi-day windows.
+  let perDayPerAccountant: DayAccountantScore[] | undefined;
+  if (from !== to) {
+    const dayAccMap = new Map<string, Map<string, { sum: number; count: number }>>();
+    for (const e of evals) {
+      const date = e.checking_date.slice(0, 10);
+      const acc = e.accountant ?? "—";
+      if (!dayAccMap.has(date)) dayAccMap.set(date, new Map());
+      const accMap = dayAccMap.get(date)!;
+      const agg = accMap.get(acc) ?? { sum: 0, count: 0 };
+      agg.sum += e.total_score;
+      agg.count += 1;
+      accMap.set(acc, agg);
+    }
+    perDayPerAccountant = [];
+    for (const [date, accMap] of [...dayAccMap.entries()].sort()) {
+      for (const [accountant, a] of [...accMap.entries()].sort()) {
+        perDayPerAccountant.push({
+          date,
+          accountant,
+          avgScore: Math.round((a.sum / a.count) * 10) / 10,
+          count: a.count,
+        });
+      }
+    }
+  }
+
   return {
     filters,
     totals: {
@@ -467,6 +504,7 @@ export function buildReport(
     needsAttention,
     criticalChats,
     unansweredChats,
+    perDayPerAccountant,
     tasks: {
       total: scopedTasks.length,
       onTime: tOnTime,
