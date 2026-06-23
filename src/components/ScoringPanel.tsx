@@ -1207,9 +1207,18 @@ function ChatScoreRow({
   );
   const [deletingEval, setDeletingEval] = useState(false);
   const [deletingChat, setDeletingChat] = useState(false);
-  const [criteria, setCriteria] = useState<CriteriaScores>(
-    existing?.scores.criteria ?? prev?.criteria ?? {}
-  );
+  const [criteria, setCriteria] = useState<CriteriaScores>(() => {
+    if (existing?.scores.criteria) return existing.scores.criteria;
+    if (prev?.criteria) return prev.criteria;
+    // Fall back to AI prediction so the row is pre-filled without clicking «Принять».
+    const aiInit = predictEvaluation(accountant || null, prevStatuses, aiModel, {
+      status: chat.status,
+      debts: chat.debts,
+      debtStatus: chat.debt_status,
+      date,
+    });
+    return aiInit.criteria ?? {};
+  });
   const [monthly, setMonthly] = useState<Record<string, MonthlyStatus>>(() => {
     const base = emptyMonthly();
     if (existing?.scores.monthly) return { ...base, ...existing.scores.monthly };
