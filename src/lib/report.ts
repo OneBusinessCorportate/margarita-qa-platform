@@ -78,6 +78,7 @@ export interface UnansweredChat {
 
 export interface DaySummary {
   date: string;
+  activeChats?: number;
   evaluatedChats: number;
   newChats: number;
   distribution: Record<QualityBand, number>;
@@ -89,6 +90,7 @@ export interface DayAccountantScore {
   accountant: string;
   avgScore: number;   // 0..100
   count: number;
+  lowCount: number;   // Плохо + Критично
 }
 
 export interface DailyReport {
@@ -473,16 +475,18 @@ export function buildReport(
   let perDayPerAccountant: DayAccountantScore[] | undefined;
   let perDay: DaySummary[] | undefined;
   if (from !== to) {
-    const dayAccMap = new Map<string, Map<string, { sum: number; count: number }>>();
+    const dayAccMap = new Map<string, Map<string, { sum: number; count: number; low: number }>>();
     const dayMap = new Map<string, { sum: number; count: number; dist: Record<QualityBand, number> }>();
     for (const e of evals) {
       const date = e.checking_date.slice(0, 10);
       const acc = e.accountant ?? "—";
       if (!dayAccMap.has(date)) dayAccMap.set(date, new Map());
       const accMap = dayAccMap.get(date)!;
-      const accAgg = accMap.get(acc) ?? { sum: 0, count: 0 };
+      const accAgg = accMap.get(acc) ?? { sum: 0, count: 0, low: 0 };
       accAgg.sum += e.total_score;
       accAgg.count += 1;
+      const dayBand = bandFor(e.total_score);
+      if (dayBand === "Плохо" || dayBand === "Критично") accAgg.low += 1;
       accMap.set(acc, accAgg);
       if (!dayMap.has(date)) {
         dayMap.set(date, { sum: 0, count: 0, dist: { Отлично: 0, Хорошо: 0, Плохо: 0, Критично: 0 } });
@@ -500,6 +504,7 @@ export function buildReport(
           accountant,
           avgScore: Math.round((a.sum / a.count) * 10) / 10,
           count: a.count,
+          lowCount: a.low,
         });
       }
     }
@@ -512,10 +517,20 @@ export function buildReport(
         }
       }
     }
+    const dayActiveChats = new Map<string, number>();
+    for (const c of scopedChats) {
+      if (c.status === "Active" && c.last_activity_date) {
+        const d = c.last_activity_date.slice(0, 10);
+        if ((!from || d >= from) && (!to || d <= to)) {
+          dayActiveChats.set(d, (dayActiveChats.get(d) ?? 0) + 1);
+        }
+      }
+    }
     perDay = [...dayMap.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, a]) => ({
         date,
+        activeChats: dayActiveChats.get(date),
         evaluatedChats: a.count,
         newChats: dayNewChats.get(date) ?? 0,
         distribution: a.dist,

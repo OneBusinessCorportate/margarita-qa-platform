@@ -102,74 +102,46 @@ export default async function MessagesPage({
   const isMultiDay = resolved.from !== resolved.to;
   const weeklyMessage = isWeek ? buildWeeklyReportMessage(report, previous ?? null) : null;
 
-  // ── Multi-day spreadsheet data ─────────────────────────────────────────────
-  const periodDates = isMultiDay ? rangeDates(resolved.from, resolved.to) : [];
+  // ── Spreadsheet grid data (unified for single-day and multi-day) ───────────
+  const periodDates = rangeDates(resolved.from, resolved.to);
 
-  // Per-accountant per-day scores
-  const dayAccScoreMap = new Map<string, { score: number; count: number }>();
+  // Per-accountant per-day lookup: key = "date|accountant"
+  const dayAccScoreMap = new Map<string, { score: number; count: number; lowCount: number }>();
   if (isMultiDay && report.perDayPerAccountant) {
     for (const d of report.perDayPerAccountant) {
-      dayAccScoreMap.set(`${d.date}|${d.accountant}`, { score: d.avgScore, count: d.count });
+      dayAccScoreMap.set(`${d.date}|${d.accountant}`, {
+        score: d.avgScore,
+        count: d.count,
+        lowCount: d.lowCount,
+      });
+    }
+  } else {
+    for (const a of report.perAccountant) {
+      dayAccScoreMap.set(`${resolved.from}|${a.accountant}`, {
+        score: a.avgScore,
+        count: a.count,
+        lowCount: a.lowCount,
+      });
     }
   }
 
-  // Per-day summary (distribution + service %)
+  // Per-day summary lookup
   const dayMap = new Map<string, DaySummary>();
   if (isMultiDay && report.perDay) {
     for (const d of report.perDay) dayMap.set(d.date, d);
+  } else {
+    dayMap.set(resolved.from, {
+      date: resolved.from,
+      activeChats: report.totals.activeChats,
+      evaluatedChats: report.totals.evaluatedChats,
+      newChats: report.totals.newChats,
+      distribution: report.distribution,
+      serviceQualityPct: report.serviceQualityPct,
+    });
   }
 
-  // Accountants in canonical DB order (matches the source spreadsheet row order)
-  const periodAccountants = isMultiDay
-    ? canonicalAccountants.map((a) => a.name)
-    : [];
-
-  // ── Single-day comparison data ─────────────────────────────────────────────
-  const prevMap = previous
-    ? new Map(previous.perAccountant.map((a) => [a.accountant, a.avgScore]))
-    : new Map<string, number>();
-
-  const currentScoreMap = new Map(report.perAccountant.map((a) => [a.accountant, a]));
-  // All active accountants in canonical order; those without evaluations show —
-  const comparisonRows = filters.accountant
-    ? report.perAccountant.filter((a) => a.accountant === filters.accountant && a.count > 0)
-    : canonicalAccountants.map(
-        (a) => currentScoreMap.get(a.name) ?? { accountant: a.name, avgScore: -1, count: 0, lowCount: 0 }
-      );
-
-  // Stars (used in single-day comparison section)
-  const starsList: Array<{ name: string; desc: string }> = [];
-  if (report.perDayPerAccountant?.length) {
-    const accDays = new Map<string, number[]>();
-    for (const d of report.perDayPerAccountant) {
-      if (d.accountant === "—") continue;
-      const s = accDays.get(d.accountant) ?? [];
-      s.push(d.avgScore);
-      accDays.set(d.accountant, s);
-    }
-    for (const [name, scores] of [...accDays.entries()].sort((a, b) => {
-      const avgA = a[1].reduce((s, x) => s + x, 0) / a[1].length;
-      const avgB = b[1].reduce((s, x) => s + x, 0) / b[1].length;
-      return avgB - avgA || a[0].localeCompare(b[0]);
-    })) {
-      if (scores.length >= 3 && scores.every((s) => s >= 98)) {
-        const cnt = new Map<number, number>();
-        for (const s of scores) cnt.set(s, (cnt.get(s) ?? 0) + 1);
-        const desc = [...cnt.entries()].sort((a, b) => b[0] - a[0]).map(([s, n]) => `${n}×${s}`).join(", ");
-        starsList.push({ name, desc });
-      }
-    }
-  }
-
-  const unansweredByAcc = new Map<string, number>();
-  for (const c of report.unansweredChats ?? []) {
-    const k = c.accountant ?? "—";
-    unansweredByAcc.set(k, (unansweredByAcc.get(k) ?? 0) + 1);
-  }
-  const overdueByAcc = new Map<string, number>();
-  for (const t of report.tasks.perAccountant) {
-    if (t.overdue > 0) overdueByAcc.set(t.accountant, t.overdue);
-  }
+  // All active accountants in canonical order
+  const periodAccountants = canonicalAccountants.map((a) => a.name);
 
   return (
     <div className="space-y-4">
@@ -211,354 +183,252 @@ export default async function MessagesPage({
         </div>
       )}
 
-      {/* ── Spreadsheet view for multi-day periods ───────────────────────────── */}
-      {isMultiDay && periodAccountants.length > 0 && (
+      {/* ── Spreadsheet monitoring grid (single-day and multi-day) ────────────── */}
+      {periodAccountants.length > 0 && (
         <div id="comparison-section" className="card overflow-x-auto">
-          {/* Print-only header */}
           <div className="print-only px-3 pt-3 pb-1 text-sm text-gray-500">{periodLabel}</div>
-          {/* PDF button */}
           <div className="flex justify-end px-3 pt-2 pb-1 no-print">
             <PrintComparisonButton />
           </div>
 
-          <table className="text-xs border-collapse w-full">
+          <table className="text-xs border-collapse">
             <thead>
+              {/* Row 1: date group headers */}
               <tr>
-                <th className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-gray-50 whitespace-nowrap min-w-[150px]" />
-                {periodDates.flatMap((d) => [
-                  <th key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
-                    {fmtShortDate(d)}
-                  </th>,
-                  <th key={`${d}-c`} className="w-5 border border-gray-200 bg-gray-50" />,
-                ])}
-                <th colSpan={2} className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
-                  Итого
+                <th rowSpan={2} className="sticky left-0 z-20 px-3 py-1.5 border border-gray-200 bg-gray-50 text-left font-semibold whitespace-nowrap min-w-[160px]">
+                  Бухгалтер
                 </th>
+                {periodDates.map((d) => (
+                  <th key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
+                    {fmtShortDate(d)}
+                  </th>
+                ))}
+                {isMultiDay && (
+                  <th colSpan={2} rowSpan={2} className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
+                    Итого
+                  </th>
+                )}
+              </tr>
+              {/* Row 2: sub-column labels */}
+              <tr>
+                {periodDates.flatMap((d) => [
+                  <th key={`${d}-pct`} className="w-10 px-1 py-1 border border-gray-200 bg-gray-50 text-center text-gray-400 font-normal">%</th>,
+                  <th key={`${d}-bad`} className="w-5 px-0.5 py-1 border border-gray-200 bg-gray-50 text-center text-gray-400 font-normal">⚠</th>,
+                  <th key={`${d}-n`} className="w-5 px-0.5 py-1 border border-gray-200 bg-gray-50 text-center text-gray-400 font-normal">N</th>,
+                ])}
               </tr>
             </thead>
             <tbody>
+              {/* ── Summary rows ──────────────────────────────────────────────── */}
+
               {/* Активных чатов */}
               <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
-                  Активных чатов
-                </td>
-                {periodDates.flatMap((d) => [
-                  <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>,
-                  <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
-                ])}
-                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                  {report.totals.activeChats}
-                </td>
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Активных чатов</td>
+                {periodDates.map((d) => {
+                  const day = dayMap.get(d);
+                  return (
+                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                      {day?.activeChats !== undefined ? day.activeChats : <span className="text-gray-300">—</span>}
+                    </td>
+                  );
+                })}
+                {isMultiDay && (
+                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                    {report.totals.activeChats}
+                  </td>
+                )}
               </tr>
 
               {/* Новых чатов */}
               <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
-                  Новых чатов
-                </td>
-                {periodDates.flatMap((d) => {
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Новых чатов</td>
+                {periodDates.map((d) => {
                   const day = dayMap.get(d);
-                  return [
-                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                      {day?.newChats ?? <span className="text-gray-300">—</span>}
-                    </td>,
-                    <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
-                  ];
+                  return (
+                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                      {day?.newChats !== undefined ? day.newChats : <span className="text-gray-300">—</span>}
+                    </td>
+                  );
                 })}
-                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                  {report.totals.newChats}
-                </td>
+                {isMultiDay && (
+                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                    {report.totals.newChats}
+                  </td>
+                )}
               </tr>
 
-              {/* Без ответственных */}
+              {/* Чаты без ответственных / Нет НУНН */}
               <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
-                  Без ответственных
-                </td>
-                {periodDates.flatMap((d) => [
-                  <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>,
-                  <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
-                ])}
-                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Чаты без ответственных / Нет НУНН</td>
+                {periodDates.map((d) => (
+                  <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                ))}
+                {isMultiDay && (
+                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                    {report.totals.chatsWithoutResponsible > 0
+                      ? report.totals.chatsWithoutResponsible
+                      : <span className="text-gray-300">—</span>}
+                  </td>
+                )}
               </tr>
 
-              {/* Нет ссылки */}
+              {/* Нет ссылки на чаты */}
               <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
-                  Нет ссылки
-                </td>
-                {periodDates.flatMap((d) => [
-                  <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>,
-                  <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
-                ])}
-                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Нет ссылки на чаты (активные)</td>
+                {periodDates.map((d) => (
+                  <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                ))}
+                {isMultiDay && (
+                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                )}
               </tr>
 
-              {/* Оценено чатов всего — bold */}
-              <tr className="font-bold">
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
-                  Оценено чатов всего
-                </td>
-                {periodDates.flatMap((d) => {
+              {/* Оценено чатов всего */}
+              <tr className="font-semibold">
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Оценено чатов всего</td>
+                {periodDates.map((d) => {
                   const day = dayMap.get(d);
-                  return [
-                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  return (
+                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                       {day ? day.evaluatedChats : <span className="text-gray-300 font-normal">—</span>}
-                    </td>,
-                    <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
-                  ];
+                    </td>
+                  );
                 })}
-                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                  {report.totals.evaluatedChats}
-                </td>
+                {isMultiDay && (
+                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                    {report.totals.evaluatedChats}
+                  </td>
+                )}
               </tr>
 
               {/* Отлично */}
               <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
-                  Отлично
-                </td>
-                {periodDates.flatMap((d) => {
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-green-50 whitespace-nowrap">Отлично</td>
+                {periodDates.map((d) => {
                   const day = dayMap.get(d);
-                  return [
-                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                      {day?.distribution.Отлично ?? <span className="text-gray-300">—</span>}
-                    </td>,
-                    <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
-                  ];
+                  return (
+                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-green-50">
+                      {day ? day.distribution.Отлично : <span className="text-gray-300">—</span>}
+                    </td>
+                  );
                 })}
-                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                  {report.distribution.Отлично}
-                </td>
+                {isMultiDay && (
+                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-green-50">
+                    {report.distribution.Отлично}
+                  </td>
+                )}
               </tr>
 
-              {/* Хорошо — yellow row */}
-              <tr className="bg-yellow-100">
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-yellow-100 whitespace-nowrap">
-                  Хорошо
-                </td>
-                {periodDates.flatMap((d) => {
+              {/* Хорошо */}
+              <tr>
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Хорошо</td>
+                {periodDates.map((d) => {
                   const day = dayMap.get(d);
-                  return [
-                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center">
-                      {day?.distribution.Хорошо ?? "—"}
-                    </td>,
-                    <td key={`${d}-c`} className="border border-gray-200" />,
-                  ];
+                  return (
+                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                      {day ? day.distribution.Хорошо : <span className="text-gray-300">—</span>}
+                    </td>
+                  );
                 })}
-                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center">
-                  {report.distribution.Хорошо}
-                </td>
+                {isMultiDay && (
+                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                    {report.distribution.Хорошо}
+                  </td>
+                )}
               </tr>
 
               {/* Плохо */}
               <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
-                  Плохо
-                </td>
-                {periodDates.flatMap((d) => {
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-yellow-50 whitespace-nowrap">Плохо</td>
+                {periodDates.map((d) => {
                   const day = dayMap.get(d);
-                  return [
-                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                      {day?.distribution.Плохо ?? <span className="text-gray-300">—</span>}
-                    </td>,
-                    <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
-                  ];
+                  return (
+                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-yellow-50">
+                      {day ? day.distribution.Плохо : <span className="text-gray-300">—</span>}
+                    </td>
+                  );
                 })}
-                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                  {report.distribution.Плохо}
-                </td>
+                {isMultiDay && (
+                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-yellow-50">
+                    {report.distribution.Плохо}
+                  </td>
+                )}
               </tr>
 
-              {/* Критично — red row */}
-              <tr className="bg-red-100">
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-red-100 whitespace-nowrap">
-                  Критично
-                </td>
-                {periodDates.flatMap((d) => {
+              {/* Критично */}
+              <tr>
+                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-red-50 whitespace-nowrap">Критично</td>
+                {periodDates.map((d) => {
                   const day = dayMap.get(d);
-                  return [
-                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center">
-                      {day?.distribution.Критично ?? "—"}
-                    </td>,
-                    <td key={`${d}-c`} className="border border-gray-200" />,
-                  ];
+                  return (
+                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-red-50">
+                      {day ? day.distribution.Критично : <span className="text-gray-300">—</span>}
+                    </td>
+                  );
                 })}
-                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center">
-                  {report.distribution.Критично}
-                </td>
+                {isMultiDay && (
+                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-red-50">
+                    {report.distribution.Критично}
+                  </td>
+                )}
               </tr>
 
-              {/* Сервис Бухгалтерии — bold, score-coloured cells */}
+              {/* Сервис Бухгалтерии */}
               <tr className="font-bold border-t-2 border-gray-300">
-                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-white whitespace-nowrap">
-                  Сервис Бухгалтерии
-                </td>
-                {periodDates.flatMap((d) => {
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-white whitespace-nowrap">Сервис Бухгалтерии</td>
+                {periodDates.map((d) => {
                   const day = dayMap.get(d);
-                  return [
-                    <td key={`${d}-s`} className={`px-2 py-2 border border-gray-300 text-center ${day ? scoreCellClass(day.serviceQualityPct) : "bg-white text-gray-300"}`}>
+                  return (
+                    <td key={d} colSpan={3} className={`px-2 py-2 border border-gray-300 text-center ${day ? scoreCellClass(day.serviceQualityPct) : "bg-white text-gray-300"}`}>
                       {day ? day.serviceQualityPct : "—"}
-                    </td>,
-                    <td key={`${d}-c`} className="border border-gray-300 bg-white" />,
-                  ];
+                    </td>
+                  );
                 })}
-                <td colSpan={2} className={`px-2 py-2 border border-gray-300 text-center ${scoreCellClass(report.serviceQualityPct)}`}>
-                  {report.serviceQualityPct}
-                </td>
+                {isMultiDay && (
+                  <td colSpan={2} className={`px-2 py-2 border border-gray-300 text-center ${scoreCellClass(report.serviceQualityPct)}`}>
+                    {report.serviceQualityPct}
+                  </td>
+                )}
               </tr>
 
               {/* Separator */}
               <tr>
-                <td colSpan={periodDates.length * 2 + 3} className="h-2 bg-gray-100 border-t border-gray-200" />
+                <td colSpan={1 + periodDates.length * 3 + (isMultiDay ? 2 : 0)} className="h-2 bg-gray-100 border-t border-gray-200" />
               </tr>
 
-              {/* Per-accountant rows — score cell + count cell per date */}
+              {/* ── Per-accountant rows ────────────────────────────────────────── */}
               {periodAccountants.map((acc) => {
                 const accData = report.perAccountant.find((a) => a.accountant === acc);
                 return (
                   <tr key={acc}>
-                    <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 whitespace-nowrap bg-white">
-                      {acc}
-                    </td>
+                    <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">{acc}</td>
                     {periodDates.flatMap((d) => {
                       const cell = dayAccScoreMap.get(`${d}|${acc}`);
                       return [
-                        <td key={`${d}-s`} className={`px-2 py-1.5 border border-gray-200 text-center ${cell ? scoreCellClass(cell.score) : ""}`}>
-                          {cell ? cell.score : <span className="text-gray-200">—</span>}
+                        <td key={`${d}-s`} className={`px-2 py-1.5 border border-gray-200 text-center ${cell && cell.score >= 0 ? scoreCellClass(cell.score) : "bg-white"}`}>
+                          {cell && cell.score >= 0 ? cell.score : <span className="text-gray-200">—</span>}
                         </td>,
-                        <td key={`${d}-c`} className="px-1 py-1.5 border border-gray-200 text-center text-gray-400">
-                          {cell ? cell.count : ""}
+                        <td key={`${d}-b`} className={`px-1 py-1.5 border border-gray-200 text-center ${cell?.lowCount ? "text-rose-600 font-semibold" : "text-gray-200"}`}>
+                          {cell?.lowCount || ""}
+                        </td>,
+                        <td key={`${d}-n`} className="px-1 py-1.5 border border-gray-200 text-center text-gray-400">
+                          {cell && cell.score >= 0 ? cell.count : ""}
                         </td>,
                       ];
                     })}
-                    <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${accData && accData.avgScore >= 0 ? scoreCellClass(accData.avgScore) : ""}`}>
-                      {accData && accData.avgScore >= 0 ? accData.avgScore : <span className="text-gray-300 font-normal">—</span>}
-                    </td>
-                    <td className="px-1 py-1.5 border border-gray-200 text-center text-gray-400">
-                      {accData ? accData.count : ""}
-                    </td>
+                    {isMultiDay && [
+                      <td key="total-s" className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${accData && accData.avgScore >= 0 ? scoreCellClass(accData.avgScore) : "bg-white"}`}>
+                        {accData && accData.avgScore >= 0 ? accData.avgScore : <span className="text-gray-300 font-normal">—</span>}
+                      </td>,
+                      <td key="total-n" className="px-1 py-1.5 border border-gray-200 text-center text-gray-400">
+                        {accData ? accData.count : ""}
+                      </td>,
+                    ]}
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        </div>
-      )}
-
-      {/* ── Single-day comparison with previous period ───────────────────────── */}
-      {!isMultiDay && previous && report.perAccountant.some((a) => a.count > 0) && (
-        <div id="comparison-section" className="card p-3 space-y-3">
-          <div className="print-only mb-2">
-            <div className="text-base font-bold">📊 Сравнение с предыдущим периодом</div>
-            <div className="text-sm text-gray-500">{periodLabel}</div>
-          </div>
-          <div className="flex items-center justify-between gap-2 no-print">
-            <div className="text-sm font-semibold">📊 Сравнение с предыдущим периодом</div>
-            <PrintComparisonButton />
-          </div>
-
-          {/* Service quality bar */}
-          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-            <span className="text-gray-500">
-              Прошлый:{" "}
-              <span className="font-semibold">{previous.serviceQualityPct}%</span>
-            </span>
-            <span className="text-gray-500">
-              Сегодня:{" "}
-              <span className="font-semibold">{report.serviceQualityPct}%</span>
-            </span>
-            {(() => {
-              const delta = Math.round((report.serviceQualityPct - previous.serviceQualityPct) * 10) / 10;
-              return (
-                <span className={delta > 0 ? "text-emerald-600 font-semibold" : delta < 0 ? "text-rose-600 font-semibold" : "text-slate-400"}>
-                  {delta > 0 ? `▲ +${delta} п.п.` : delta < 0 ? `▼ ${delta} п.п.` : "→ без изменений"}
-                </span>
-              );
-            })()}
-          </div>
-
-          {/* Per-accountant comparison table */}
-          <table className="text-xs border-collapse w-full">
-            <thead>
-              <tr>
-                <th className="text-left px-3 py-1.5 border border-gray-200 bg-gray-100 font-semibold">Бухгалтер</th>
-                <th className="px-2 py-1.5 border border-gray-200 bg-gray-100 font-semibold text-center whitespace-nowrap">Прошлый</th>
-                <th className="px-2 py-1.5 border border-gray-200 bg-gray-100 font-semibold text-center whitespace-nowrap">Сегодня</th>
-                <th className="px-2 py-1.5 border border-gray-200 bg-gray-100 font-semibold text-center whitespace-nowrap">Δ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {comparisonRows.map((a) => {
-                const hasScore = a.count > 0;
-                const prev = prevMap.get(a.accountant);
-                const delta = hasScore && prev !== undefined
-                  ? Math.round((a.avgScore - prev) * 10) / 10
-                  : null;
-                return (
-                  <tr key={a.accountant}>
-                    <td className="px-3 py-1.5 border border-gray-200 font-medium whitespace-nowrap">{a.accountant}</td>
-                    <td className={`px-2 py-1.5 border border-gray-200 text-center ${scoreCellClass(prev)}`}>
-                      {prev !== undefined ? prev : "—"}
-                    </td>
-                    <td className={`px-2 py-1.5 border border-gray-200 text-center ${hasScore ? scoreCellClass(a.avgScore) : ""}`}>
-                      {hasScore ? a.avgScore : "—"}
-                    </td>
-                    <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${
-                      delta === null ? "text-slate-300" :
-                      delta > 0 ? "text-emerald-600 bg-emerald-50" :
-                      delta < 0 ? "text-rose-600 bg-rose-50" : "text-slate-400"
-                    }`}>
-                      {delta === null ? "—" : delta > 0 ? `↑ +${delta}` : delta < 0 ? `↓ ${delta}` : "→"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          {/* Stars */}
-          {starsList.length > 0 && (
-            <div className="pt-1 space-y-1">
-              <div className="text-xs font-semibold text-amber-700">⭐ Звёзды периода</div>
-              <div className="flex flex-wrap gap-2">
-                {starsList.map(({ name, desc }) => (
-                  <span key={name} className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-xs font-medium text-amber-800">
-                    🌟 {name} <span className="text-amber-600">({desc})</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Indicators */}
-          {(unansweredByAcc.size > 0 || overdueByAcc.size > 0) && (
-            <div className="pt-1 space-y-1 border-t border-gray-100">
-              <div className="text-xs font-semibold text-slate-600">Индикаторы</div>
-              <div className="flex flex-wrap gap-3 text-xs">
-                {unansweredByAcc.size > 0 && (
-                  <div className="space-y-0.5">
-                    <div className="font-medium text-orange-700">
-                      ⏳ Без ответа клиенту ({[...unansweredByAcc.values()].reduce((s, n) => s + n, 0)})
-                    </div>
-                    {[...unansweredByAcc.entries()].sort((a, b) => b[1] - a[1]).map(([acc, n]) => (
-                      <div key={acc} className="text-slate-600 pl-2">• {acc}: {n}</div>
-                    ))}
-                  </div>
-                )}
-                {overdueByAcc.size > 0 && (
-                  <div className="space-y-0.5">
-                    <div className="font-medium text-rose-700">
-                      ❗ Просрочено задач ({[...overdueByAcc.values()].reduce((s, n) => s + n, 0)})
-                    </div>
-                    {[...overdueByAcc.entries()].sort((a, b) => b[1] - a[1]).map(([acc, n]) => (
-                      <div key={acc} className="text-slate-600 pl-2">• {acc}: {n}</div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
