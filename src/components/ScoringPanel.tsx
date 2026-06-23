@@ -151,6 +151,9 @@ export default function ScoringPanel({
   const [violationFor, setViolationFor] = useState<Chat | null>(null);
   // The chat whose «Задача» popup is open — add a task without leaving QA.
   const [taskFor, setTaskFor] = useState<Chat | null>(null);
+  // Chats the user deleted this session — removed from the list immediately
+  // without waiting for a server refresh.
+  const [deletedChatNos, setDeletedChatNos] = useState<Set<string>>(new Set());
   // "Добавить чат в QA" search box (open + query + busy/error for create-by-link).
   const [addOpen, setAddOpen] = useState(false);
   const [addQuery, setAddQuery] = useState("");
@@ -510,6 +513,8 @@ export default function ScoringPanel({
   const visibleChats = useMemo(() => {
     const n = search.trim().toLowerCase();
     return mergedChats.filter((c) => {
+      // Chats deleted this session vanish immediately.
+      if (deletedChatNos.has(c.agr_no)) return false;
       // Day view = chats active that day.
       if (scope === "day" && !activeTodaySet.has(c.agr_no))
         return false;
@@ -539,7 +544,7 @@ export default function ScoringPanel({
         return false;
       return true;
     });
-  }, [mergedChats, mergedAgrs, search, accFilters, onlyUnscored, onlyRated, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden]);
+  }, [mergedChats, mergedAgrs, search, accFilters, onlyUnscored, onlyRated, activeOnly, hideStale, lastActivityFor, nowISO, evalForDate, scope, activeTodaySet, excluded, date, showHidden, deletedChatNos]);
 
   // The list order. By default chats are ordered by most recent real activity
   // (the order Margarita expects); she can switch to "problem chats on top" or
@@ -1082,6 +1087,9 @@ export default function ScoringPanel({
                 onLogViolation={() => setViolationFor(chat)}
                 onLogTask={() => setTaskFor(chat)}
                 onDeleted={(id) => setEvaluations((prev) => prev.filter((e) => e.id !== id))}
+                onChatDeleted={(agrNo) =>
+                  setDeletedChatNos((s) => new Set([...s, agrNo]))
+                }
                 manualAdded={scope === "day" && isIncluded(chat.agr_no)}
                 onRemoveManual={() => setChatIncluded(chat.agr_no, false)}
                 duplicateAgrs={mergedAgrs.get(chat.agr_no) ?? []}
@@ -1153,6 +1161,7 @@ function ChatScoreRow({
   tgClient,
   onSaved,
   onDeleted,
+  onChatDeleted,
   onLogViolation,
   onLogTask,
   manualAdded = false,
@@ -1172,6 +1181,7 @@ function ChatScoreRow({
   tgClient: TgClient;
   onSaved: (e: Evaluation) => void;
   onDeleted?: (id: string) => void;
+  onChatDeleted?: (agrNo: string) => void;
   onLogViolation?: () => void;
   onLogTask?: () => void;
   manualAdded?: boolean;
@@ -1196,6 +1206,7 @@ function ChatScoreRow({
     existing?.accountant ?? (isWeekend ? weekendDefault : chat.accountant ?? "")
   );
   const [deletingEval, setDeletingEval] = useState(false);
+  const [deletingChat, setDeletingChat] = useState(false);
   const [criteria, setCriteria] = useState<CriteriaScores>(
     existing?.scores.criteria ?? prev?.criteria ?? {}
   );
@@ -1379,6 +1390,30 @@ function ChatScoreRow({
       setError("Сеть");
     } finally {
       setDeletingEval(false);
+    }
+  }
+
+  async function deleteChatRecord() {
+    if (
+      !confirm(
+        `Удалить чат № ${chat.agr_no} («${chat.chat_name ?? ""}») из системы?\n\nЭто удалит чат и ВСЕ его оценки. Действие необратимо.`
+      )
+    )
+      return;
+    setDeletingChat(true);
+    try {
+      const res = await fetch(`/api/chats/${encodeURIComponent(chat.agr_no)}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        onChatDeleted?.(chat.agr_no);
+      } else {
+        setError("Не удалось удалить чат");
+      }
+    } catch {
+      setError("Сеть");
+    } finally {
+      setDeletingChat(false);
     }
   }
 
@@ -1624,6 +1659,14 @@ function ChatScoreRow({
                 {deletingEval ? "…" : "🗑️"}
               </button>
             )}
+            <button
+              onClick={deleteChatRecord}
+              disabled={deletingChat}
+              className="inline-flex items-center gap-1 rounded border border-gray-300 bg-white text-gray-400 hover:border-red-400 hover:text-red-600 text-xs px-2 py-1 ml-auto"
+              title="Удалить чат из системы — необратимо, удаляет все оценки"
+            >
+              {deletingChat ? "…" : "✕ чат"}
+            </button>
           </div>
         </td>
         <td className={`${aiCell} text-center`}>
@@ -1987,6 +2030,7 @@ function ChatGroup({
   onLogViolation,
   onLogTask,
   onDeleted,
+  onChatDeleted,
   manualAdded = false,
   onRemoveManual,
   duplicateAgrs = [],
@@ -2010,6 +2054,7 @@ function ChatGroup({
   onLogViolation?: () => void;
   onLogTask?: () => void;
   onDeleted?: (id: string) => void;
+  onChatDeleted?: (agrNo: string) => void;
   manualAdded?: boolean;
   onRemoveManual?: () => void;
   duplicateAgrs?: string[];
@@ -2036,6 +2081,7 @@ function ChatGroup({
         onLogViolation={onLogViolation}
         onLogTask={onLogTask}
         onDeleted={onDeleted}
+        onChatDeleted={onChatDeleted}
         manualAdded={manualAdded}
         onRemoveManual={onRemoveManual}
         duplicateAgrs={duplicateAgrs}

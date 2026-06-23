@@ -10,6 +10,35 @@ interface Filters {
   client?: string;
 }
 
+function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function mondayOf(d: Date): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return x;
+}
+
+function addDays(d: Date, n: number): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+/** Human-readable week label like "16–22 июн 2026". */
+function weekLabel(mon: Date): string {
+  const sun = addDays(mon, 6);
+  const MONTHS = [
+    "янв", "фев", "мар", "апр", "май", "июн",
+    "июл", "авг", "сен", "окт", "ноя", "дек",
+  ];
+  const m = MONTHS[mon.getMonth()];
+  return `${mon.getDate()}–${sun.getDate()} ${m} ${mon.getFullYear()}`;
+}
+
 export default function DashboardFilters({
   accountants,
   initial,
@@ -36,6 +65,38 @@ export default function DashboardFilters({
     apply(next);
   }
 
+  // Determine which Monday the current filter "from" date belongs to (or this
+  // week if no filter). Prev/next week buttons step ±7 days from that Monday.
+  function stepWeek(delta: number) {
+    const base = f.from ? new Date(f.from) : new Date();
+    const mon = mondayOf(base);
+    const newMon = addDays(mon, delta * 7);
+    const newSun = addDays(newMon, 6);
+    applyRange(isoDate(newMon), isoDate(newSun));
+  }
+
+  // Is the current filter a full Mon–Sun week range?
+  const isWeekView =
+    Boolean(f.from && f.to) &&
+    (() => {
+      try {
+        const from = new Date(f.from!);
+        const to = new Date(f.to!);
+        const mon = mondayOf(from);
+        return (
+          isoDate(from) === isoDate(mon) &&
+          (to.getTime() - from.getTime()) / 86400000 === 6
+        );
+      } catch {
+        return false;
+      }
+    })();
+
+  const currentWeekLabel =
+    isWeekView && f.from
+      ? weekLabel(new Date(f.from))
+      : null;
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
@@ -50,6 +111,28 @@ export default function DashboardFilters({
           </button>
         ))}
       </div>
+      {/* Week navigation — shown when a full Mon–Sun week is selected. */}
+      {isWeekView && (
+        <div className="flex items-center gap-2">
+          <button
+            className="btn-secondary text-xs"
+            onClick={() => stepWeek(-1)}
+            title="Предыдущая неделя"
+          >
+            ← Пред. неделя
+          </button>
+          <span className="text-xs text-gray-600 font-medium">
+            📅 {currentWeekLabel}
+          </span>
+          <button
+            className="btn-secondary text-xs"
+            onClick={() => stepWeek(1)}
+            title="Следующая неделя"
+          >
+            След. неделя →
+          </button>
+        </div>
+      )}
       <div className="card p-3 flex flex-wrap items-end gap-3">
       <Field label="С даты">
         <input

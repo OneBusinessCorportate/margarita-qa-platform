@@ -276,12 +276,14 @@ export function buildAccountantMessage(
   }
 
   if (crit.length) {
+    const critCap = 10;
     lines.push("");
     lines.push(`⛔️ Критичные чаты (${crit.length}):`);
-    for (const c of crit) {
+    for (const c of crit.slice(0, critCap)) {
       const why = c.reasons.length ? `: ${c.reasons.join("; ")}` : ` (оценка ${c.score}%)`;
       lines.push(`• ${chatLabel(c.chat_agr_no, c.chat_name)}${why}`);
     }
+    overflow(lines, crit.length, critCap);
   } else if (acc && acc.lowCount > 0) {
     lines.push("");
     lines.push(`⚠️ Низких оценок за период: ${acc.lowCount} — нужно подтянуть качество.`);

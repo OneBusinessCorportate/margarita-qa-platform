@@ -384,6 +384,23 @@ export async function deleteEvaluation(id: string): Promise<void> {
   if (idx !== -1) rows.splice(idx, 1);
 }
 
+/** Permanently delete a chat and all its evaluations from mqa_chats (cascades). */
+export async function deleteChat(agrNo: string): Promise<void> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { error } = await sb.from(TABLES.chats).delete().eq("agr_no", agrNo);
+    if (error) throw error;
+    return;
+  }
+  const s = store();
+  const idx = s.chats.findIndex((c) => c.agr_no === agrNo);
+  if (idx !== -1) s.chats.splice(idx, 1);
+  // Remove associated evaluations from mock store too.
+  const evals = s.evaluations.filter((e) => e.chat_agr_no !== agrNo);
+  s.evaluations.length = 0;
+  s.evaluations.push(...evals);
+}
+
 /** Update the chat's assigned accountant in mqa_chats. */
 export async function updateChatAccountant(
   agrNo: string,
