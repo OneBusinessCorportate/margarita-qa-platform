@@ -1073,6 +1073,7 @@ export default function ScoringPanel({
                 chat={chat}
                 accountants={accountants}
                 date={date}
+                scope={scope}
                 managers={managers}
                 lawyers={lawyers}
                 accountantEval={evalByChatRole.get(`${chat.agr_no}|accountant`) ?? null}
@@ -1153,6 +1154,7 @@ function ChatScoreRow({
   chat,
   accountants,
   date,
+  scope,
   existing,
   prev,
   lastActivity,
@@ -1173,6 +1175,7 @@ function ChatScoreRow({
   chat: Chat;
   accountants: Accountant[];
   date: string;
+  scope: Scope;
   existing: Evaluation | null;
   prev: PrevCheck | null;
   lastActivity: string | null;
@@ -2027,6 +2030,7 @@ function ChatGroup({
   chat,
   accountants,
   date,
+  scope,
   managers,
   lawyers,
   accountantEval,
@@ -2051,6 +2055,7 @@ function ChatGroup({
   chat: Chat;
   accountants: Accountant[];
   date: string;
+  scope: Scope;
   managers: string[];
   lawyers: string[];
   accountantEval: Evaluation | null;
@@ -2082,6 +2087,7 @@ function ChatGroup({
         chat={chat}
         accountants={accountants}
         date={date}
+        scope={scope}
         existing={accountantEval}
         prev={prev}
         lastActivity={lastActivity}
