@@ -76,6 +76,13 @@ export interface UnansweredChat {
   waitingDays: number | null;
 }
 
+export interface DaySummary {
+  date: string;
+  evaluatedChats: number;
+  distribution: Record<QualityBand, number>;
+  serviceQualityPct: number;
+}
+
 export interface DayAccountantScore {
   date: string;       // ISO yyyy-mm-dd
   accountant: string;
@@ -118,6 +125,8 @@ export interface DailyReport {
   unansweredChats: UnansweredChat[];
   /** Per-day × per-accountant scores; populated for multi-day windows (weekly view, stars). */
   perDayPerAccountant?: DayAccountantScore[];
+  /** Per-day aggregate metrics (evaluated count, distribution, service %); multi-day only. */
+  perDay?: DaySummary[];
   tasks: {
     total: number;
     onTime: number;
@@ -457,20 +466,30 @@ export function buildReport(
     ? Math.round((evaluatedChats / activeChats) * 1000) / 10
     : 0;
 
-  // Per-day × per-accountant scores — used for the weekly report visual table
-  // and "stars of the week" calculation. Only computed for multi-day windows.
+  // Per-day × per-accountant scores AND per-day aggregates — used for the
+  // weekly report visual table, stars, and the spreadsheet comparison view.
+  // Only computed for multi-day windows.
   let perDayPerAccountant: DayAccountantScore[] | undefined;
+  let perDay: DaySummary[] | undefined;
   if (from !== to) {
     const dayAccMap = new Map<string, Map<string, { sum: number; count: number }>>();
+    const dayMap = new Map<string, { sum: number; count: number; dist: Record<QualityBand, number> }>();
     for (const e of evals) {
       const date = e.checking_date.slice(0, 10);
       const acc = e.accountant ?? "—";
       if (!dayAccMap.has(date)) dayAccMap.set(date, new Map());
       const accMap = dayAccMap.get(date)!;
-      const agg = accMap.get(acc) ?? { sum: 0, count: 0 };
-      agg.sum += e.total_score;
-      agg.count += 1;
-      accMap.set(acc, agg);
+      const accAgg = accMap.get(acc) ?? { sum: 0, count: 0 };
+      accAgg.sum += e.total_score;
+      accAgg.count += 1;
+      accMap.set(acc, accAgg);
+      if (!dayMap.has(date)) {
+        dayMap.set(date, { sum: 0, count: 0, dist: { Отлично: 0, Хорошо: 0, Плохо: 0, Критично: 0 } });
+      }
+      const dayAgg = dayMap.get(date)!;
+      dayAgg.sum += e.total_score;
+      dayAgg.count += 1;
+      dayAgg.dist[bandFor(e.total_score)] += 1;
     }
     perDayPerAccountant = [];
     for (const [date, accMap] of [...dayAccMap.entries()].sort()) {
@@ -483,6 +502,14 @@ export function buildReport(
         });
       }
     }
+    perDay = [...dayMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, a]) => ({
+        date,
+        evaluatedChats: a.count,
+        distribution: a.dist,
+        serviceQualityPct: a.count ? Math.round((a.sum / a.count) * 10) / 10 : 0,
+      }));
   }
 
   return {
@@ -505,6 +532,7 @@ export function buildReport(
     criticalChats,
     unansweredChats,
     perDayPerAccountant,
+    perDay,
     tasks: {
       total: scopedTasks.length,
       onTime: tOnTime,

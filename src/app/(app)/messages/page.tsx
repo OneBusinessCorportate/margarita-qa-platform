@@ -1,4 +1,5 @@
 import { getDailyAnalytics, listViolations } from "@/lib/repo";
+import type { DaySummary } from "@/lib/report";
 import {
   accountantsToMessage,
   buildAccountantMessage,
@@ -17,7 +18,6 @@ function fmtDay(iso: string): string {
   return d && m ? `${d}.${m}.${y}` : iso;
 }
 
-/** Returns true when the filter spans exactly Mon–Sun (7 days). */
 function isMonSunWeek(from?: string, to?: string): boolean {
   if (!from || !to) return false;
   try {
@@ -28,7 +28,6 @@ function isMonSunWeek(from?: string, to?: string): boolean {
   } catch { return false; }
 }
 
-/** Returns ISO dates for each day in [from, to] (inclusive). */
 function rangeDates(from: string, to: string): string[] {
   const result: string[] = [];
   const end = new Date(to + "T00:00:00Z");
@@ -47,18 +46,22 @@ function dayHeader(iso: string): string {
 }
 
 function scoreCellClass(score: number | undefined): string {
-  if (score === undefined) return "text-gray-300 bg-white";
-  if (score >= 98) return "bg-green-100 text-green-800 font-semibold";
-  if (score >= 90) return "bg-yellow-50 text-yellow-800";
-  if (score >= 80) return "bg-orange-50 text-orange-700";
-  return "bg-red-50 text-red-700";
+  if (score === undefined || score < 0) return "text-slate-300 bg-white";
+  if (score >= 98) return "bg-emerald-100 text-emerald-800 font-semibold";
+  if (score >= 90) return "bg-slate-50 text-slate-700";
+  if (score >= 80) return "bg-amber-100 text-amber-700";
+  return "bg-rose-100 text-rose-700";
 }
 
-// The ONE place to copy/send the daily analytics — the dashboard links here
-// instead of repeating the text and buttons. Accepts the same date / accountant
-// query params as the dashboard so a specific day or range can be deep-linked;
-// with no params it resolves to the latest day that actually has evaluations
-// (a TRUE daily, not the whole-history aggregate the old page produced).
+const BAND_ROW: Record<string, string> = {
+  Оценено:            "bg-slate-50 text-slate-700",
+  Отлично:            "bg-emerald-50 text-emerald-800",
+  Хорошо:             "bg-amber-50 text-amber-800",
+  Плохо:              "bg-orange-100 text-orange-800",
+  Критично:           "bg-rose-100 text-rose-800 font-medium",
+  "Сервис Бухгалтерии": "bg-indigo-700 text-white font-bold",
+};
+
 export default async function MessagesPage({
   searchParams,
 }: {
@@ -84,7 +87,6 @@ export default async function MessagesPage({
   const reportMessage = buildReportMessage(report, {
     violations,
     previous,
-    // Set REPORT_SHEET_URL (e.g. on Render) to append the Google-Sheet link.
     sheetUrl: process.env.REPORT_SHEET_URL,
   });
   const botReady = telegramConfigured();
@@ -94,42 +96,46 @@ export default async function MessagesPage({
       ? fmtDay(resolved.from)
       : `${fmtDay(resolved.from)} — ${fmtDay(resolved.to)}`;
 
-  // Per-accountant messages (item 11): one ready-to-send block per person who has
-  // a critical chat, a low average, or a chat still waiting. This is what
-  // Margarita copies to send each bookkeeper directly — previously the page only
-  // produced the single aggregate report, so per-person critical chats (e.g.
-  // Olya's) had nowhere to be copied from.
-  const perAccountant = accountantsToMessage(report).map((name) => ({
+  const perAccountantMsgs = accountantsToMessage(report).map((name) => ({
     name,
     text: buildAccountantMessage(report, name, { date: resolved.to }),
     critCount: report.criticalChats.filter((c) => c.accountant === name).length,
-    waitingCount: (report.unansweredChats ?? []).filter((c) => c.accountant === name)
-      .length,
+    waitingCount: (report.unansweredChats ?? []).filter((c) => c.accountant === name).length,
   }));
 
-  // Weekly report — shown when the filter is a full Mon–Sun week.
   const isWeek = isMonSunWeek(resolved.from, resolved.to);
   const isMultiDay = resolved.from !== resolved.to;
-  const weeklyMessage = isWeek
-    ? buildWeeklyReportMessage(report, previous ?? null)
-    : null;
+  const weeklyMessage = isWeek ? buildWeeklyReportMessage(report, previous ?? null) : null;
 
-  // Per-day × per-accountant table data — shown for any multi-day period, not just Mon–Sun.
+  // ── Multi-day spreadsheet data ─────────────────────────────────────────────
   const periodDates = isMultiDay ? rangeDates(resolved.from, resolved.to) : [];
+
+  // Per-accountant per-day scores
   const dayAccScoreMap = new Map<string, { score: number; count: number }>();
   if (isMultiDay && report.perDayPerAccountant) {
     for (const d of report.perDayPerAccountant) {
       dayAccScoreMap.set(`${d.date}|${d.accountant}`, { score: d.avgScore, count: d.count });
     }
   }
-  // Collect all accountants who appear in the period data, sorted by name
+
+  // Per-day summary (distribution + service %)
+  const dayMap = new Map<string, DaySummary>();
+  if (isMultiDay && report.perDay) {
+    for (const d of report.perDay) dayMap.set(d.date, d);
+  }
+
+  // Accountants sorted by overall avg score desc
   const periodAccountants = isMultiDay
     ? [...new Set((report.perDayPerAccountant ?? []).map((d) => d.accountant))]
         .filter((a) => a !== "—")
-        .sort((a, b) => a.localeCompare(b))
+        .sort((a, b) => {
+          const sa = report.perAccountant.find((x) => x.accountant === a)?.avgScore ?? -1;
+          const sb = report.perAccountant.find((x) => x.accountant === b)?.avgScore ?? -1;
+          return sb - sa || a.localeCompare(b);
+        })
     : [];
 
-  // Week-over-week comparison — available whenever there is a preceding period with data.
+  // ── Single-day comparison data ─────────────────────────────────────────────
   const prevMap = previous
     ? new Map(previous.perAccountant.map((a) => [a.accountant, a.avgScore]))
     : new Map<string, number>();
@@ -137,9 +143,9 @@ export default async function MessagesPage({
     .filter((a) => a.count > 0 && a.avgScore >= 0)
     .sort((a, b) => b.avgScore - a.avgScore);
 
-  // Stars of the week: accountants with ≥ 3 scored days all at 98+.
+  // Stars (used in single-day comparison section)
   const starsList: Array<{ name: string; desc: string }> = [];
-  if (report.perDayPerAccountant && report.perDayPerAccountant.length > 0) {
+  if (report.perDayPerAccountant?.length) {
     const accDays = new Map<string, number[]>();
     for (const d of report.perDayPerAccountant) {
       if (d.accountant === "—") continue;
@@ -155,16 +161,12 @@ export default async function MessagesPage({
       if (scores.length >= 3 && scores.every((s) => s >= 98)) {
         const cnt = new Map<number, number>();
         for (const s of scores) cnt.set(s, (cnt.get(s) ?? 0) + 1);
-        const desc = [...cnt.entries()]
-          .sort((a, b) => b[0] - a[0])
-          .map(([s, n]) => `${n}×${s}`)
-          .join(", ");
+        const desc = [...cnt.entries()].sort((a, b) => b[0] - a[0]).map(([s, n]) => `${n}×${s}`).join(", ");
         starsList.push({ name, desc });
       }
     }
   }
 
-  // Indicators: unanswered chats + overdue tasks per accountant.
   const unansweredByAcc = new Map<string, number>();
   for (const c of report.unansweredChats ?? []) {
     const k = c.accountant ?? "—";
@@ -175,6 +177,8 @@ export default async function MessagesPage({
     if (t.overdue > 0) overdueByAcc.set(t.accountant, t.overdue);
   }
 
+  const BANDS = ["Отлично", "Хорошо", "Плохо", "Критично"] as const;
+
   return (
     <div className="space-y-4">
       <div>
@@ -184,10 +188,11 @@ export default async function MessagesPage({
           {previous ? " · с трендом к прошлому периоду" : ""}.{" "}
           {botReady
             ? "Бот настроен — кнопка «Отправить в Telegram» активна."
-            : "Бот не настроен (задайте TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID, чтобы включить отправку)."}
+            : "Бот не настроен (задайте TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)."}
         </p>
       </div>
 
+      {/* Analytics message card */}
       <div className="card p-3 space-y-2">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">Аналитика качества</div>
@@ -201,7 +206,7 @@ export default async function MessagesPage({
         </pre>
       </div>
 
-      {/* Weekly report card — shown when a full Mon–Sun week is selected. */}
+      {/* Weekly report — shown for full Mon–Sun weeks */}
       {isWeek && weeklyMessage && (
         <div className="card p-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -214,104 +219,166 @@ export default async function MessagesPage({
         </div>
       )}
 
-      {/* Per-day × per-accountant visual table — shown for any multi-day period. */}
+      {/* ── Spreadsheet view for multi-day periods ───────────────────────────── */}
       {isMultiDay && periodAccountants.length > 0 && (
-        <div className="card p-3 space-y-2 overflow-x-auto">
-          <div className="text-sm font-medium">📅 Оценки по дням</div>
-          <table className="text-xs border-collapse min-w-full">
+        <div id="comparison-section" className="card overflow-x-auto">
+          {/* Print-only title */}
+          <div className="print-only px-3 pt-3 pb-1">
+            <div className="text-base font-bold">📊 Оценки по периоду</div>
+            <div className="text-sm text-gray-500">{periodLabel}</div>
+          </div>
+          {/* Screen header */}
+          <div className="flex items-center justify-between px-3 pt-3 pb-2 no-print">
+            <div className="text-sm font-semibold">📊 Оценки по периоду</div>
+            <PrintComparisonButton />
+          </div>
+
+          <table className="text-xs border-collapse w-full">
             <thead>
               <tr>
-                <th className="text-left px-2 py-1.5 border border-gray-200 bg-gray-50 font-medium whitespace-nowrap">
-                  Бухгалтер
+                <th className="sticky left-0 z-10 text-left px-3 py-2 border border-gray-200 bg-gray-100 font-semibold whitespace-nowrap min-w-[130px]">
+                  Показатель
                 </th>
                 {periodDates.map((d) => (
-                  <th
-                    key={d}
-                    className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-medium text-center whitespace-nowrap"
-                  >
+                  <th key={d} className="px-2 py-2 border border-gray-200 bg-gray-100 font-semibold text-center whitespace-nowrap">
                     {dayHeader(d)}
                   </th>
                 ))}
-                <th className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-medium text-center whitespace-nowrap">
+                <th className="px-2 py-2 border border-gray-200 bg-gray-100 font-semibold text-center whitespace-nowrap">
                   Итого
                 </th>
               </tr>
             </thead>
             <tbody>
+              {/* Оценено row */}
+              <tr>
+                <td className={`sticky left-0 z-10 px-3 py-1.5 border border-gray-200 whitespace-nowrap ${BAND_ROW["Оценено"]}`}>
+                  Оценено чатов
+                </td>
+                {periodDates.map((d) => {
+                  const day = dayMap.get(d);
+                  return (
+                    <td key={d} className={`px-2 py-1.5 border border-gray-200 text-center ${BAND_ROW["Оценено"]}`}>
+                      {day ? day.evaluatedChats : <span className="text-slate-300">—</span>}
+                    </td>
+                  );
+                })}
+                <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${BAND_ROW["Оценено"]}`}>
+                  {report.totals.evaluatedChats}
+                </td>
+              </tr>
+
+              {/* Distribution rows */}
+              {BANDS.map((band) => (
+                <tr key={band}>
+                  <td className={`sticky left-0 z-10 px-3 py-1.5 border border-gray-200 whitespace-nowrap ${BAND_ROW[band]}`}>
+                    {band}
+                  </td>
+                  {periodDates.map((d) => {
+                    const day = dayMap.get(d);
+                    const count = day?.distribution[band] ?? 0;
+                    return (
+                      <td key={d} className={`px-2 py-1.5 border border-gray-200 text-center ${BAND_ROW[band]}`}>
+                        {count > 0 ? count : <span className="opacity-40">0</span>}
+                      </td>
+                    );
+                  })}
+                  <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${BAND_ROW[band]}`}>
+                    {report.distribution[band] > 0 ? report.distribution[band] : <span className="opacity-40">0</span>}
+                  </td>
+                </tr>
+              ))}
+
+              {/* Сервис Бухгалтерии row */}
+              <tr>
+                <td className={`sticky left-0 z-10 px-3 py-2 border border-gray-300 whitespace-nowrap text-sm ${BAND_ROW["Сервис Бухгалтерии"]}`}>
+                  Сервис Бухгалтерии
+                </td>
+                {periodDates.map((d) => {
+                  const day = dayMap.get(d);
+                  return (
+                    <td key={d} className={`px-2 py-2 border border-gray-300 text-center text-sm font-bold ${day ? scoreCellClass(day.serviceQualityPct) : "bg-white text-slate-300"}`}>
+                      {day ? day.serviceQualityPct : "—"}
+                    </td>
+                  );
+                })}
+                <td className={`px-2 py-2 border border-gray-300 text-center text-sm font-bold ${scoreCellClass(report.serviceQualityPct)}`}>
+                  {report.serviceQualityPct}
+                </td>
+              </tr>
+
+              {/* Divider */}
+              <tr>
+                <td colSpan={periodDates.length + 2} className="p-0 h-0 border-t-2 border-indigo-200" />
+              </tr>
+
+              {/* Per-accountant rows */}
               {periodAccountants.map((acc) => {
                 const accData = report.perAccountant.find((a) => a.accountant === acc);
                 return (
-                  <tr key={acc}>
-                    <td className="px-2 py-1.5 border border-gray-200 font-medium whitespace-nowrap">
+                  <tr key={acc} className="hover:brightness-95 transition-all">
+                    <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 font-medium whitespace-nowrap bg-white">
                       {acc}
                     </td>
                     {periodDates.map((d) => {
                       const cell = dayAccScoreMap.get(`${d}|${acc}`);
                       return (
-                        <td
-                          key={d}
-                          className={`px-2 py-1.5 border border-gray-200 text-center ${scoreCellClass(cell?.score)}`}
-                        >
-                          {cell !== undefined ? (
+                        <td key={d} className={`px-1.5 py-1.5 border border-gray-200 text-center ${scoreCellClass(cell?.score)}`}>
+                          {cell ? (
                             <>
                               {cell.score}
-                              <span className="text-[9px] text-gray-400 ml-0.5">{cell.count}</span>
+                              <sup className="text-[8px] text-slate-400 ml-0.5">{cell.count}</sup>
                             </>
-                          ) : "—"}
+                          ) : <span className="text-slate-200">—</span>}
                         </td>
                       );
                     })}
-                    <td
-                      className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${scoreCellClass(accData?.avgScore)}`}
-                    >
+                    <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${scoreCellClass(accData?.avgScore)}`}>
                       {accData && accData.avgScore >= 0 ? (
                         <>
                           {accData.avgScore}
-                          <span className="text-[9px] text-gray-400 ml-0.5">{accData.count}</span>
+                          <sup className="text-[8px] text-slate-400 ml-0.5">{accData.count}</sup>
                         </>
-                      ) : "—"}
+                      ) : <span className="text-slate-300">—</span>}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-          <p className="text-[11px] text-gray-400">
-            🟩 ≥ 98% · 🟨 90–97% · 🟧 80–89% · 🟥 &lt; 80% · маленькая цифра — кол-во оценок
+
+          <p className="text-[11px] text-slate-400 px-3 py-2 no-print">
+            🟩 ≥ 98 · 🟨 90–97 · 🟧 80–89 · 🟥 &lt; 80 · надстрочная цифра — кол-во оценок
           </p>
         </div>
       )}
 
-      {/* Visual week-over-week comparison — shown whenever a preceding period exists. */}
-      {previous && comparisonRows.length > 0 && (
+      {/* ── Single-day comparison with previous period ───────────────────────── */}
+      {!isMultiDay && previous && comparisonRows.length > 0 && (
         <div id="comparison-section" className="card p-3 space-y-3">
           <div className="print-only mb-2">
             <div className="text-base font-bold">📊 Сравнение с предыдущим периодом</div>
             <div className="text-sm text-gray-500">{periodLabel}</div>
           </div>
           <div className="flex items-center justify-between gap-2 no-print">
-            <div className="text-sm font-medium">📊 Сравнение с предыдущим периодом</div>
+            <div className="text-sm font-semibold">📊 Сравнение с предыдущим периодом</div>
             <PrintComparisonButton />
           </div>
 
           {/* Service quality bar */}
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
             <span className="text-gray-500">
-              Прошлый период:{" "}
-              <span className={`font-semibold ${scoreCellClass(previous.serviceQualityPct).replace("border border-gray-200", "")}`}>
-                {previous.serviceQualityPct}%
-              </span>
+              Прошлый:{" "}
+              <span className="font-semibold">{previous.serviceQualityPct}%</span>
             </span>
             <span className="text-gray-500">
-              Этот период:{" "}
-              <span className={`font-semibold ${scoreCellClass(report.serviceQualityPct).replace("border border-gray-200", "")}`}>
-                {report.serviceQualityPct}%
-              </span>
+              Сегодня:{" "}
+              <span className="font-semibold">{report.serviceQualityPct}%</span>
             </span>
             {(() => {
               const delta = Math.round((report.serviceQualityPct - previous.serviceQualityPct) * 10) / 10;
               return (
-                <span className={delta > 0 ? "text-green-600 font-semibold" : delta < 0 ? "text-red-600 font-semibold" : "text-gray-400"}>
+                <span className={delta > 0 ? "text-emerald-600 font-semibold" : delta < 0 ? "text-rose-600 font-semibold" : "text-slate-400"}>
                   {delta > 0 ? `▲ +${delta} п.п.` : delta < 0 ? `▼ ${delta} п.п.` : "→ без изменений"}
                 </span>
               );
@@ -322,10 +389,10 @@ export default async function MessagesPage({
           <table className="text-xs border-collapse w-full">
             <thead>
               <tr>
-                <th className="text-left px-2 py-1.5 border border-gray-200 bg-gray-50 font-medium">Бухгалтер</th>
-                <th className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-medium text-center whitespace-nowrap">Прошлый</th>
-                <th className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-medium text-center whitespace-nowrap">Этот</th>
-                <th className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-medium text-center whitespace-nowrap">Изменение</th>
+                <th className="text-left px-3 py-1.5 border border-gray-200 bg-gray-100 font-semibold">Бухгалтер</th>
+                <th className="px-2 py-1.5 border border-gray-200 bg-gray-100 font-semibold text-center whitespace-nowrap">Прошлый</th>
+                <th className="px-2 py-1.5 border border-gray-200 bg-gray-100 font-semibold text-center whitespace-nowrap">Сегодня</th>
+                <th className="px-2 py-1.5 border border-gray-200 bg-gray-100 font-semibold text-center whitespace-nowrap">Δ</th>
               </tr>
             </thead>
             <tbody>
@@ -334,17 +401,17 @@ export default async function MessagesPage({
                 const delta = prev !== undefined ? Math.round((a.avgScore - prev) * 10) / 10 : null;
                 return (
                   <tr key={a.accountant}>
-                    <td className="px-2 py-1.5 border border-gray-200 font-medium whitespace-nowrap">{a.accountant}</td>
+                    <td className="px-3 py-1.5 border border-gray-200 font-medium whitespace-nowrap">{a.accountant}</td>
                     <td className={`px-2 py-1.5 border border-gray-200 text-center ${scoreCellClass(prev)}`}>
                       {prev !== undefined ? prev : "—"}
                     </td>
-                    <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${scoreCellClass(a.avgScore)}`}>
+                    <td className={`px-2 py-1.5 border border-gray-200 text-center ${scoreCellClass(a.avgScore)}`}>
                       {a.avgScore}
                     </td>
                     <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${
-                      delta === null ? "text-gray-300" :
-                      delta > 0 ? "text-green-600 bg-green-50" :
-                      delta < 0 ? "text-red-600 bg-red-50" : "text-gray-400"
+                      delta === null ? "text-slate-300" :
+                      delta > 0 ? "text-emerald-600 bg-emerald-50" :
+                      delta < 0 ? "text-rose-600 bg-rose-50" : "text-slate-400"
                     }`}>
                       {delta === null ? "—" : delta > 0 ? `↑ +${delta}` : delta < 0 ? `↓ ${delta}` : "→"}
                     </td>
@@ -354,42 +421,42 @@ export default async function MessagesPage({
             </tbody>
           </table>
 
-          {/* Stars of the period */}
+          {/* Stars */}
           {starsList.length > 0 && (
             <div className="pt-1 space-y-1">
-              <div className="text-xs font-semibold text-yellow-700">⭐ Звёзды периода</div>
+              <div className="text-xs font-semibold text-amber-700">⭐ Звёзды периода</div>
               <div className="flex flex-wrap gap-2">
                 {starsList.map(({ name, desc }) => (
-                  <span key={name} className="inline-flex items-center gap-1 rounded-full bg-yellow-50 border border-yellow-200 px-2.5 py-1 text-xs font-medium text-yellow-800">
-                    🌟 {name} <span className="text-yellow-600">({desc})</span>
+                  <span key={name} className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-xs font-medium text-amber-800">
+                    🌟 {name} <span className="text-amber-600">({desc})</span>
                   </span>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Indicators: unanswered + overdue */}
+          {/* Indicators */}
           {(unansweredByAcc.size > 0 || overdueByAcc.size > 0) && (
             <div className="pt-1 space-y-1 border-t border-gray-100">
-              <div className="text-xs font-semibold text-gray-600">Индикаторы</div>
+              <div className="text-xs font-semibold text-slate-600">Индикаторы</div>
               <div className="flex flex-wrap gap-3 text-xs">
                 {unansweredByAcc.size > 0 && (
                   <div className="space-y-0.5">
                     <div className="font-medium text-orange-700">
-                      ⏳ Незакрытый запрос клиента ({[...unansweredByAcc.values()].reduce((s, n) => s + n, 0)})
+                      ⏳ Без ответа клиенту ({[...unansweredByAcc.values()].reduce((s, n) => s + n, 0)})
                     </div>
                     {[...unansweredByAcc.entries()].sort((a, b) => b[1] - a[1]).map(([acc, n]) => (
-                      <div key={acc} className="text-gray-600 pl-2">• {acc}: {n}</div>
+                      <div key={acc} className="text-slate-600 pl-2">• {acc}: {n}</div>
                     ))}
                   </div>
                 )}
                 {overdueByAcc.size > 0 && (
                   <div className="space-y-0.5">
-                    <div className="font-medium text-red-700">
-                      ❗ Несвоевременная обратная связь по задачам ({[...overdueByAcc.values()].reduce((s, n) => s + n, 0)})
+                    <div className="font-medium text-rose-700">
+                      ❗ Просрочено задач ({[...overdueByAcc.values()].reduce((s, n) => s + n, 0)})
                     </div>
                     {[...overdueByAcc.entries()].sort((a, b) => b[1] - a[1]).map(([acc, n]) => (
-                      <div key={acc} className="text-gray-600 pl-2">• {acc}: {n}</div>
+                      <div key={acc} className="text-slate-600 pl-2">• {acc}: {n}</div>
                     ))}
                   </div>
                 )}
@@ -399,30 +466,30 @@ export default async function MessagesPage({
         </div>
       )}
 
-      {/* Per-accountant messages — copy and send each bookkeeper directly. */}
+      {/* Per-accountant messages */}
       <div className="space-y-2">
         <div className="flex items-baseline justify-between">
           <h2 className="text-lg font-semibold">Сообщения бухгалтерам</h2>
           <span className="text-xs text-gray-500">
-            {perAccountant.length > 0
-              ? `${perAccountant.length} — есть что отправить`
+            {perAccountantMsgs.length > 0
+              ? `${perAccountantMsgs.length} — есть что отправить`
               : "нет критичных / проблемных чатов за период"}
           </span>
         </div>
-        {perAccountant.length === 0 ? (
+        {perAccountantMsgs.length === 0 ? (
           <div className="card p-4 text-sm text-gray-500">
             За {periodLabel} ни у кого нет критичных чатов, низких оценок или чатов без
             ответа. Отправлять отдельные сообщения не нужно.
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {perAccountant.map(({ name, text, critCount, waitingCount }) => (
+            {perAccountantMsgs.map(({ name, text, critCount, waitingCount }) => (
               <div key={name} className="card p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-sm font-medium truncate">{name}</span>
                     {critCount > 0 && (
-                      <span className="inline-block rounded bg-red-100 text-red-700 font-semibold px-1.5 py-0.5 text-[11px] whitespace-nowrap">
+                      <span className="inline-block rounded bg-rose-100 text-rose-700 font-semibold px-1.5 py-0.5 text-[11px] whitespace-nowrap">
                         ⛔️ {critCount}
                       </span>
                     )}
