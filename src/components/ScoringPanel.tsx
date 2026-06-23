@@ -1668,14 +1668,16 @@ function ChatScoreRow({
                 {deletingEval ? "…" : "🗑️"}
               </button>
             )}
-            <button
-              onClick={deleteChatRecord}
-              disabled={deletingChat}
-              className="inline-flex items-center gap-1 rounded border border-gray-300 bg-white text-gray-400 hover:border-red-400 hover:text-red-600 text-xs px-2 py-1 ml-auto"
-              title="Удалить чат из системы — необратимо, удаляет все оценки"
-            >
-              {deletingChat ? "…" : "✕ чат"}
-            </button>
+            {scope === "day" && (
+              <button
+                onClick={deleteChatRecord}
+                disabled={deletingChat}
+                className="inline-flex items-center gap-1 rounded border border-gray-300 bg-white text-gray-400 hover:border-red-400 hover:text-red-600 text-xs px-2 py-1 ml-auto"
+                title="Удалить чат из системы — необратимо, удаляет все оценки"
+              >
+                {deletingChat ? "…" : "✕ чат"}
+              </button>
+            )}
           </div>
         </td>
         <td className={`${aiCell} text-center`}>

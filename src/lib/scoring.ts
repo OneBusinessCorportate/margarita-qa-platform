@@ -752,9 +752,9 @@ function yerevanDayHour(at: string): { date: string; hour: number } | null {
 
 /**
  * The QA review day for a piece of activity. Like reviewDayOf, but time-aware:
- * Friday activity AFTER the working day closes (19:00 Yerevan) is already into
- * the weekend, so it rolls onto the next working day (Monday) rather than
- * sitting under Friday. `at` is the precise ISO instant; `date` is the fallback
+ * Activity AFTER the working day closes (19:00 Yerevan) is reviewed the next
+ * working day. Friday activity after 19:00 rolls to Saturday, which then rolls
+ * to Monday. `at` is the precise ISO instant; `date` is the fallback
  * used when no time is known (then it behaves exactly like reviewDayOf).
  */
 export function reviewDayForActivity(
@@ -765,9 +765,9 @@ export function reviewDayForActivity(
   const p = yerevanDayHour(at);
   if (!p) return reviewDayOf(date);
   let day = p.date;
-  const dow = new Date(day + "T00:00:00Z").getUTCDay(); // 0=Sun … 6=Sat
-  if (dow === 5 && p.hour >= WORK_DAY_END_HOUR) {
-    // Friday after close → step to Saturday; reviewDayOf then rolls to Monday.
+  if (p.hour >= WORK_DAY_END_HOUR) {
+    // Activity after close → step to next day; reviewDayOf then applies
+    // weekend/holiday rolling (e.g. Fri → Sat → Mon, Sat → Sun → Mon).
     const d = new Date(day + "T00:00:00Z");
     d.setUTCDate(d.getUTCDate() + 1);
     day = d.toISOString().slice(0, 10);

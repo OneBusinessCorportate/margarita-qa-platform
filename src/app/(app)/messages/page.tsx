@@ -191,30 +191,30 @@ export default async function MessagesPage({
             <PrintComparisonButton />
           </div>
 
-          <table className="text-xs border-collapse">
+          <table className="text-xs border-collapse w-full">
             <thead>
               {/* Row 1: date group headers */}
-              <tr>
-                <th rowSpan={2} className="sticky left-0 z-20 px-3 py-1.5 border border-gray-200 bg-gray-50 text-left font-semibold whitespace-nowrap min-w-[160px]">
+              <tr className="bg-gradient-to-b from-gray-100 to-gray-50">
+                <th rowSpan={2} className="sticky left-0 z-20 px-3 py-2 border border-gray-300 bg-gradient-to-b from-gray-100 to-gray-50 text-left font-semibold whitespace-nowrap min-w-[160px]">
                   Бухгалтер
                 </th>
                 {periodDates.map((d) => (
-                  <th key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
+                  <th key={d} colSpan={3} className="px-2 py-2 border border-gray-300 bg-gradient-to-b from-gray-100 to-gray-50 font-semibold text-center whitespace-nowrap">
                     {fmtShortDate(d)}
                   </th>
                 ))}
                 {isMultiDay && (
-                  <th colSpan={2} rowSpan={2} className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
+                  <th colSpan={2} rowSpan={2} className="px-2 py-2 border border-gray-300 bg-gradient-to-b from-gray-100 to-gray-50 font-semibold text-center whitespace-nowrap">
                     Итого
                   </th>
                 )}
               </tr>
               {/* Row 2: sub-column labels */}
-              <tr>
+              <tr className="bg-gradient-to-b from-gray-100 to-gray-50">
                 {periodDates.flatMap((d) => [
-                  <th key={`${d}-pct`} className="w-10 px-1 py-1 border border-gray-200 bg-gray-50 text-center text-gray-400 font-normal">%</th>,
-                  <th key={`${d}-bad`} className="w-5 px-0.5 py-1 border border-gray-200 bg-gray-50 text-center text-gray-400 font-normal">⚠</th>,
-                  <th key={`${d}-n`} className="w-5 px-0.5 py-1 border border-gray-200 bg-gray-50 text-center text-gray-400 font-normal">N</th>,
+                  <th key={`${d}-pct`} className="w-10 px-1 py-1.5 border border-gray-300 bg-gradient-to-b from-gray-100 to-gray-50 text-center text-gray-500 font-medium text-[11px]">%</th>,
+                  <th key={`${d}-bad`} className="w-5 px-0.5 py-1.5 border border-gray-300 bg-gradient-to-b from-gray-100 to-gray-50 text-center text-gray-500 font-medium text-[11px]">⚠</th>,
+                  <th key={`${d}-n`} className="w-5 px-0.5 py-1.5 border border-gray-300 bg-gradient-to-b from-gray-100 to-gray-50 text-center text-gray-500 font-medium text-[11px]">N</th>,
                 ])}
               </tr>
             </thead>
@@ -222,170 +222,170 @@ export default async function MessagesPage({
               {/* ── Summary rows ──────────────────────────────────────────────── */}
 
               {/* Активных чатов */}
-              <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Активных чатов</td>
+              <tr className="bg-blue-50/40 hover:bg-blue-50/60">
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-blue-50/40 whitespace-nowrap font-medium">Активных чатов</td>
                 {periodDates.map((d) => {
                   const day = dayMap.get(d);
                   return (
-                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                      {day?.activeChats !== undefined ? day.activeChats : <span className="text-gray-300">—</span>}
+                    <td key={d} colSpan={3} className="px-2 py-2 border border-gray-300 text-center bg-blue-50/40">
+                      {day?.activeChats !== undefined ? <span className="font-medium">{day.activeChats}</span> : <span className="text-gray-300">—</span>}
                     </td>
                   );
                 })}
                 {isMultiDay && (
-                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                    {report.totals.activeChats}
+                  <td colSpan={2} className="px-2 py-2 border border-gray-300 text-center bg-blue-50/40">
+                    <span className="font-medium">{report.totals.activeChats}</span>
                   </td>
                 )}
               </tr>
 
               {/* Новых чатов */}
-              <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Новых чатов</td>
+              <tr className="hover:bg-gray-50">
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-white whitespace-nowrap font-medium">Новых чатов</td>
                 {periodDates.map((d) => {
                   const day = dayMap.get(d);
                   return (
-                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                      {day?.newChats !== undefined ? day.newChats : <span className="text-gray-300">—</span>}
+                    <td key={d} colSpan={3} className="px-2 py-2 border border-gray-300 text-center bg-white">
+                      {day?.newChats !== undefined ? <span className="font-medium">{day.newChats}</span> : <span className="text-gray-300">—</span>}
                     </td>
                   );
                 })}
                 {isMultiDay && (
-                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
-                    {report.totals.newChats}
+                  <td colSpan={2} className="px-2 py-2 border border-gray-300 text-center bg-white">
+                    <span className="font-medium">{report.totals.newChats}</span>
                   </td>
                 )}
               </tr>
 
               {/* Чаты без ответственных / Нет НУНН */}
-              <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Чаты без ответственных / Нет НУНН</td>
+              <tr className="hover:bg-gray-50">
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-white whitespace-nowrap text-gray-600">Чаты без ответственных / Нет НУНН</td>
                 {periodDates.map((d) => (
-                  <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                  <td key={d} colSpan={3} className="px-2 py-2 border border-gray-300 text-center text-gray-300 bg-white">—</td>
                 ))}
                 {isMultiDay && (
-                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  <td colSpan={2} className="px-2 py-2 border border-gray-300 text-center bg-white">
                     {report.totals.chatsWithoutResponsible > 0
-                      ? report.totals.chatsWithoutResponsible
+                      ? <span className="font-medium text-red-600">{report.totals.chatsWithoutResponsible}</span>
                       : <span className="text-gray-300">—</span>}
                   </td>
                 )}
               </tr>
 
               {/* Нет ссылки на чаты */}
-              <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Нет ссылки на чаты (активные)</td>
+              <tr className="hover:bg-gray-50">
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-white whitespace-nowrap text-gray-600">Нет ссылки на чаты (активные)</td>
                 {periodDates.map((d) => (
-                  <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                  <td key={d} colSpan={3} className="px-2 py-2 border border-gray-300 text-center text-gray-300 bg-white">—</td>
                 ))}
                 {isMultiDay && (
-                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                  <td colSpan={2} className="px-2 py-2 border border-gray-300 text-center text-gray-300 bg-white">—</td>
                 )}
               </tr>
 
               {/* Оценено чатов всего */}
-              <tr className="font-semibold">
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Оценено чатов всего</td>
+              <tr className="font-semibold bg-blue-50/60 hover:bg-blue-50/80">
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-blue-50/60 whitespace-nowrap">Оценено чатов всего</td>
                 {periodDates.map((d) => {
                   const day = dayMap.get(d);
                   return (
-                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                    <td key={d} colSpan={3} className="px-2 py-2 border border-gray-300 text-center bg-blue-50/60">
                       {day ? day.evaluatedChats : <span className="text-gray-300 font-normal">—</span>}
                     </td>
                   );
                 })}
                 {isMultiDay && (
-                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  <td colSpan={2} className="px-2 py-2 border border-gray-300 text-center bg-blue-50/60">
                     {report.totals.evaluatedChats}
                   </td>
                 )}
               </tr>
 
               {/* Отлично */}
-              <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-green-50 whitespace-nowrap">Отлично</td>
+              <tr className="hover:bg-green-100/30">
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-green-50 whitespace-nowrap font-medium text-green-900">Отлично</td>
                 {periodDates.map((d) => {
                   const day = dayMap.get(d);
                   return (
-                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-green-50">
+                    <td key={d} colSpan={3} className="px-2 py-2 border border-gray-300 text-center bg-green-50 font-medium">
                       {day ? day.distribution.Отлично : <span className="text-gray-300">—</span>}
                     </td>
                   );
                 })}
                 {isMultiDay && (
-                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-green-50">
+                  <td colSpan={2} className="px-2 py-2 border border-gray-300 text-center bg-green-50 font-medium">
                     {report.distribution.Отлично}
                   </td>
                 )}
               </tr>
 
               {/* Хорошо */}
-              <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">Хорошо</td>
+              <tr className="hover:bg-gray-50">
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-white whitespace-nowrap font-medium">Хорошо</td>
                 {periodDates.map((d) => {
                   const day = dayMap.get(d);
                   return (
-                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                    <td key={d} colSpan={3} className="px-2 py-2 border border-gray-300 text-center bg-white font-medium">
                       {day ? day.distribution.Хорошо : <span className="text-gray-300">—</span>}
                     </td>
                   );
                 })}
                 {isMultiDay && (
-                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  <td colSpan={2} className="px-2 py-2 border border-gray-300 text-center bg-white font-medium">
                     {report.distribution.Хорошо}
                   </td>
                 )}
               </tr>
 
               {/* Плохо */}
-              <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-yellow-50 whitespace-nowrap">Плохо</td>
+              <tr className="hover:bg-yellow-100/30">
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-yellow-50 whitespace-nowrap font-medium text-yellow-900">Плохо</td>
                 {periodDates.map((d) => {
                   const day = dayMap.get(d);
                   return (
-                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-yellow-50">
+                    <td key={d} colSpan={3} className="px-2 py-2 border border-gray-300 text-center bg-yellow-50 font-medium">
                       {day ? day.distribution.Плохо : <span className="text-gray-300">—</span>}
                     </td>
                   );
                 })}
                 {isMultiDay && (
-                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-yellow-50">
+                  <td colSpan={2} className="px-2 py-2 border border-gray-300 text-center bg-yellow-50 font-medium">
                     {report.distribution.Плохо}
                   </td>
                 )}
               </tr>
 
               {/* Критично */}
-              <tr>
-                <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-red-50 whitespace-nowrap">Критично</td>
+              <tr className="hover:bg-red-100/30">
+                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-red-50 whitespace-nowrap font-medium text-red-900">Критично</td>
                 {periodDates.map((d) => {
                   const day = dayMap.get(d);
                   return (
-                    <td key={d} colSpan={3} className="px-2 py-1.5 border border-gray-200 text-center bg-red-50">
+                    <td key={d} colSpan={3} className="px-2 py-2 border border-gray-300 text-center bg-red-50 font-medium">
                       {day ? day.distribution.Критично : <span className="text-gray-300">—</span>}
                     </td>
                   );
                 })}
                 {isMultiDay && (
-                  <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-red-50">
+                  <td colSpan={2} className="px-2 py-2 border border-gray-300 text-center bg-red-50 font-medium">
                     {report.distribution.Критично}
                   </td>
                 )}
               </tr>
 
               {/* Сервис Бухгалтерии */}
-              <tr className="font-bold border-t-2 border-gray-300">
-                <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-white whitespace-nowrap">Сервис Бухгалтерии</td>
+              <tr className="font-bold border-t-4 border-gray-400 bg-gradient-to-b from-indigo-50 to-indigo-25">
+                <td className="sticky left-0 z-10 px-3 py-2.5 border border-gray-400 bg-gradient-to-b from-indigo-50 to-indigo-25 whitespace-nowrap text-indigo-900">Сервис Бухгалтерии</td>
                 {periodDates.map((d) => {
                   const day = dayMap.get(d);
                   return (
-                    <td key={d} colSpan={3} className={`px-2 py-2 border border-gray-300 text-center ${day ? scoreCellClass(day.serviceQualityPct) : "bg-white text-gray-300"}`}>
+                    <td key={d} colSpan={3} className={`px-2 py-2.5 border border-gray-400 text-center font-bold ${day ? scoreCellClass(day.serviceQualityPct) : "bg-indigo-50 text-gray-300"}`}>
                       {day ? day.serviceQualityPct : "—"}
                     </td>
                   );
                 })}
                 {isMultiDay && (
-                  <td colSpan={2} className={`px-2 py-2 border border-gray-300 text-center ${scoreCellClass(report.serviceQualityPct)}`}>
+                  <td colSpan={2} className={`px-2 py-2.5 border border-gray-400 text-center font-bold ${scoreCellClass(report.serviceQualityPct)}`}>
                     {report.serviceQualityPct}
                   </td>
                 )}
@@ -393,34 +393,35 @@ export default async function MessagesPage({
 
               {/* Separator */}
               <tr>
-                <td colSpan={1 + periodDates.length * 3 + (isMultiDay ? 2 : 0)} className="h-2 bg-gray-100 border-t border-gray-200" />
+                <td colSpan={1 + periodDates.length * 3 + (isMultiDay ? 2 : 0)} className="h-1 bg-gray-300 border-none" />
               </tr>
 
               {/* ── Per-accountant rows ────────────────────────────────────────── */}
-              {periodAccountants.map((acc) => {
+              {periodAccountants.map((acc, idx) => {
                 const accData = report.perAccountant.find((a) => a.accountant === acc);
+                const isAlternate = idx % 2 === 1;
                 return (
-                  <tr key={acc}>
-                    <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">{acc}</td>
+                  <tr key={acc} className={`font-medium ${isAlternate ? "bg-gray-50/50" : "hover:bg-gray-50"}`}>
+                    <td className={`sticky left-0 z-10 px-3 py-2 border border-gray-300 whitespace-nowrap font-semibold ${isAlternate ? "bg-gray-50/50" : "bg-white"}`}>{acc}</td>
                     {periodDates.flatMap((d) => {
                       const cell = dayAccScoreMap.get(`${d}|${acc}`);
                       return [
-                        <td key={`${d}-s`} className={`px-2 py-1.5 border border-gray-200 text-center ${cell && cell.score >= 0 ? scoreCellClass(cell.score) : "bg-white"}`}>
+                        <td key={`${d}-s`} className={`px-2 py-2 border border-gray-300 text-center font-medium ${cell && cell.score >= 0 ? scoreCellClass(cell.score) : (isAlternate ? "bg-gray-50/50" : "bg-white")}`}>
                           {cell && cell.score >= 0 ? cell.score : <span className="text-gray-200">—</span>}
                         </td>,
-                        <td key={`${d}-b`} className={`px-1 py-1.5 border border-gray-200 text-center ${cell?.lowCount ? "text-rose-600 font-semibold" : "text-gray-200"}`}>
+                        <td key={`${d}-b`} className={`px-1 py-2 border border-gray-300 text-center ${cell?.lowCount ? "text-rose-600 font-bold" : "text-gray-300"} ${isAlternate ? "bg-gray-50/50" : "bg-white"}`}>
                           {cell?.lowCount || ""}
                         </td>,
-                        <td key={`${d}-n`} className="px-1 py-1.5 border border-gray-200 text-center text-gray-400">
+                        <td key={`${d}-n`} className={`px-1 py-2 border border-gray-300 text-center text-gray-400 font-medium ${isAlternate ? "bg-gray-50/50" : "bg-white"}`}>
                           {cell && cell.score >= 0 ? cell.count : ""}
                         </td>,
                       ];
                     })}
                     {isMultiDay && [
-                      <td key="total-s" className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${accData && accData.avgScore >= 0 ? scoreCellClass(accData.avgScore) : "bg-white"}`}>
-                        {accData && accData.avgScore >= 0 ? accData.avgScore : <span className="text-gray-300 font-normal">—</span>}
+                      <td key="total-s" className={`px-2 py-2 border border-gray-300 text-center font-bold ${accData && accData.avgScore >= 0 ? scoreCellClass(accData.avgScore) : (isAlternate ? "bg-gray-50/50" : "bg-white")}`}>
+                        {accData && accData.avgScore >= 0 ? accData.avgScore : <span className="text-gray-300">—</span>}
                       </td>,
-                      <td key="total-n" className="px-1 py-1.5 border border-gray-200 text-center text-gray-400">
+                      <td key="total-n" className={`px-1 py-2 border border-gray-300 text-center text-gray-400 font-medium ${isAlternate ? "bg-gray-50/50" : "bg-white"}`}>
                         {accData ? accData.count : ""}
                       </td>,
                     ]}
