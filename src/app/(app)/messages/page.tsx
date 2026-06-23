@@ -225,12 +225,13 @@ export default async function MessagesPage({
             <thead>
               <tr>
                 <th className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-gray-50 whitespace-nowrap min-w-[150px]" />
-                {periodDates.map((d) => (
-                  <th key={d} className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
+                {periodDates.flatMap((d) => [
+                  <th key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
                     {fmtShortDate(d)}
-                  </th>
-                ))}
-                <th className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
+                  </th>,
+                  <th key={`${d}-c`} className="w-5 border border-gray-200 bg-gray-50" />,
+                ])}
+                <th colSpan={2} className="px-2 py-1.5 border border-gray-200 bg-gray-50 font-semibold text-center whitespace-nowrap">
                   Итого
                 </th>
               </tr>
@@ -241,10 +242,11 @@ export default async function MessagesPage({
                 <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
                   Активных чатов
                 </td>
-                {periodDates.map((d) => (
-                  <td key={d} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
-                ))}
-                <td className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                {periodDates.flatMap((d) => [
+                  <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>,
+                  <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
+                ])}
+                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                   {report.totals.activeChats}
                 </td>
               </tr>
@@ -254,15 +256,16 @@ export default async function MessagesPage({
                 <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
                   Новых чатов
                 </td>
-                {periodDates.map((d) => {
+                {periodDates.flatMap((d) => {
                   const day = dayMap.get(d);
-                  return (
-                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  return [
+                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                       {day?.newChats ?? <span className="text-gray-300">—</span>}
-                    </td>
-                  );
+                    </td>,
+                    <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
+                  ];
                 })}
-                <td className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                   {report.totals.newChats}
                 </td>
               </tr>
@@ -272,10 +275,11 @@ export default async function MessagesPage({
                 <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
                   Без ответственных
                 </td>
-                {periodDates.map((d) => (
-                  <td key={d} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
-                ))}
-                <td className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                {periodDates.flatMap((d) => [
+                  <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>,
+                  <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
+                ])}
+                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
               </tr>
 
               {/* Нет ссылки */}
@@ -283,10 +287,11 @@ export default async function MessagesPage({
                 <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
                   Нет ссылки
                 </td>
-                {periodDates.map((d) => (
-                  <td key={d} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
-                ))}
-                <td className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
+                {periodDates.flatMap((d) => [
+                  <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>,
+                  <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
+                ])}
+                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center text-gray-300 bg-white">—</td>
               </tr>
 
               {/* Оценено чатов всего — bold */}
@@ -294,15 +299,16 @@ export default async function MessagesPage({
                 <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
                   Оценено чатов всего
                 </td>
-                {periodDates.map((d) => {
+                {periodDates.flatMap((d) => {
                   const day = dayMap.get(d);
-                  return (
-                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  return [
+                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                       {day ? day.evaluatedChats : <span className="text-gray-300 font-normal">—</span>}
-                    </td>
-                  );
+                    </td>,
+                    <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
+                  ];
                 })}
-                <td className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                   {report.totals.evaluatedChats}
                 </td>
               </tr>
@@ -312,15 +318,16 @@ export default async function MessagesPage({
                 <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
                   Отлично
                 </td>
-                {periodDates.map((d) => {
+                {periodDates.flatMap((d) => {
                   const day = dayMap.get(d);
-                  return (
-                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  return [
+                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                       {day?.distribution.Отлично ?? <span className="text-gray-300">—</span>}
-                    </td>
-                  );
+                    </td>,
+                    <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
+                  ];
                 })}
-                <td className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                   {report.distribution.Отлично}
                 </td>
               </tr>
@@ -330,15 +337,16 @@ export default async function MessagesPage({
                 <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-yellow-100 whitespace-nowrap">
                   Хорошо
                 </td>
-                {periodDates.map((d) => {
+                {periodDates.flatMap((d) => {
                   const day = dayMap.get(d);
-                  return (
-                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center">
+                  return [
+                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center">
                       {day?.distribution.Хорошо ?? "—"}
-                    </td>
-                  );
+                    </td>,
+                    <td key={`${d}-c`} className="border border-gray-200" />,
+                  ];
                 })}
-                <td className="px-2 py-1.5 border border-gray-200 text-center">
+                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center">
                   {report.distribution.Хорошо}
                 </td>
               </tr>
@@ -348,15 +356,16 @@ export default async function MessagesPage({
                 <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-white whitespace-nowrap">
                   Плохо
                 </td>
-                {periodDates.map((d) => {
+                {periodDates.flatMap((d) => {
                   const day = dayMap.get(d);
-                  return (
-                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                  return [
+                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                       {day?.distribution.Плохо ?? <span className="text-gray-300">—</span>}
-                    </td>
-                  );
+                    </td>,
+                    <td key={`${d}-c`} className="border border-gray-200 bg-white" />,
+                  ];
                 })}
-                <td className="px-2 py-1.5 border border-gray-200 text-center bg-white">
+                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center bg-white">
                   {report.distribution.Плохо}
                 </td>
               </tr>
@@ -366,15 +375,16 @@ export default async function MessagesPage({
                 <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 bg-red-100 whitespace-nowrap">
                   Критично
                 </td>
-                {periodDates.map((d) => {
+                {periodDates.flatMap((d) => {
                   const day = dayMap.get(d);
-                  return (
-                    <td key={d} className="px-2 py-1.5 border border-gray-200 text-center">
+                  return [
+                    <td key={`${d}-s`} className="px-2 py-1.5 border border-gray-200 text-center">
                       {day?.distribution.Критично ?? "—"}
-                    </td>
-                  );
+                    </td>,
+                    <td key={`${d}-c`} className="border border-gray-200" />,
+                  ];
                 })}
-                <td className="px-2 py-1.5 border border-gray-200 text-center">
+                <td colSpan={2} className="px-2 py-1.5 border border-gray-200 text-center">
                   {report.distribution.Критично}
                 </td>
               </tr>
@@ -384,25 +394,26 @@ export default async function MessagesPage({
                 <td className="sticky left-0 z-10 px-3 py-2 border border-gray-300 bg-white whitespace-nowrap">
                   Сервис Бухгалтерии
                 </td>
-                {periodDates.map((d) => {
+                {periodDates.flatMap((d) => {
                   const day = dayMap.get(d);
-                  return (
-                    <td key={d} className={`px-2 py-2 border border-gray-300 text-center ${day ? scoreCellClass(day.serviceQualityPct) : "bg-white text-gray-300"}`}>
+                  return [
+                    <td key={`${d}-s`} className={`px-2 py-2 border border-gray-300 text-center ${day ? scoreCellClass(day.serviceQualityPct) : "bg-white text-gray-300"}`}>
                       {day ? day.serviceQualityPct : "—"}
-                    </td>
-                  );
+                    </td>,
+                    <td key={`${d}-c`} className="border border-gray-300 bg-white" />,
+                  ];
                 })}
-                <td className={`px-2 py-2 border border-gray-300 text-center ${scoreCellClass(report.serviceQualityPct)}`}>
+                <td colSpan={2} className={`px-2 py-2 border border-gray-300 text-center ${scoreCellClass(report.serviceQualityPct)}`}>
                   {report.serviceQualityPct}
                 </td>
               </tr>
 
               {/* Separator */}
               <tr>
-                <td colSpan={periodDates.length + 2} className="h-2 bg-gray-100 border-t border-gray-200" />
+                <td colSpan={periodDates.length * 2 + 3} className="h-2 bg-gray-100 border-t border-gray-200" />
               </tr>
 
-              {/* Per-accountant rows */}
+              {/* Per-accountant rows — score cell + count cell per date */}
               {periodAccountants.map((acc) => {
                 const accData = report.perAccountant.find((a) => a.accountant === acc);
                 return (
@@ -410,26 +421,22 @@ export default async function MessagesPage({
                     <td className="sticky left-0 z-10 px-3 py-1.5 border border-gray-200 whitespace-nowrap bg-white">
                       {acc}
                     </td>
-                    {periodDates.map((d) => {
+                    {periodDates.flatMap((d) => {
                       const cell = dayAccScoreMap.get(`${d}|${acc}`);
-                      return (
-                        <td key={d} className={`px-1.5 py-1.5 border border-gray-200 text-center ${scoreCellClass(cell?.score)}`}>
-                          {cell ? (
-                            <>
-                              {cell.score}
-                              <sup className="text-[8px] opacity-50 ml-0.5">{cell.count}</sup>
-                            </>
-                          ) : <span className="text-gray-200">—</span>}
-                        </td>
-                      );
+                      return [
+                        <td key={`${d}-s`} className={`px-2 py-1.5 border border-gray-200 text-center ${cell ? scoreCellClass(cell.score) : ""}`}>
+                          {cell ? cell.score : <span className="text-gray-200">—</span>}
+                        </td>,
+                        <td key={`${d}-c`} className="px-1 py-1.5 border border-gray-200 text-center text-gray-400">
+                          {cell ? cell.count : ""}
+                        </td>,
+                      ];
                     })}
-                    <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${scoreCellClass(accData?.avgScore)}`}>
-                      {accData && accData.avgScore >= 0 ? (
-                        <>
-                          {accData.avgScore}
-                          <sup className="text-[8px] opacity-50 ml-0.5">{accData.count}</sup>
-                        </>
-                      ) : <span className="text-gray-300">—</span>}
+                    <td className={`px-2 py-1.5 border border-gray-200 text-center font-semibold ${accData && accData.avgScore >= 0 ? scoreCellClass(accData.avgScore) : ""}`}>
+                      {accData && accData.avgScore >= 0 ? accData.avgScore : <span className="text-gray-300 font-normal">—</span>}
+                    </td>
+                    <td className="px-1 py-1.5 border border-gray-200 text-center text-gray-400">
+                      {accData ? accData.count : ""}
                     </td>
                   </tr>
                 );
