@@ -69,11 +69,16 @@ export default async function MessagesPage({
     client: searchParams.client || undefined,
   };
 
-  const [{ report, previous, resolved }, violations, allAccountants] = await Promise.all([
+  const [{ report, previous, resolved }, allAccountants] = await Promise.all([
     getDailyAnalytics(filters),
-    listViolations({ from: filters.from, to: filters.to, accountant: filters.accountant }),
     listAccountants(),
   ]);
+
+  const violations = await listViolations({
+    from: resolved.from,
+    to: resolved.to,
+    accountant: filters.accountant,
+  });
 
   const canonicalAccountants = allAccountants.filter(
     (a) => a.active && a.role === "accountant"
