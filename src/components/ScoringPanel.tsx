@@ -868,10 +868,9 @@ export default function ScoringPanel({
       </div>
 
       {/* Manual "add chat to QA" (item 5 / boss: «функция ручного добавления в
-          QA»). Day view only — pull a chat into THIS day's list even if the feed
-          never surfaced it (a previous-day chat, or one missing entirely).
-          Search by № / название / вставленная ссылка Telegram. */}
-      {scope === "day" && (
+          QA»). Available in both day and all-chats views — pull a chat into
+          the QA list for the selected date. Search by № / название / вставленная ссылка Telegram. */}
+      {(scope === "day" || scope === "all") && (
         <div className="card p-2">
           {!addOpen ? (
             <button
