@@ -81,6 +81,9 @@ type Scope = "day" | "all";
 /** Per-chat hide/restore control for the "Активные за день" view (day scope). */
 type HideControl = { hidden: boolean; onToggle: () => void } | null;
 
+/** Control shown in "all" scope: add a chat to today's review day. */
+type AddToReviewControl = { included: boolean; onAdd: () => void } | null;
+
 export default function ScoringPanel({
   chats,
   accountants,
@@ -1104,6 +1107,14 @@ export default function ScoringPanel({
                       }
                     : null
                 }
+                addToReviewControl={
+                  scope === "all"
+                    ? {
+                        included: isIncluded(chat.agr_no),
+                        onAdd: () => setChatIncluded(chat.agr_no, true),
+                      }
+                    : null
+                }
               />
             ))}
           </tbody>
@@ -1170,6 +1181,7 @@ function ChatScoreRow({
   onRemoveManual,
   duplicateAgrs = [],
   hideControl = null,
+  addToReviewControl = null,
   detectedStatuses = {},
 }: {
   chat: Chat;
@@ -1191,6 +1203,7 @@ function ChatScoreRow({
   onRemoveManual?: () => void;
   duplicateAgrs?: string[];
   hideControl?: HideControl;
+  addToReviewControl?: AddToReviewControl;
   detectedStatuses?: Record<string, string>;
 }) {
   const prevStatuses = prev?.monthly ?? {};
@@ -1209,7 +1222,6 @@ function ChatScoreRow({
     existing?.accountant ?? (isWeekend ? weekendDefault : chat.accountant ?? "")
   );
   const [deletingEval, setDeletingEval] = useState(false);
-  const [deletingChat, setDeletingChat] = useState(false);
   const [criteria, setCriteria] = useState<CriteriaScores>(() => {
     if (existing?.scores.criteria) return existing.scores.criteria;
     if (prev?.criteria) return prev.criteria;
@@ -1402,30 +1414,6 @@ function ChatScoreRow({
       setError("Сеть");
     } finally {
       setDeletingEval(false);
-    }
-  }
-
-  async function deleteChatRecord() {
-    if (
-      !confirm(
-        `Удалить чат № ${chat.agr_no} («${chat.chat_name ?? ""}») из системы?\n\nЭто удалит чат и ВСЕ его оценки. Действие необратимо.`
-      )
-    )
-      return;
-    setDeletingChat(true);
-    try {
-      const res = await fetch(`/api/chats/${encodeURIComponent(chat.agr_no)}`, {
-        method: "DELETE",
-      });
-      if (res.ok) {
-        onChatDeleted?.(chat.agr_no);
-      } else {
-        setError("Не удалось удалить чат");
-      }
-    } catch {
-      setError("Сеть");
-    } finally {
-      setDeletingChat(false);
     }
   }
 
@@ -1632,7 +1620,7 @@ function ChatScoreRow({
               ))}
             </div>
           )}
-          {/* Action buttons: violation / task / hide / delete */}
+          {/* Action buttons: violation / task / hide / add-to-review */}
           <div className="mt-1.5 flex flex-wrap gap-1">
             <button
               onClick={onLogViolation}
@@ -1661,6 +1649,20 @@ function ChatScoreRow({
                 {hideControl.hidden ? "↩ Вернуть" : "🙈 Скрыть"}
               </button>
             )}
+            {addToReviewControl && !addToReviewControl.included && (
+              <button
+                onClick={addToReviewControl.onAdd}
+                className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-medium px-2 py-1"
+                title="Добавить этот чат в список «Активные за день» для выбранной даты"
+              >
+                ➕ В проверку
+              </button>
+            )}
+            {addToReviewControl?.included && (
+              <span className="inline-flex items-center gap-1 rounded border border-emerald-300 bg-emerald-100 text-emerald-700 text-xs font-medium px-2 py-1">
+                ✓ Добавлен
+              </span>
+            )}
             {savedId && (
               <button
                 onClick={deleteEval}
@@ -1669,16 +1671,6 @@ function ChatScoreRow({
                 title="Удалить оценку за этот день"
               >
                 {deletingEval ? "…" : "🗑️"}
-              </button>
-            )}
-            {scope === "day" && (
-              <button
-                onClick={deleteChatRecord}
-                disabled={deletingChat}
-                className="inline-flex items-center gap-1 rounded border border-gray-300 bg-white text-gray-400 hover:border-red-400 hover:text-red-600 text-xs px-2 py-1 ml-auto"
-                title="Удалить чат из системы — необратимо, удаляет все оценки"
-              >
-                {deletingChat ? "…" : "✕ чат"}
               </button>
             )}
           </div>
@@ -2050,6 +2042,7 @@ function ChatGroup({
   onRemoveManual,
   duplicateAgrs = [],
   hideControl = null,
+  addToReviewControl = null,
   detectedStatuses = {},
 }: {
   chat: Chat;
@@ -2075,6 +2068,7 @@ function ChatGroup({
   onRemoveManual?: () => void;
   duplicateAgrs?: string[];
   hideControl?: HideControl;
+  addToReviewControl?: AddToReviewControl;
   detectedStatuses?: Record<string, string>;
 }) {
   const [showManager, setShowManager] = useState(Boolean(managerEval));
@@ -2103,6 +2097,7 @@ function ChatGroup({
         onRemoveManual={onRemoveManual}
         duplicateAgrs={duplicateAgrs}
         hideControl={hideControl}
+        addToReviewControl={addToReviewControl}
         detectedStatuses={detectedStatuses}
       />
       {showManager && (

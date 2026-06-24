@@ -236,11 +236,16 @@ export async function createChatFromLink(
 export async function listAccountants(): Promise<Accountant[]> {
   const sb = getServiceClient();
   if (sb) {
-    const { data, error } = await sb.from(TABLES.accountants).select("*").order("name");
+    const { data, error } = await sb
+      .from(TABLES.accountants)
+      .select("*")
+      .eq("active", true)
+      .neq("role", "dismissed")
+      .order("name");
     if (error) throw error;
     return (data ?? []) as Accountant[];
   }
-  return store().accountants;
+  return store().accountants.filter((a) => a.active && a.role !== "dismissed");
 }
 
 // --- Evaluations -----------------------------------------------------------

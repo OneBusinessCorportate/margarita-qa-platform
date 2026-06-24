@@ -36,6 +36,19 @@ function blankDraft(): Draft {
   };
 }
 
+function violationToDraft(v: Violation): Draft {
+  return {
+    vdate: v.vdate ?? today(),
+    accountant: v.accountant ?? "",
+    chat_agr_no: v.chat_agr_no ?? "",
+    client: v.client ?? "",
+    severity: v.severity ?? "Критичное",
+    violation_type: v.violation_type ?? "",
+    sanction: v.sanction != null ? String(v.sanction) : "",
+    note: v.note ?? "",
+  };
+}
+
 export default function ViolationsPanel({
   accountants,
   chats,
@@ -53,22 +66,25 @@ export default function ViolationsPanel({
   const [draft, setDraft] = useState<Draft>(blankDraft());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Editing state: id → draft for inline edit
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Draft>(blankDraft());
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const chatMap = useMemo(() => new Map(chats.map((c) => [c.agr_no, c])), [chats]);
 
-  // Which critical chats are already in the journal — so the list can mark what
-  // still needs logging vs. what's covered.
   const loggedChatNos = useMemo(
     () => new Set(rows.map((v) => v.chat_agr_no).filter(Boolean) as string[]),
     [rows]
   );
 
-  // Filters (item 3): severity (incl. Грубое), accountant, date range.
+  // Filters — default to today so the view shows current day by default
   const [fSeverity, setFSeverity] = useState("");
   const [fAccountant, setFAccountant] = useState("");
-  const [fFrom, setFFrom] = useState("");
-  const [fTo, setFTo] = useState("");
+  const [fFrom, setFFrom] = useState(today());
+  const [fTo, setFTo] = useState(today());
+  const [showAllDates, setShowAllDates] = useState(false);
 
-  // Auto-import of critical chats (item 10).
   const [importDate, setImportDate] = useState(today());
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
@@ -90,7 +106,6 @@ export default function ViolationsPanel({
       setImportMsg(
         `Добавлено: ${d.created ?? 0}${d.skipped ? `, пропущено (уже есть): ${d.skipped}` : ""}`
       );
-      // Refresh the list so the new rows appear.
       const list = await fetch(`/api/violations?from=${importDate}&to=${importDate}`);
       if (list.ok) {
         const fresh: Violation[] = await list.json();
@@ -111,11 +126,13 @@ export default function ViolationsPanel({
       rows.filter((v) => {
         if (fSeverity && v.severity !== fSeverity) return false;
         if (fAccountant && v.accountant !== fAccountant) return false;
-        if (fFrom && (v.vdate ?? "") < fFrom) return false;
-        if (fTo && (v.vdate ?? "") > fTo) return false;
+        if (!showAllDates) {
+          if (fFrom && (v.vdate ?? "") < fFrom) return false;
+          if (fTo && (v.vdate ?? "") > fTo) return false;
+        }
         return true;
       }),
-    [rows, fSeverity, fAccountant, fFrom, fTo]
+    [rows, fSeverity, fAccountant, fFrom, fTo, showAllDates]
   );
 
   function pickChat(agrNo: string) {
@@ -125,6 +142,16 @@ export default function ViolationsPanel({
       chat_agr_no: agrNo,
       client: c?.chat_name ?? draft.client,
       accountant: c?.accountant ?? draft.accountant,
+    });
+  }
+
+  function pickChatForEdit(agrNo: string) {
+    const c = chatMap.get(agrNo);
+    setEditDraft({
+      ...editDraft,
+      chat_agr_no: agrNo,
+      client: c?.chat_name ?? editDraft.client,
+      accountant: c?.accountant ?? editDraft.accountant,
     });
   }
 
@@ -165,6 +192,59 @@ export default function ViolationsPanel({
     }
   }
 
+  function startEdit(v: Violation) {
+    setEditingId(v.id);
+    setEditDraft(violationToDraft(v));
+    setEditError(null);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditError(null);
+  }
+
+  async function saveEdit(id: string) {
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const res = await fetch(`/api/violations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vdate: editDraft.vdate,
+          accountant: editDraft.accountant || null,
+          client: editDraft.client || null,
+          severity: editDraft.severity || null,
+          violation_type: editDraft.violation_type || null,
+          sanction: editDraft.sanction === "" ? null : Number(editDraft.sanction),
+          note: editDraft.note || null,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setEditError(d.error || "Не удалось сохранить");
+        return;
+      }
+      const updated: Violation = await res.json();
+      setRows((p) => p.map((v) => (v.id === id ? updated : v)));
+      setEditingId(null);
+    } catch {
+      setEditError("Сетевая ошибка");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function deleteRow(id: string) {
+    if (!confirm("Удалить запись о нарушении?")) return;
+    try {
+      const res = await fetch(`/api/violations/${id}`, { method: "DELETE" });
+      if (res.ok) setRows((p) => p.filter((v) => v.id !== id));
+    } catch {
+      // ignore
+    }
+  }
+
   return (
     <div className="space-y-3">
       {/* Filters */}
@@ -173,9 +253,7 @@ export default function ViolationsPanel({
           <select className="input" value={fSeverity} onChange={(e) => setFSeverity(e.target.value)}>
             <option value="">Все</option>
             {VIOLATION_SEVERITIES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
+              <option key={s} value={s}>{s}</option>
             ))}
           </select>
         </Field>
@@ -183,25 +261,38 @@ export default function ViolationsPanel({
           <select className="input" value={fAccountant} onChange={(e) => setFAccountant(e.target.value)}>
             <option value="">Все</option>
             {accountants.map((a) => (
-              <option key={a} value={a}>
-                {a}
-              </option>
+              <option key={a} value={a}>{a}</option>
             ))}
           </select>
         </Field>
-        <Field label="С даты">
-          <input type="date" className="input" value={fFrom} onChange={(e) => setFFrom(e.target.value)} />
-        </Field>
-        <Field label="По дату">
-          <input type="date" className="input" value={fTo} onChange={(e) => setFTo(e.target.value)} />
-        </Field>
+        {!showAllDates && (
+          <>
+            <Field label="С даты">
+              <input type="date" className="input" value={fFrom} onChange={(e) => setFFrom(e.target.value)} />
+            </Field>
+            <Field label="По дату">
+              <input type="date" className="input" value={fTo} onChange={(e) => setFTo(e.target.value)} />
+            </Field>
+          </>
+        )}
+        <div className="flex items-center gap-2 pb-1.5">
+          <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showAllDates}
+              onChange={(e) => setShowAllDates(e.target.checked)}
+            />
+            Все даты
+          </label>
+        </div>
         <button
           className="btn-secondary"
           onClick={() => {
             setFSeverity("");
             setFAccountant("");
-            setFFrom("");
-            setFTo("");
+            setFFrom(today());
+            setFTo(today());
+            setShowAllDates(false);
           }}
         >
           Сброс
@@ -209,7 +300,7 @@ export default function ViolationsPanel({
         <span className="text-xs text-gray-400 pb-1.5">Показано: {filtered.length}</span>
       </div>
 
-      {/* Auto-import critical chats from the day's QA (item 10). */}
+      {/* Auto-import critical chats */}
       <div className="card p-3 flex flex-wrap items-end gap-3 bg-amber-50/40">
         <Field label="Критичные чаты за дату">
           <input
@@ -223,15 +314,14 @@ export default function ViolationsPanel({
           className="btn-primary"
           onClick={importCritical}
           disabled={importing}
-          title="Добавить в журнал все чаты, получившие «Критично» в этот день (по оценкам). Повторный запуск не создаёт дублей."
+          title="Добавить в журнал все чаты, получившие «Критично» в этот день. Повторный запуск не создаёт дублей."
         >
           {importing ? "Импорт…" : "➕ Импортировать критичные чаты"}
         </button>
         {importMsg && <span className="text-xs text-gray-600 pb-1.5">{importMsg}</span>}
       </div>
 
-      {/* Critical chats from QA scoring — always visible, not only after an
-          import. Rows not yet in the journal are highlighted so they stand out. */}
+      {/* Critical chats from QA scoring */}
       <div className="card overflow-x-auto">
         <div className="px-3 pt-3 pb-1 flex items-baseline gap-2">
           <span className="text-sm font-medium">Критичные чаты по оценкам</span>
@@ -270,17 +360,7 @@ export default function ViolationsPanel({
                     <div className="text-xs text-gray-400">
                       № {c.chat_agr_no}
                       {chat?.chat_link && (
-                        <>
-                          {" · "}
-                          <a
-                            href={chat.chat_link}
-                            target={TG_WINDOW}
-                            rel="noreferrer"
-                            className="text-blue-600 hover:underline"
-                          >
-                            открыть
-                          </a>
-                        </>
+                        <> · <a href={chat.chat_link} target={TG_WINDOW} rel="noreferrer" className="text-blue-600 hover:underline">открыть</a></>
                       )}
                     </div>
                   </td>
@@ -311,7 +391,7 @@ export default function ViolationsPanel({
               <th className="min-w-[200px]">Клиент / Чат</th>
               <th>Важность</th>
               <th className="min-w-[200px]">Нарушение</th>
-              <th>Санкция (драм)</th>
+              <th>Санкция</th>
               <th className="min-w-[160px]">Комментарий</th>
               <th></th>
             </tr>
@@ -319,42 +399,160 @@ export default function ViolationsPanel({
           <tbody>
             {filtered.map((v) => {
               const chat = v.chat_agr_no ? chatMap.get(v.chat_agr_no) : null;
-              return (
-              <tr key={v.id}>
-                <td className="whitespace-nowrap">{v.vdate}</td>
-                <td>{v.accountant ?? "—"}</td>
-                <td>
-                  <div>{v.client ?? v.chat_agr_no ?? "—"}</div>
-                  {v.chat_agr_no && (
-                    <div className="text-xs text-gray-400">
-                      № {v.chat_agr_no}
-                      {chat?.chat_link && (
-                        <>
-                          {" · "}
-                          <a href={chat.chat_link} target={TG_WINDOW} rel="noreferrer" className="text-blue-600 hover:underline">
-                            открыть
-                          </a>
-                        </>
+              const isEditing = editingId === v.id;
+
+              if (isEditing) {
+                return (
+                  <tr key={v.id} className="bg-blue-50/60">
+                    <td>
+                      <input
+                        type="date"
+                        className="input w-[130px]"
+                        value={editDraft.vdate}
+                        onChange={(e) => setEditDraft({ ...editDraft, vdate: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        className="input"
+                        value={editDraft.accountant}
+                        onChange={(e) => setEditDraft({ ...editDraft, accountant: e.target.value })}
+                      >
+                        <option value="">—</option>
+                        {accountants.map((a) => (
+                          <option key={a} value={a}>{a}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="space-y-1">
+                      <select
+                        className="input w-full text-xs"
+                        value={editDraft.chat_agr_no}
+                        onChange={(e) => pickChatForEdit(e.target.value)}
+                      >
+                        <option value="">— выбрать чат —</option>
+                        {chats.map((c) => (
+                          <option key={c.agr_no} value={c.agr_no}>
+                            № {c.agr_no} — {c.chat_name}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        className="input w-full text-xs"
+                        placeholder="или впишите клиента"
+                        value={editDraft.client}
+                        onChange={(e) => setEditDraft({ ...editDraft, client: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        className="input"
+                        value={editDraft.severity}
+                        onChange={(e) => setEditDraft({ ...editDraft, severity: e.target.value })}
+                      >
+                        {VIOLATION_SEVERITIES.map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        list="edit-violation-types"
+                        className="input w-full text-xs"
+                        value={editDraft.violation_type}
+                        onChange={(e) => setEditDraft({ ...editDraft, violation_type: e.target.value })}
+                      />
+                      <datalist id="edit-violation-types">
+                        {violationTypeOptions(editDraft.severity).map((t) => (
+                          <option key={t} value={t} />
+                        ))}
+                      </datalist>
+                    </td>
+                    <td>
+                      <input
+                        className="input w-[90px] tabular-nums"
+                        inputMode="numeric"
+                        placeholder="0"
+                        value={editDraft.sanction}
+                        onChange={(e) => setEditDraft({ ...editDraft, sanction: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className="input w-full"
+                        value={editDraft.note}
+                        onChange={(e) => setEditDraft({ ...editDraft, note: e.target.value })}
+                        placeholder="примечание…"
+                      />
+                    </td>
+                    <td className="whitespace-nowrap space-x-1">
+                      <button
+                        className="btn-primary !py-1 !px-2 text-xs"
+                        onClick={() => saveEdit(v.id)}
+                        disabled={editSaving}
+                      >
+                        {editSaving ? "…" : "Сохранить"}
+                      </button>
+                      <button
+                        className="btn-secondary !py-1 !px-2 text-xs"
+                        onClick={cancelEdit}
+                      >
+                        Отмена
+                      </button>
+                      {editError && (
+                        <div className="text-xs text-red-600 mt-1">{editError}</div>
                       )}
-                    </div>
-                  )}
-                </td>
-                <td>
-                  <span
-                    className={
-                      v.severity === "Критичное" || v.severity === "Грубое"
-                        ? "text-red-600 font-medium"
-                        : ""
-                    }
-                  >
-                    {v.severity ?? "—"}
-                  </span>
-                </td>
-                <td className="text-xs">{v.violation_type ?? "—"}</td>
-                <td className="tabular-nums">{v.sanction ?? "—"}</td>
-                <td className="text-xs text-gray-600">{v.note ?? ""}</td>
-                <td></td>
-              </tr>
+                    </td>
+                  </tr>
+                );
+              }
+
+              return (
+                <tr key={v.id}>
+                  <td className="whitespace-nowrap">{v.vdate}</td>
+                  <td>{v.accountant ?? "—"}</td>
+                  <td>
+                    <div>{v.client ?? v.chat_agr_no ?? "—"}</div>
+                    {v.chat_agr_no && (
+                      <div className="text-xs text-gray-400">
+                        № {v.chat_agr_no}
+                        {chat?.chat_link && (
+                          <> · <a href={chat.chat_link} target={TG_WINDOW} rel="noreferrer" className="text-blue-600 hover:underline">открыть</a></>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <span
+                      className={
+                        v.severity === "Критичное" || v.severity === "Грубое"
+                          ? "text-red-600 font-medium"
+                          : v.severity === "Среднее"
+                          ? "text-amber-600"
+                          : ""
+                      }
+                    >
+                      {v.severity ?? "—"}
+                    </span>
+                  </td>
+                  <td className="text-xs">{v.violation_type ?? "—"}</td>
+                  <td className="tabular-nums">{v.sanction != null ? `${v.sanction} ֏` : "—"}</td>
+                  <td className="text-xs text-gray-600">{v.note ?? ""}</td>
+                  <td className="whitespace-nowrap space-x-1">
+                    <button
+                      className="text-xs text-blue-600 hover:underline"
+                      onClick={() => startEdit(v)}
+                    >
+                      ✏️ Изменить
+                    </button>
+                    <button
+                      className="text-xs text-gray-400 hover:text-red-600 ml-2"
+                      onClick={() => deleteRow(v.id)}
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
               );
             })}
             {/* New row */}
@@ -375,9 +573,7 @@ export default function ViolationsPanel({
                 >
                   <option value="">—</option>
                   {accountants.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
+                    <option key={a} value={a}>{a}</option>
                   ))}
                 </select>
               </td>
@@ -408,9 +604,7 @@ export default function ViolationsPanel({
                   onChange={(e) => setDraft({ ...draft, severity: e.target.value })}
                 >
                   {VIOLATION_SEVERITIES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
+                    <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
               </td>
@@ -430,7 +624,7 @@ export default function ViolationsPanel({
               </td>
               <td>
                 <input
-                  className="input w-[100px] tabular-nums"
+                  className="input w-[90px] tabular-nums"
                   inputMode="numeric"
                   placeholder="0"
                   value={draft.sanction}
