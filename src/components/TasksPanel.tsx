@@ -199,8 +199,9 @@ export default function TasksPanel({
             <tr>
               <th className="min-w-[200px]">№ / Чат / Бухгалтер</th>
               <th className="min-w-[200px]">Описание</th>
-              <th>Срок</th>
-              <th>Перенос</th>
+              <th>Due Date (Original)</th>
+              <th>Due Date (Postponed)</th>
+              <th>Completed At</th>
               <th>Приоритет</th>
               <th>Повтор</th>
               <th>Статус</th>
@@ -232,6 +233,14 @@ export default function TasksPanel({
                     {due && <span className="block">⏰ срок подошёл</span>}
                   </td>
                   <td className="whitespace-nowrap text-xs">{t.due_date_postponed ?? "—"}</td>
+                  <td className="whitespace-nowrap text-xs">
+                    <input
+                      type="date"
+                      className="input w-[130px]"
+                      value={t.completed_at ?? ""}
+                      onChange={(e) => patchTask(t.id, { completed_at: e.target.value || null })}
+                    />
+                  </td>
                   <td className="text-xs">{t.priority ?? "—"}</td>
                   <td className="text-xs text-center">
                     {t.recurring ? (
@@ -341,6 +350,14 @@ export default function TasksPanel({
                   className="input w-[130px]"
                   value={draft.due_date_postponed}
                   onChange={(e) => setDraft({ ...draft, due_date_postponed: e.target.value })}
+                />
+              </td>
+              <td>
+                <input
+                  type="date"
+                  className="input w-[130px]"
+                  value={draft.completed_at}
+                  onChange={(e) => setDraft({ ...draft, completed_at: e.target.value })}
                 />
               </td>
               <td>
