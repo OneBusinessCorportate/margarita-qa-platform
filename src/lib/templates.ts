@@ -200,32 +200,35 @@ export function buildReportMessage(
   // ── Violations ─────────────────────────────────────────────────────────────
   const withAcc = violations.filter((v) => v.accountant);
   if (withAcc.length) {
-    const byAcc = new Map<string, { sevMap: Map<string, number>; chats: string[] }>();
+    // Group by accountant, preserving individual violation details.
+    const byAcc = new Map<
+      string,
+      { sevMap: Map<string, number>; items: Array<{ label: string; reason: string }> }
+    >();
     for (const v of withAcc) {
       const acc = v.accountant as string;
       const sev = v.severity ?? "среднее";
-      const entry = byAcc.get(acc) ?? { sevMap: new Map<string, number>(), chats: [] };
+      const entry = byAcc.get(acc) ?? { sevMap: new Map<string, number>(), items: [] };
       entry.sevMap.set(sev, (entry.sevMap.get(sev) ?? 0) + 1);
-      if (v.chat_agr_no) {
-        const label = chatLabel(v.chat_agr_no, v.client);
-        if (!entry.chats.includes(label)) entry.chats.push(label);
-      }
+      // Per-violation detail: chat label + reason (violation_type, then note).
+      const label = v.chat_agr_no ? chatLabel(v.chat_agr_no, v.client) : (v.client ?? "");
+      const reason = [v.violation_type, v.note].filter(Boolean).join(" — ");
+      entry.items.push({ label, reason });
       byAcc.set(acc, entry);
     }
     lines.push("");
     lines.push("");
-    lines.push("Нарушения: ");
+    lines.push("Нарушения:");
     lines.push("");
     const entries = [...byAcc.entries()];
     for (let i = 0; i < entries.length; i++) {
-      const [acc, { sevMap, chats }] = entries[i];
+      const [acc, { sevMap, items }] = entries[i];
       const action = worstViolationAction(sevMap);
-      const parts = [...sevMap.entries()]
-        .map(([s, n]) => `${n} ${s.toLowerCase()}`)
-        .join(", ");
-      lines.push(`— ${acc}: ${action} (${parts}) `);
-      for (const chatLbl of chats) {
-        lines.push(`  ▸ ${chatLbl}`);
+      lines.push(`— ${acc}: ${action}`);
+      for (const { label, reason } of items) {
+        const why = reason ? ` — ${reason}` : "";
+        if (label) lines.push(`  ▸ ${label}${why}`);
+        else if (reason) lines.push(`  ▸ ${reason}`);
       }
       if (i < entries.length - 1) lines.push("");
     }
