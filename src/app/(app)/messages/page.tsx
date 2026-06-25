@@ -1,7 +1,6 @@
 import { getDailyAnalytics, getReport, listAccountants, listViolations } from "@/lib/repo";
 import { mondayOf } from "@/lib/scoring";
-import type { DaySummary } from "@/lib/report";
-import { addDays } from "@/lib/report";
+import { addDays, type DaySummary } from "@/lib/report";
 import {
   accountantsToMessage,
   buildAccountantMessage,
@@ -77,18 +76,25 @@ export default async function MessagesPage({
     listAccountants(),
   ]);
 
-  const violations = await listViolations({
-    from: resolved.from,
-    to: resolved.to,
-    accountant: filters.accountant,
-  });
-
-  // Weekly report for star counts (Mon → resolved.to).
   const mondayISO = mondayOf(resolved.to);
   const isAlreadyWeekStart = resolved.from === mondayISO;
-  const weeklyReport = isAlreadyWeekStart && resolved.from !== resolved.to
-    ? report
-    : await getReport({ from: mondayISO, to: resolved.to, accountant: filters.accountant });
+  const isWeek = isWeekFromMonday(resolved.from, resolved.to);
+  const isMultiDay = resolved.from !== resolved.to;
+
+  // Fetch violations, weekly-star report, and previous-week baseline in parallel.
+  const [violations, weeklyReport, prevWeekReport] = await Promise.all([
+    listViolations({ from: resolved.from, to: resolved.to, accountant: filters.accountant }),
+    isAlreadyWeekStart && isMultiDay
+      ? Promise.resolve(report)
+      : getReport({ from: mondayISO, to: resolved.to, accountant: filters.accountant }),
+    isWeek
+      ? getReport({
+          from: addDays(resolved.from, -7),
+          to: addDays(resolved.from, -1),
+          accountant: filters.accountant,
+        })
+      : Promise.resolve(null),
+  ]);
 
   const canonicalAccountants = allAccountants.filter(
     (a) => a.active && a.role === "accountant"
@@ -114,18 +120,7 @@ export default async function MessagesPage({
     waitingCount: (report.unansweredChats ?? []).filter((c) => c.accountant === name).length,
   }));
 
-  const isWeek = isWeekFromMonday(resolved.from, resolved.to);
-  const isMultiDay = resolved.from !== resolved.to;
-
-  // For the weekly summary, compare against the previous full Mon–Sun week
-  // regardless of how many days the current window covers.
-  const prevWeekReport = isWeek
-    ? await getReport({
-        from: addDays(resolved.from, -7),
-        to: addDays(resolved.from, -1),
-        accountant: filters.accountant,
-      })
-    : null;
+  // For the weekly summary, compare against the previous full Mon–Sun week.
   const weeklyMessage = isWeek
     ? buildWeeklyReportMessage(
         report,

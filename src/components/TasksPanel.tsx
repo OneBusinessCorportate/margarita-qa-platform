@@ -234,12 +234,18 @@ export default function TasksPanel({
                   </td>
                   <td className="whitespace-nowrap text-xs">{t.due_date_postponed ?? "—"}</td>
                   <td className="whitespace-nowrap text-xs">
-                    <input
-                      type="date"
-                      className="input w-[130px]"
-                      value={t.completed_at ?? ""}
-                      onChange={(e) => patchTask(t.id, { completed_at: e.target.value || null })}
-                    />
+                    {t.task_status?.startsWith("Completed") ? (
+                      <input
+                        type="date"
+                        className="input w-[130px]"
+                        value={t.completed_at ?? ""}
+                        onChange={(e) =>
+                          patchTask(t.id, { completed_at: e.target.value || null })
+                        }
+                      />
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
                   </td>
                   <td className="text-xs">{t.priority ?? "—"}</td>
                   <td className="text-xs text-center">
@@ -258,10 +264,9 @@ export default function TasksPanel({
                       onChange={(e) =>
                         patchTask(t.id, {
                           task_status: e.target.value,
-                          completed_at:
-                            e.target.value.startsWith("Completed") && !t.completed_at
-                              ? today()
-                              : t.completed_at,
+                          completed_at: e.target.value.startsWith("Completed")
+                            ? (t.completed_at ?? today())
+                            : null,
                         })
                       }
                     >
