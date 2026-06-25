@@ -1275,6 +1275,11 @@ function ChatScoreRow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
+  // True when this row's saved score is Критично — indicates a violation exists
+  // (or was just auto-created). Shown as a badge near the save button.
+  const [autoViolationLogged, setAutoViolationLogged] = useState(
+    Boolean(existing) && bandFor(existing!.total_score) === "Критично"
+  );
 
   const staleDays = lastActivity ? daysBetween(lastActivity, asOf) : null;
   const isStale = isStaleActivity(lastActivity, asOf);
@@ -1408,8 +1413,12 @@ function ChatScoreRow({
             sanction: null,
             note: "авто из оценки",
           }),
-        }).catch(() => {/* best-effort */});
+        })
+          .then(() => setAutoViolationLogged(true))
+          .catch(() => {/* best-effort */});
       }
+      // Update the badge for non-new saves too (score may have changed).
+      setAutoViolationLogged(bandFor(saved.total_score) === "Критично");
     } catch {
       setError("Сеть");
     } finally {
@@ -1858,6 +1867,14 @@ function ChatScoreRow({
           >
             {saving ? "Сохраняю…" : savedId ? "✓ Сохранено · изменить" : "Оценить"}
           </button>
+          {autoViolationLogged && (
+            <div
+              className="mt-1 inline-flex items-center gap-0.5 rounded bg-red-100 text-red-700 font-medium text-[10px] px-1.5 py-0.5 whitespace-nowrap"
+              title="Нарушение автоматически добавлено в журнал «Нарушения»"
+            >
+              ⚠️ в нарушениях
+            </div>
+          )}
           {error && <span className="ml-1 text-[10px] text-red-600">{error}</span>}
         </td>
       </tr>
