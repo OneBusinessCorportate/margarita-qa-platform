@@ -2254,23 +2254,34 @@ function AccountantMultiSelect({
   onChange: (next: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [openUp, setOpenUp] = useState(false);
+  const [dropStyle, setDropStyle] = useState<React.CSSProperties>({});
+  const btnRef = useRef<HTMLButtonElement>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (
+        ref.current && !ref.current.contains(e.target as Node) &&
+        btnRef.current && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  useEffect(() => {
-    if (open && ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      setOpenUp(window.innerHeight - rect.bottom < 320);
+  function handleToggle() {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const maxH = 288; // max-h-72
+      const spaceBelow = window.innerHeight - r.bottom - 8;
+      if (spaceBelow >= maxH) {
+        setDropStyle({ position: "fixed", top: r.bottom + 4, left: r.left });
+      } else {
+        setDropStyle({ position: "fixed", top: Math.max(8, r.top - maxH - 4), left: r.left });
+      }
     }
-  }, [open]);
+    setOpen((o) => !o);
+  }
 
   const toggle = (name: string) =>
     onChange(
@@ -2287,17 +2298,22 @@ function AccountantMultiSelect({
       : `${selected.length} выбрано`;
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <button
+        ref={btnRef}
         type="button"
         className="input flex items-center justify-between gap-2 min-w-[160px]"
-        onClick={() => setOpen((o) => !o)}
+        onClick={handleToggle}
       >
         <span className="truncate">{label}</span>
         <span className="text-gray-400">▾</span>
       </button>
       {open && (
-        <div className={`absolute z-20 w-64 max-h-72 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg p-2 ${openUp ? "bottom-full mb-1" : "mt-1"}`}>
+        <div
+          ref={ref}
+          style={{ ...dropStyle, width: 256, maxHeight: 288, zIndex: 9999 }}
+          className="overflow-auto rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+        >
           {selected.length > 0 && (
             <button
               className="text-xs text-blue-600 mb-1 px-1"
