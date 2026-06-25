@@ -285,8 +285,10 @@ export function buildReportMessage(
       const sev = v.severity ?? "среднее";
       const entry = byAcc.get(acc) ?? { sevMap: new Map<string, number>(), items: [] };
       entry.sevMap.set(sev, (entry.sevMap.get(sev) ?? 0) + 1);
-      // Per-violation detail: chat label + reason (violation_type, then note).
-      const label = v.chat_agr_no ? chatLabel(v.chat_agr_no, v.client) : (v.client ?? "");
+      // Per-violation detail: use client name directly (it already contains the
+      // contract number), fallback to №agrNo only if no name.
+      const rawLabel = v.client || (v.chat_agr_no ? `№${v.chat_agr_no}` : "");
+      const label = rawLabel.length > 42 ? `${rawLabel.slice(0, 39)}…` : rawLabel;
       const reason = [v.violation_type, v.note].filter(Boolean).join(" — ");
       entry.items.push({ label, reason });
       byAcc.set(acc, entry);
@@ -299,7 +301,7 @@ export function buildReportMessage(
     for (let i = 0; i < entries.length; i++) {
       const [acc, { sevMap, items }] = entries[i];
       const action = worstViolationAction(sevMap);
-      lines.push(`— ${acc}: ${action} — требует действия бухгалтера`);
+      lines.push(`— ${acc}: ${action}`);
       for (const { label, reason } of items) {
         const why = reason ? ` — ${reason}` : "";
         if (label) lines.push(`  ▸ ${label}${why}`);
