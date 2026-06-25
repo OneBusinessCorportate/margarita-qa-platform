@@ -1,4 +1,5 @@
-import { getDailyAnalytics, listAccountants, listViolations } from "@/lib/repo";
+import { getDailyAnalytics, getReport, listAccountants, listViolations } from "@/lib/repo";
+import { mondayOf } from "@/lib/scoring";
 import type { DaySummary } from "@/lib/report";
 import {
   accountantsToMessage,
@@ -80,6 +81,13 @@ export default async function MessagesPage({
     accountant: filters.accountant,
   });
 
+  // Weekly report for star counts (Mon → resolved.to).
+  const mondayISO = mondayOf(resolved.to);
+  const isAlreadyWeekStart = resolved.from === mondayISO;
+  const weeklyReport = isAlreadyWeekStart && resolved.from !== resolved.to
+    ? report
+    : await getReport({ from: mondayISO, to: resolved.to, accountant: filters.accountant });
+
   const canonicalAccountants = allAccountants.filter(
     (a) => a.active && a.role === "accountant"
   );
@@ -87,6 +95,7 @@ export default async function MessagesPage({
   const reportMessage = buildReportMessage(report, {
     violations,
     previous,
+    weeklyReport,
     sheetUrl: process.env.REPORT_SHEET_URL,
   });
   const botReady = telegramConfigured();

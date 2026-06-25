@@ -54,8 +54,50 @@ export interface ReportMessageOptions {
    * Supplied by getDailyAnalytics; omit to skip the trend.
    */
   previous?: DailyReport | null;
+  /**
+   * The current week's report (Mon–today), used to compute weekly star counts.
+   * When provided, each star-of-day entry shows "Звезда N из 5 на этой неделе".
+   */
+  weeklyReport?: DailyReport | null;
   /** Cap on how many rows each detail list prints before "+ ещё N". */
   maxList?: number;
+}
+
+/**
+ * Compute how many times each accountant was "star of the day" in a weekly
+ * report. A star is awarded to whoever scored highest on a given day
+ * (100% takes priority; if nobody hit 100%, the day's top scorer wins).
+ * Returns a map of accountant name → star count.
+ */
+function computeWeeklyStarCounts(weekReport: DailyReport): Map<string, number> {
+  const counts = new Map<string, number>();
+  const source = weekReport.perDayPerAccountant;
+  if (!source || source.length === 0) return counts;
+
+  const byDate = new Map<string, { accountant: string; avgScore: number }[]>();
+  for (const d of source) {
+    if (!byDate.has(d.date)) byDate.set(d.date, []);
+    byDate.get(d.date)!.push(d);
+  }
+
+  for (const dayScores of byDate.values()) {
+    const valid = dayScores.filter((d) => d.avgScore > 0);
+    if (valid.length === 0) continue;
+    const perfect = valid.filter((d) => d.avgScore === 100);
+    const topScore = valid.reduce((m, d) => Math.max(m, d.avgScore), 0);
+    const dayStars = perfect.length > 0 ? perfect : valid.filter((d) => d.avgScore === topScore);
+    for (const s of dayStars) {
+      counts.set(s.accountant, (counts.get(s.accountant) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+/** Number of unique evaluation days in a report (used as the "out of N" denominator). */
+function evalDayCount(report: DailyReport): number {
+  const source = report.perDayPerAccountant;
+  if (!source) return 1; // single-day window
+  return new Set(source.map((d) => d.date)).size;
 }
 
 /** "▲ +0.6 п.п. к 10.06" / "▼ −1.2 п.п." / "→ без изменений" vs the previous period. */
@@ -124,7 +166,7 @@ export function buildReportMessage(
   options: ReportMessageOptions = {}
 ): string {
   const { totals, serviceQualityPct, coveragePct, perAccountant, filters } = report;
-  const { violations = [], sheetUrl, previous } = options;
+  const { violations = [], sheetUrl, previous, weeklyReport } = options;
   const dateISO =
     options.date ??
     filters.to ??
@@ -149,13 +191,21 @@ export function buildReportMessage(
     : topScore > 0
       ? scored.filter((a) => a.avgScore === topScore)
       : [];
+
+  // Weekly star counts: how many days each accountant was star this week.
+  const weeklyStarCounts = weeklyReport ? computeWeeklyStarCounts(weeklyReport) : new Map<string, number>();
+  const weekDays = weeklyReport ? evalDayCount(weeklyReport) : 0;
+
   if (stars.length) {
     lines.push("");
     lines.push("Звезда дня");
     lines.push("");
     lines.push("");
     for (let i = 0; i < stars.length; i++) {
-      lines.push(`⭐️ ${stars[i].accountant}: ${stars[i].avgScore}% оценка`);
+      const name = stars[i].accountant;
+      const weekCount = weeklyStarCounts.get(name) ?? 1;
+      const weekSuffix = weekDays > 0 ? ` — Звезда ${weekCount} из ${weekDays} на этой неделе` : "";
+      lines.push(`⭐️ ${name}: ${stars[i].avgScore}% оценка${weekSuffix}`);
       if (i < stars.length - 1) lines.push("");
     }
   }

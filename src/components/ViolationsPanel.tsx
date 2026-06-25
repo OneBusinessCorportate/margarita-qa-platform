@@ -393,6 +393,7 @@ export default function ViolationsPanel({
               <th className="min-w-[200px]">Нарушение</th>
               <th>Санкция</th>
               <th className="min-w-[160px]">Комментарий</th>
+              <th>Действие</th>
               <th></th>
             </tr>
           </thead>
@@ -485,6 +486,7 @@ export default function ViolationsPanel({
                         placeholder="примечание…"
                       />
                     </td>
+                    <td></td>
                     <td className="whitespace-nowrap space-x-1">
                       <button
                         className="btn-primary !py-1 !px-2 text-xs"
@@ -538,6 +540,11 @@ export default function ViolationsPanel({
                   <td className="text-xs">{v.violation_type ?? "—"}</td>
                   <td className="tabular-nums">{v.sanction != null ? `${v.sanction} ֏` : "—"}</td>
                   <td className="text-xs text-gray-600">{v.note ?? ""}</td>
+                  <td>
+                    <span className="inline-block rounded bg-red-100 text-red-700 font-medium text-xs px-2 py-0.5 whitespace-nowrap">
+                      🔴 Требует действия бухгалтера
+                    </span>
+                  </td>
                   <td className="whitespace-nowrap space-x-1">
                     <button
                       className="text-xs text-blue-600 hover:underline"
@@ -639,6 +646,7 @@ export default function ViolationsPanel({
                   placeholder="примечание…"
                 />
               </td>
+              <td></td>
               <td>
                 <button className="btn-primary" onClick={save} disabled={saving}>
                   {saving ? "…" : "Добавить"}

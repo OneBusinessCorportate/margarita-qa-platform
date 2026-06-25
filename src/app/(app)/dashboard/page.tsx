@@ -1,6 +1,6 @@
 import Link from "next/link";
 import {
-  getReport,
+  getDailyAnalytics,
   getReportSnapshot,
   listAccountants,
   listReportSnapshots,
@@ -45,11 +45,13 @@ export default async function DashboardPage({
     ? await getReportSnapshot(searchParams.snapshot)
     : null;
 
-  const [accountants, history] = await Promise.all([
+  const [accountants, history, analytics] = await Promise.all([
     listAccountants(),
     listReportSnapshots(),
+    snapshot ? Promise.resolve(null) : getDailyAnalytics(filters),
   ]);
-  const report = snapshot ? snapshot.report : await getReport(filters);
+  const report = snapshot ? snapshot.report : analytics!.report;
+  const previousReport = analytics?.previous ?? null;
   const periodLabel = snapshot ? snapshot.label : reportSnapshotLabel(filters);
 
   return (
@@ -97,7 +99,7 @@ export default async function DashboardPage({
         <p className="text-sm">Период: {periodLabel}</p>
       </div>
 
-      <ReportView report={report} />
+      <ReportView report={report} previousReport={previousReport} />
 
       {/* История отчётов — saved snapshots, newest first. */}
       <div className="card overflow-x-auto no-print">

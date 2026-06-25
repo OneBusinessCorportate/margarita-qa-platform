@@ -7,11 +7,58 @@ function isValidName(name: string): boolean {
   return !INVALID_NAMES.has(name.trim());
 }
 
-export default function ReportView({ report }: { report: DailyReport }) {
+function fmtDay(iso: string): string {
+  const [, m, d] = iso.slice(0, 10).split("-");
+  return d && m ? `${d}.${m}` : iso;
+}
+
+interface TrendInfo {
+  delta: number;
+  arrow: "up" | "down" | "flat";
+  prevDate: string;
+  reason: string;
+}
+
+function computeTrend(report: DailyReport, prev: DailyReport): TrendInfo {
+  const delta = Math.round((report.serviceQualityPct - prev.serviceQualityPct) * 10) / 10;
+  const arrow = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  const prevDate = fmtDay(prev.filters.to ?? prev.filters.from ?? "");
+
+  let reason = "";
+  if (report.criteriaAvg && prev.criteriaAvg) {
+    const slaDiff = Math.round((report.criteriaAvg.sla - prev.criteriaAvg.sla) * 100) / 100;
+    const accDiff = Math.round((report.criteriaAvg.accuracy - prev.criteriaAvg.accuracy) * 100) / 100;
+    const parts: string[] = [];
+    if (Math.abs(slaDiff) >= 0.05) {
+      parts.push(`SLA ${slaDiff > 0 ? "улучшился" : "ухудшился"} (${slaDiff > 0 ? "+" : ""}${slaDiff.toFixed(2)})`);
+    }
+    if (Math.abs(accDiff) >= 0.05) {
+      parts.push(`Точность ${accDiff > 0 ? "улучшилась" : "ухудшилась"} (${accDiff > 0 ? "+" : ""}${accDiff.toFixed(2)})`);
+    }
+    reason = parts.join(", ");
+  }
+  if (!reason) {
+    const critDiff = report.distribution["Критично"] - prev.distribution["Критично"];
+    if (critDiff > 0) reason = `критичных оценок больше на ${critDiff}`;
+    else if (critDiff < 0) reason = `критичных оценок меньше на ${Math.abs(critDiff)}`;
+  }
+
+  return { delta, arrow, prevDate, reason };
+}
+
+export default function ReportView({
+  report,
+  previousReport,
+}: {
+  report: DailyReport;
+  previousReport?: DailyReport | null;
+}) {
   const needsAttention = report.needsAttention ?? [];
   const validAccountants = report.perAccountant.filter((a) => isValidName(a.accountant));
   const managerScores = (report.managerScores ?? []).filter((a) => isValidName(a.accountant));
   const lawyerScores = (report.lawyerScores ?? []).filter((a) => isValidName(a.accountant));
+
+  const trend = previousReport ? computeTrend(report, previousReport) : null;
 
   return (
     <div className="space-y-4">
@@ -50,9 +97,29 @@ export default function ReportView({ report }: { report: DailyReport }) {
         </div>
         <div className="card p-4 flex flex-col justify-center gap-2">
           <div className="text-sm font-semibold text-gray-700">Сервис Бухгалтерии</div>
-          <div className="text-5xl font-bold tabular-nums text-blue-700">
-            {report.serviceQualityPct}%
+          <div className="flex items-baseline gap-3">
+            <div className="text-5xl font-bold tabular-nums text-blue-700">
+              {report.serviceQualityPct}%
+            </div>
+            {trend && trend.arrow !== "flat" && (
+              <span
+                className={`text-2xl font-bold ${
+                  trend.arrow === "up" ? "text-green-600" : "text-red-600"
+                }`}
+              >
+                {trend.arrow === "up" ? "▲" : "▼"}
+              </span>
+            )}
           </div>
+          {trend && (
+            <div className={`text-xs font-medium ${
+              trend.arrow === "up" ? "text-green-600" : trend.arrow === "down" ? "text-red-600" : "text-gray-500"
+            }`}>
+              {trend.arrow === "up" ? "+" : trend.arrow === "down" ? "" : ""}
+              {trend.delta !== 0 ? `${trend.delta > 0 ? "+" : ""}${trend.delta} п.п. к ${trend.prevDate}` : `без изменений к ${trend.prevDate}`}
+              {trend.reason ? ` — ${trend.reason}` : ""}
+            </div>
+          )}
           <div className="text-xs text-gray-500">средняя оценка за период</div>
           {typeof report.coveragePct === "number" && (
             <div className="text-xs text-gray-400 mt-1 border-t pt-2">

@@ -130,6 +130,8 @@ export interface DailyReport {
   perDayPerAccountant?: DayAccountantScore[];
   /** Per-day aggregate metrics (evaluated count, distribution, service %); multi-day only. */
   perDay?: DaySummary[];
+  /** Average criteria scores across accountant evaluations (accuracy and SLA, 0..5 each). */
+  criteriaAvg?: { accuracy: number; sla: number };
   tasks: {
     total: number;
     onTime: number;
@@ -342,6 +344,20 @@ export function buildReport(
     ? Math.round((totalScoreSum / evals.length) * 10) / 10
     : 0;
 
+  // Average accuracy and SLA criteria scores for trend reason analysis.
+  let accSum = 0, slaSum = 0, cCount = 0;
+  for (const e of evals) {
+    const crit = e.scores?.criteria;
+    if (crit && typeof crit.accuracy === "number" && typeof crit.sla === "number") {
+      accSum += crit.accuracy;
+      slaSum += crit.sla;
+      cCount++;
+    }
+  }
+  const criteriaAvg = cCount > 0
+    ? { accuracy: Math.round(accSum / cCount * 100) / 100, sla: Math.round(slaSum / cCount * 100) / 100 }
+    : undefined;
+
   // Critical chats — the actionable "what went wrong" list. One row per chat
   // (its LATEST evaluation per day, worst score first).
   // Use latest-per-(chat,date) so that a re-score on the same day replaces the
@@ -540,6 +556,7 @@ export function buildReport(
 
   return {
     filters,
+    criteriaAvg,
     totals: {
       activeChats,
       newChats: scopedChats.filter((c) => inRange(c.created_date, from, to))
