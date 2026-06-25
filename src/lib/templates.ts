@@ -100,15 +100,40 @@ function evalDayCount(report: DailyReport): number {
   return new Set(source.map((d) => d.date)).size;
 }
 
-/** "▲ +0.6 п.п. к 10.06" / "▼ −1.2 п.п." / "→ без изменений" vs the previous period. */
-function fmtTrend(cur: number, prev: DailyReport | null | undefined): string {
+/**
+ * "🟢▲ +0.6 п.п. к 10.06 — SLA улучшился" / "🔴▼ −1.2 п.п. — ухудшение SLA" vs the previous period.
+ * Accepts the full current report to compute criteria-based reason.
+ */
+function fmtTrend(cur: DailyReport, prev: DailyReport | null | undefined): string {
   if (!prev) return "";
+  const curPct = cur.serviceQualityPct;
   const prevPct = prev.serviceQualityPct;
-  const d = Math.round((cur - prevPct) * 10) / 10;
+  const d = Math.round((curPct - prevPct) * 10) / 10;
   const label = fmtDay(prev.filters.to ?? prev.filters.from ?? "");
   const to = label ? ` к ${label}` : "";
-  if (d > 0) return `  ▲ +${d} п.п.${to}`;
-  if (d < 0) return `  ▼ ${d} п.п.${to}`; // d already carries the minus sign
+
+  let reason = "";
+  if (cur.criteriaAvg && prev.criteriaAvg) {
+    const slaDiff = Math.round((cur.criteriaAvg.sla - prev.criteriaAvg.sla) * 100) / 100;
+    const accDiff = Math.round((cur.criteriaAvg.accuracy - prev.criteriaAvg.accuracy) * 100) / 100;
+    const parts: string[] = [];
+    if (Math.abs(slaDiff) >= 0.05) {
+      parts.push(`SLA ${slaDiff > 0 ? "улучшился" : "ухудшился"} (${slaDiff > 0 ? "+" : ""}${slaDiff.toFixed(2)})`);
+    }
+    if (Math.abs(accDiff) >= 0.05) {
+      parts.push(`Точность ${accDiff > 0 ? "улучшилась" : "ухудшилась"} (${accDiff > 0 ? "+" : ""}${accDiff.toFixed(2)})`);
+    }
+    reason = parts.join(", ");
+  }
+  if (!reason) {
+    const critDiff = cur.distribution["Критично"] - prev.distribution["Критично"];
+    if (critDiff > 0) reason = `критичных оценок больше на ${critDiff}`;
+    else if (critDiff < 0) reason = `критичных оценок меньше на ${Math.abs(critDiff)}`;
+  }
+
+  const reasonSuffix = reason ? ` — ${reason}` : "";
+  if (d > 0) return `  🟢▲ +${d} п.п.${to}${reasonSuffix}`;
+  if (d < 0) return `  🔴▼ ${d} п.п.${to}${reasonSuffix}`;
   return `  → без изменений${to}`;
 }
 
@@ -177,7 +202,7 @@ export function buildReportMessage(
   lines.push("📊 Аналитика качества бухгалтерии");
   lines.push(`🗓 ${periodHeader(report, dateISO)}`);
   lines.push("");
-  lines.push(`🏆 Сервис Бухгалтерии: ${serviceQualityPct}%${fmtTrend(serviceQualityPct, previous)}`);
+  lines.push(`🏆 Сервис Бухгалтерии: ${serviceQualityPct}%${fmtTrend(report, previous)}`);
   lines.push(
     `👁 Охват: оценено ${totals.evaluatedChats} из ${totals.activeChats} активных (${coveragePct}%)`
   );
@@ -192,9 +217,9 @@ export function buildReportMessage(
       ? scored.filter((a) => a.avgScore === topScore)
       : [];
 
-  // Weekly star counts: how many days each accountant was star this week.
+  // Weekly star counts: how many days each accountant was star this week (out of 5 max).
   const weeklyStarCounts = weeklyReport ? computeWeeklyStarCounts(weeklyReport) : new Map<string, number>();
-  const weekDays = weeklyReport ? evalDayCount(weeklyReport) : 0;
+  const weekDays = weeklyReport ? 5 : 0;
 
   if (stars.length) {
     lines.push("");
@@ -204,7 +229,7 @@ export function buildReportMessage(
     for (let i = 0; i < stars.length; i++) {
       const name = stars[i].accountant;
       const weekCount = weeklyStarCounts.get(name) ?? 1;
-      const weekSuffix = weekDays > 0 ? ` — Звезда ${weekCount} из ${weekDays} на этой неделе` : "";
+      const weekSuffix = weekDays > 0 ? ` Звезда ${weekCount} из ${weekDays} на этой неделе` : "";
       lines.push(`⭐️ ${name}: ${stars[i].avgScore}% оценка${weekSuffix}`);
       if (i < stars.length - 1) lines.push("");
     }
@@ -274,7 +299,7 @@ export function buildReportMessage(
     for (let i = 0; i < entries.length; i++) {
       const [acc, { sevMap, items }] = entries[i];
       const action = worstViolationAction(sevMap);
-      lines.push(`— ${acc}: ${action}`);
+      lines.push(`— ${acc}: ${action} — требует действия бухгалтера`);
       for (const { label, reason } of items) {
         const why = reason ? ` — ${reason}` : "";
         if (label) lines.push(`  ▸ ${label}${why}`);
@@ -424,7 +449,7 @@ export function buildWeeklyReportMessage(
     const prevPct = previous.serviceQualityPct;
     const curPct = report.serviceQualityPct;
     const delta = Math.round((curPct - prevPct) * 10) / 10;
-    const arrow = delta > 0 ? `▲ +${delta} п.п.` : delta < 0 ? `▼ ${delta} п.п.` : "→ без изменений";
+    const arrow = delta > 0 ? `🟢▲ +${delta} п.п.` : delta < 0 ? `🔴▼ ${delta} п.п.` : "→ без изменений";
     lines.push(`📈 Качество сервиса:`);
     lines.push(`  Прошлая неделя: ${prevPct}%`);
     lines.push(`  Эта неделя: ${curPct}%  ${arrow}`);
