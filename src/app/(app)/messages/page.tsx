@@ -1,6 +1,7 @@
 import { getDailyAnalytics, getReport, listAccountants, listViolations } from "@/lib/repo";
 import { mondayOf } from "@/lib/scoring";
 import type { DaySummary } from "@/lib/report";
+import { addDays } from "@/lib/report";
 import {
   accountantsToMessage,
   buildAccountantMessage,
@@ -19,13 +20,12 @@ function fmtDay(iso: string): string {
   return d && m ? `${d}.${m}.${y}` : iso;
 }
 
-function isMonSunWeek(from?: string, to?: string): boolean {
-  if (!from || !to) return false;
+/** True for any multi-day period that starts on Monday (full week or partial). */
+function isWeekFromMonday(from?: string, to?: string): boolean {
+  if (!from || !to || from === to) return false;
   try {
     const f = new Date(from + "T00:00:00Z");
-    const t = new Date(to + "T00:00:00Z");
-    const days = Math.round((t.getTime() - f.getTime()) / 86400000);
-    return days === 6 && f.getUTCDay() === 1;
+    return f.getUTCDay() === 1;
   } catch { return false; }
 }
 
@@ -63,9 +63,11 @@ export default async function MessagesPage({
     client?: string;
   };
 }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const thisMonday = mondayOf(today);
   const filters = {
-    from: searchParams.from || undefined,
-    to: searchParams.to || undefined,
+    from: searchParams.from || thisMonday,
+    to: searchParams.to || today,
     accountant: searchParams.accountant || undefined,
     client: searchParams.client || undefined,
   };
@@ -112,9 +114,26 @@ export default async function MessagesPage({
     waitingCount: (report.unansweredChats ?? []).filter((c) => c.accountant === name).length,
   }));
 
-  const isWeek = isMonSunWeek(resolved.from, resolved.to);
+  const isWeek = isWeekFromMonday(resolved.from, resolved.to);
   const isMultiDay = resolved.from !== resolved.to;
-  const weeklyMessage = isWeek ? buildWeeklyReportMessage(report, previous ?? null) : null;
+
+  // For the weekly summary, compare against the previous full Mon–Sun week
+  // regardless of how many days the current window covers.
+  const prevWeekReport = isWeek
+    ? await getReport({
+        from: addDays(resolved.from, -7),
+        to: addDays(resolved.from, -1),
+        accountant: filters.accountant,
+      })
+    : null;
+  const weeklyMessage = isWeek
+    ? buildWeeklyReportMessage(
+        report,
+        prevWeekReport && prevWeekReport.totals.evaluatedChats > 0
+          ? prevWeekReport
+          : previous ?? null
+      )
+    : null;
 
   // ── Spreadsheet grid data (unified for single-day and multi-day) ───────────
   const periodDates = rangeDates(resolved.from, resolved.to);
@@ -184,7 +203,7 @@ export default async function MessagesPage({
         </pre>
       </div>
 
-      {/* Weekly report — shown for full Mon–Sun weeks */}
+      {/* Weekly report — shown for any period starting on Monday */}
       {isWeek && weeklyMessage && (
         <div className="card p-3 space-y-2">
           <div className="flex items-center justify-between">
