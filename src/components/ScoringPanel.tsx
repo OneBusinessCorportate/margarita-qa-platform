@@ -2254,6 +2254,7 @@ function AccountantMultiSelect({
   onChange: (next: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [openUp, setOpenUp] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -2263,6 +2264,13 @@ function AccountantMultiSelect({
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+
+  useEffect(() => {
+    if (open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setOpenUp(window.innerHeight - rect.bottom < 320);
+    }
+  }, [open]);
 
   const toggle = (name: string) =>
     onChange(
@@ -2289,7 +2297,7 @@ function AccountantMultiSelect({
         <span className="text-gray-400">▾</span>
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 w-64 max-h-72 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg p-2">
+        <div className={`absolute z-20 w-64 max-h-72 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg p-2 ${openUp ? "bottom-full mb-1" : "mt-1"}`}>
           {selected.length > 0 && (
             <button
               className="text-xs text-blue-600 mb-1 px-1"
