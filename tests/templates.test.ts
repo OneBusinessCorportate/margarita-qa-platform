@@ -22,14 +22,18 @@ test("report message contains the headline metrics", () => {
   assert.doesNotMatch(msg, /Задачи Бухгалтерии:/);
 });
 
-test("report message shows coverage and stars, no critical-chats section", () => {
+test("report message shows coverage, accountant results, and critical chats", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report);
   assert.match(msg, /👁 Охват:/);
   assert.doesNotMatch(msg, /Без ответа клиенту/);
-  // Critical chats and distribution are no longer in the report message.
-  assert.doesNotMatch(msg, /⛔️ Критичные чаты/);
   assert.doesNotMatch(msg, /проблемных:/);
+  // Full accountant roster is shown.
+  assert.match(msg, /👥 Результаты по бухгалтерам:/);
+  // Critical chats with names are shown when present.
+  if (report.criticalChats.length > 0) {
+    assert.match(msg, /⛔️ Критичные чаты/);
+  }
 });
 
 test("report message shows ▲/▼ trend vs the previous period", () => {

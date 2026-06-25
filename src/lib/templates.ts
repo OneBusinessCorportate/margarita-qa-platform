@@ -160,16 +160,57 @@ export function buildReportMessage(
     }
   }
 
+  // ── All accountant results ─────────────────────────────────────────────────
+  if (scored.length > 0) {
+    const sorted = [...scored].sort((a, b) => b.avgScore - a.avgScore);
+    lines.push("");
+    lines.push("👥 Результаты по бухгалтерам:");
+    lines.push("");
+    for (const a of sorted) {
+      const emoji = BAND_EMOJI[bandFor(a.avgScore)];
+      lines.push(`${emoji} ${a.accountant}: ${a.avgScore}% (${a.count} чатов)`);
+    }
+  }
+
+  // ── Manager results ────────────────────────────────────────────────────────
+  const mScored = (report.managerScores ?? []).filter((a) => a.count > 0 && a.avgScore >= 0);
+  if (mScored.length > 0) {
+    lines.push("");
+    lines.push("👔 Результаты менеджеров:");
+    lines.push("");
+    for (const a of [...mScored].sort((a, b) => b.avgScore - a.avgScore)) {
+      const emoji = BAND_EMOJI[bandFor(a.avgScore)];
+      lines.push(`${emoji} ${a.accountant}: ${a.avgScore}% (${a.count} чатов)`);
+    }
+  }
+
+  // ── Critical chats from evaluations ───────────────────────────────────────
+  const critChats = report.criticalChats ?? [];
+  if (critChats.length > 0) {
+    lines.push("");
+    lines.push(`⛔️ Критичные чаты (${critChats.length}):`);
+    lines.push("");
+    for (const c of critChats) {
+      const who = c.accountant ? ` (${c.accountant})` : "";
+      const why = c.reasons.length ? ` — ${c.reasons.join("; ")}` : ` (оценка ${c.score}%)`;
+      lines.push(`• ${chatLabel(c.chat_agr_no, c.chat_name)}${who}${why}`);
+    }
+  }
+
   // ── Violations ─────────────────────────────────────────────────────────────
   const withAcc = violations.filter((v) => v.accountant);
   if (withAcc.length) {
-    const byAcc = new Map<string, Map<string, number>>();
+    const byAcc = new Map<string, { sevMap: Map<string, number>; chats: string[] }>();
     for (const v of withAcc) {
       const acc = v.accountant as string;
       const sev = v.severity ?? "среднее";
-      const m = byAcc.get(acc) ?? new Map<string, number>();
-      m.set(sev, (m.get(sev) ?? 0) + 1);
-      byAcc.set(acc, m);
+      const entry = byAcc.get(acc) ?? { sevMap: new Map<string, number>(), chats: [] };
+      entry.sevMap.set(sev, (entry.sevMap.get(sev) ?? 0) + 1);
+      if (v.chat_agr_no) {
+        const label = chatLabel(v.chat_agr_no, v.client);
+        if (!entry.chats.includes(label)) entry.chats.push(label);
+      }
+      byAcc.set(acc, entry);
     }
     lines.push("");
     lines.push("");
@@ -177,12 +218,15 @@ export function buildReportMessage(
     lines.push("");
     const entries = [...byAcc.entries()];
     for (let i = 0; i < entries.length; i++) {
-      const [acc, sevMap] = entries[i];
+      const [acc, { sevMap, chats }] = entries[i];
       const action = worstViolationAction(sevMap);
       const parts = [...sevMap.entries()]
         .map(([s, n]) => `${n} ${s.toLowerCase()}`)
         .join(", ");
       lines.push(`— ${acc}: ${action} (${parts}) `);
+      for (const chatLbl of chats) {
+        lines.push(`  ▸ ${chatLbl}`);
+      }
       if (i < entries.length - 1) lines.push("");
     }
   }
