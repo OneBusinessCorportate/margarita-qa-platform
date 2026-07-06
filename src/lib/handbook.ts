@@ -38,9 +38,9 @@ export const GRADE_LADDERS: GradeLadder[] = [
     ],
     grades: [
       { name: "Счетовод", salary: 150_000, tenure: "Полгода" },
-      { name: "Младший бухгалтер", salary: 250_000 },
-      { name: "Бухгалтер", salary: 350_000 },
-      { name: "Ведущий бухгалтер", salary: 400_000 },
+      { name: "Младший бухгалтер", salary: 200_000 },
+      { name: "Бухгалтер", salary: 200_000 },
+      { name: "Ведущий бухгалтер", salary: 350_000 },
       { name: "Тимлид", salary: 0, note: "Оклад по договорённости" },
     ],
   },
@@ -99,7 +99,7 @@ export interface BonusRule {
 export const BONUS_RULES: BonusRule[] = [
   {
     name: "Квартальный бонус (Бухгалтерия)",
-    amount: "10% от оклада",
+    amount: "10% от оклада + 1 day off за счёт компании",
     period: "Ежеквартально",
     conditions: [
       "Чаты / Сервис ≥ 90%",
@@ -116,6 +116,24 @@ export const BONUS_RULES: BonusRule[] = [
       "Автоматическая ежегодная индексация",
       "Не более 20% от бюджета закреплённых клиентов",
     ],
+  },
+  {
+    name: "Звезда дня",
+    amount: "Звезда дня",
+    period: "День",
+    conditions: ["Сервис > 95%"],
+  },
+  {
+    name: "Звезда недели",
+    amount: "Торт / Пиво",
+    period: "Неделя",
+    conditions: ["5 звёзд дня"],
+  },
+  {
+    name: "Звезда месяца",
+    amount: "Day off",
+    period: "Месяц",
+    conditions: ["2 звезды недели"],
   },
   {
     name: "Бонус за UPSALE (Регистрация)",
