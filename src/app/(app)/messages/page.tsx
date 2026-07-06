@@ -137,7 +137,14 @@ export default async function MessagesPage({
     monthFineTotals,
     roster: rosterNames,
   });
-  const isFriday = new Date(resolved.to + "T00:00:00Z").getUTCDay() === 5;
+  // The reminder badge must reflect the ACTUAL calendar day (Yerevan time),
+  // not resolved.to — which defaults to the latest evaluated day and can lag
+  // behind if nobody has scored anything yet today (e.g. still shows last
+  // Friday on Monday morning).
+  const nowYerevan = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Yerevan" })
+  );
+  const isFriday = nowYerevan.getDay() === 5;
   const botReady = telegramConfigured();
 
   const periodLabel =
