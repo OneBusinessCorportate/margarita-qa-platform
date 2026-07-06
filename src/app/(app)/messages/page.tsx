@@ -1,4 +1,10 @@
-import { getDailyAnalytics, getReport, listAccountants, listViolations } from "@/lib/repo";
+import {
+  countClientRequests,
+  getDailyAnalytics,
+  getReport,
+  listAccountants,
+  listViolations,
+} from "@/lib/repo";
 import { mondayOf } from "@/lib/scoring";
 import { addDays, type DaySummary } from "@/lib/report";
 import {
@@ -81,8 +87,9 @@ export default async function MessagesPage({
   const isWeek = isWeekFromMonday(resolved.from, resolved.to);
   const isMultiDay = resolved.from !== resolved.to;
 
-  // Fetch violations, weekly-star report, and previous-week baseline in parallel.
-  const [violations, weeklyReport, prevWeekReport] = await Promise.all([
+  // Fetch violations, weekly-star report, previous-week baseline and
+  // client-request counts in parallel.
+  const [violations, weeklyReport, prevWeekReport, requests] = await Promise.all([
     listViolations({ from: resolved.from, to: resolved.to, accountant: filters.accountant }),
     isAlreadyWeekStart && isMultiDay
       ? Promise.resolve(report)
@@ -94,17 +101,23 @@ export default async function MessagesPage({
           accountant: filters.accountant,
         })
       : Promise.resolve(null),
+    countClientRequests(resolved.from, resolved.to),
   ]);
 
   const canonicalAccountants = allAccountants.filter(
     (a) => a.active && a.role === "accountant"
   );
+  const rosterNames = canonicalAccountants.map((a) => a.name);
+  const requestDays = rangeDates(resolved.from, resolved.to).length;
 
   const reportMessage = buildReportMessage(report, {
     violations,
     previous,
     weeklyReport,
     sheetUrl: process.env.REPORT_SHEET_URL,
+    roster: rosterNames,
+    requests,
+    requestDays,
   });
   const botReady = telegramConfigured();
 
@@ -190,7 +203,17 @@ export default async function MessagesPage({
           <div className="text-sm font-medium">Аналитика качества</div>
           <div className="flex gap-2">
             <CopyButton label="Копировать отчёт" className="btn-primary" text={reportMessage} />
-            <SendTelegramButton text={reportMessage} configured={botReady} />
+            <a
+              className="btn-secondary"
+              href={`/api/report/pdf?from=${resolved.from}&to=${resolved.to}`}
+            >
+              📄 PDF
+            </a>
+            <SendTelegramButton
+              text={reportMessage}
+              configured={botReady}
+              pdfPeriod={{ from: resolved.from, to: resolved.to }}
+            />
           </div>
         </div>
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">

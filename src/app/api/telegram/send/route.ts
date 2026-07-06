@@ -1,13 +1,31 @@
 import { NextResponse } from "next/server";
-import { sendToTelegram } from "@/lib/telegram";
+import { sendDocumentToTelegram, sendToTelegram } from "@/lib/telegram";
+import { assembleReport } from "@/lib/report-data";
+import { buildReportPdf } from "@/lib/report-pdf";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
+/**
+ * POST /api/telegram/send
+ * Body: { text, pdf?: { from?: "YYYY-MM-DD", to?: "YYYY-MM-DD" } }
+ *
+ * Sends the message; when `pdf` is present, also builds the analytics PDF for
+ * that window and sends it as a document right after (Telegram captions are
+ * capped at 1024 chars, so the long text goes as a normal message first).
+ */
 export async function POST(req: Request) {
   let text = "";
+  let pdf: { from?: string; to?: string } | null = null;
   try {
     const body = await req.json();
     text = String(body.text ?? "");
+    if (body.pdf && typeof body.pdf === "object") {
+      pdf = {
+        from: typeof body.pdf.from === "string" ? body.pdf.from : undefined,
+        to: typeof body.pdf.to === "string" ? body.pdf.to : undefined,
+      };
+    }
   } catch {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
@@ -18,5 +36,35 @@ export async function POST(req: Request) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 502 });
   }
+
+  if (pdf) {
+    try {
+      const { report, previous, resolved, violations, roster, requests, requestDays } =
+        await assembleReport(pdf.from, pdf.to);
+      const bytes = await buildReportPdf(report, {
+        previous,
+        violations,
+        roster,
+        requests,
+        requestDays,
+      });
+      const docResult = await sendDocumentToTelegram(
+        `report-${resolved.from}_${resolved.to}.pdf`,
+        bytes,
+        "📎 Полный отчёт с анализом"
+      );
+      if (!docResult.ok) {
+        // The text already went out — report the attachment failure without
+        // failing the whole send.
+        return NextResponse.json({ ok: true, pdf_error: docResult.error });
+      }
+    } catch (e) {
+      return NextResponse.json({
+        ok: true,
+        pdf_error: e instanceof Error ? e.message : "Не удалось сформировать PDF",
+      });
+    }
+  }
+
   return NextResponse.json({ ok: true });
 }

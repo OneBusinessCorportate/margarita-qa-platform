@@ -155,6 +155,67 @@ export async function listChatMailings(period: string): Promise<ChatMailing[]> {
   return (data ?? []) as ChatMailing[];
 }
 
+/**
+ * Count client messages ("запросы") per accountant over an inclusive ISO date
+ * window, Yerevan days. Feeds the «Кол-во запросов за день» report section:
+ * every client message in a chat counts toward the chat's assigned accountant.
+ * Returns totals — the caller divides by the day count for a per-day figure.
+ * Empty on mock store / read errors (the report section is then omitted).
+ */
+export async function countClientRequests(
+  from: string,
+  to: string
+): Promise<{ accountant: string; count: number }[]> {
+  const sb = getServiceClient();
+  if (!sb) return [];
+
+  const { data: chats, error: chatsErr } = await sb
+    .from(TABLES.chats)
+    .select("agr_no, chat_link, accountant")
+    .not("chat_link", "is", null);
+  if (chatsErr) {
+    console.warn(`countClientRequests: ${chatsErr.message}`);
+    return [];
+  }
+  const chatIdToAcc = new Map<string, string>();
+  for (const c of chats ?? []) {
+    const cid = telegramChatId(c.chat_link as string | null);
+    if (cid && c.accountant) chatIdToAcc.set(cid, c.accountant as string);
+  }
+  if (chatIdToAcc.size === 0) return [];
+
+  // Armenia is UTC+4 (no DST): Yerevan midnight = UTC date minus 4 h.
+  const offsetMs = 4 * 60 * 60 * 1000;
+  const start = new Date(new Date(from + "T00:00:00Z").getTime() - offsetMs).toISOString();
+  const endExclusive = new Date(
+    new Date(to + "T00:00:00Z").getTime() + 24 * 60 * 60 * 1000 - offsetMs
+  ).toISOString();
+
+  const counts = new Map<string, number>();
+  const PAGE = 1000;
+  for (let fromRow = 0; ; fromRow += PAGE) {
+    const { data, error } = await sb
+      .from("messages")
+      .select("chat_id")
+      .eq("sender_role", "client")
+      .gte("created_at", start)
+      .lt("created_at", endExclusive)
+      .range(fromRow, fromRow + PAGE - 1);
+    if (error) {
+      console.warn(`countClientRequests: ${error.message}`);
+      return [];
+    }
+    for (const m of data ?? []) {
+      const acc = chatIdToAcc.get(String(m.chat_id));
+      if (acc) counts.set(acc, (counts.get(acc) ?? 0) + 1);
+    }
+    if ((data ?? []).length < PAGE) break;
+  }
+  return [...counts.entries()]
+    .map(([accountant, count]) => ({ accountant, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
 export async function getChat(agrNo: string): Promise<Chat | null> {
   const sb = getServiceClient();
   if (sb) {

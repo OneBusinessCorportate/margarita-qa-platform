@@ -22,7 +22,7 @@ test("report message contains the headline metrics", () => {
   assert.doesNotMatch(msg, /Задачи Бухгалтерии:/);
 });
 
-test("report message shows coverage, accountant results, and critical chats", () => {
+test("report message shows coverage and accountant results, no critical-chat block", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report);
   assert.match(msg, /👁 Охват:/);
@@ -30,10 +30,54 @@ test("report message shows coverage, accountant results, and critical chats", ()
   assert.doesNotMatch(msg, /проблемных:/);
   // Full accountant roster is shown.
   assert.match(msg, /👥 Результаты по бухгалтерам:/);
-  // Critical chats with names are shown when present.
-  if (report.criticalChats.length > 0) {
-    assert.match(msg, /⛔️ Критичные чаты/);
-  }
+  // The detailed critical-chat list lives in the PDF now, not in the message.
+  assert.doesNotMatch(msg, /⛔️ Критичные чаты/);
+});
+
+test("report message people sections honour the roster filter", () => {
+  const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  const scored = report.perAccountant.filter((a) => a.count > 0 && a.avgScore >= 0);
+  assert.ok(scored.length >= 2, "seed data should have at least two scored accountants");
+  const kept = scored[0].accountant;
+  const dropped = scored[1].accountant;
+  const msg = buildReportMessage(report, { roster: [kept] });
+  assert.match(msg, new RegExp(`${kept}: `));
+  assert.doesNotMatch(msg, new RegExp(`${dropped}: `));
+});
+
+test("report message shows requests per day for roster accountants", () => {
+  const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  const msg = buildReportMessage(report, {
+    requests: [
+      { accountant: "Անի", count: 198 },
+      { accountant: "-", count: 50 },
+    ],
+    requestDays: 2,
+    roster: ["Անի"],
+  });
+  assert.match(msg, /📨 Кол-во запросов за день:/);
+  assert.match(msg, /Անի — 99/); // 198 over 2 days
+  assert.doesNotMatch(msg, /- — 25/); // non-roster name is skipped
+});
+
+test("report message groups violations with severity counts and fine totals", () => {
+  const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  const msg = buildReportMessage(report, {
+    violations: [
+      {
+        id: "1", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: null,
+        client: null, severity: "Среднее", violation_type: null, gross: null,
+        sanction: 10000, note: null, created_at: "2026-06-15T10:00:00Z",
+      },
+      {
+        id: "2", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: null,
+        client: null, severity: "Среднее", violation_type: null, gross: null,
+        sanction: null, note: null, created_at: "2026-06-15T11:00:00Z",
+      },
+    ],
+  });
+  assert.match(msg, /Нарушения:/);
+  assert.match(msg, /— Լիլիթ: Предупреждение \(2 средних\) \/итого сумма штрафа 10 000 драм\//);
 });
 
 test("report message shows ▲/▼ trend vs the previous period", () => {

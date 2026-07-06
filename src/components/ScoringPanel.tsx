@@ -1395,6 +1395,29 @@ function ChatScoreRow({
       const saved: Evaluation = await res.json();
       setSavedId(saved.id);
       onSaved(saved);
+      // Persist Margarita's mailing corrections as MANUAL rows in
+      // mqa_chat_mailings: any status she saved that differs from the
+      // auto-detected value is her judgement and must survive future
+      // auto-detect runs, page reloads and other chats' rows (her complaint:
+      // «вношу данные вручную — они не сохраняются»). «Предстоящая» is the
+      // neutral waiting default and «Inactive» follows the client flag —
+      // neither is a correction, so they never lock the cell.
+      const mailingPeriod = date.slice(0, 7).replace("-", "");
+      for (const cat of MONTHLY_CATEGORIES) {
+        const status = monthly[cat.id]?.status ?? "";
+        if (!status || status === "Предстоящая" || status === "Inactive") continue;
+        if ((detectedStatuses[cat.id] ?? "") === status) continue;
+        fetch("/api/mailings/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agr_no: chat.agr_no,
+            period: mailingPeriod,
+            category: cat.id,
+            status,
+          }),
+        }).catch(() => {/* best-effort */});
+      }
       // Also update the chat's assigned accountant when it changed — so the
       // change persists across all views, not just this evaluation row.
       const newAcc = accountant || null;

@@ -6,10 +6,13 @@ export default function SendTelegramButton({
   text,
   configured,
   label = "Отправить в Telegram",
+  pdfPeriod,
 }: {
   text: string;
   configured: boolean;
   label?: string;
+  /** When set, the analytics PDF for this window is attached after the message. */
+  pdfPeriod?: { from: string; to: string };
 }) {
   const [state, setState] = useState<"idle" | "sending" | "ok" | "err">("idle");
   const [msg, setMsg] = useState<string | null>(null);
@@ -21,12 +24,18 @@ export default function SendTelegramButton({
       const res = await fetch("/api/telegram/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, ...(pdfPeriod ? { pdf: pdfPeriod } : {}) }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         setState("err");
         setMsg(d.error || "Ошибка отправки");
+        return;
+      }
+      const d = await res.json().catch(() => ({}));
+      if (d.pdf_error) {
+        setState("err");
+        setMsg(`Сообщение ушло, но PDF не отправился: ${d.pdf_error}`);
         return;
       }
       setState("ok");
