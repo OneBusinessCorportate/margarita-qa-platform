@@ -161,6 +161,10 @@ export async function runMailingsDetection(periodArg?: string): Promise<DetectRu
       .gte("created_at", periodStart)
       .lt("created_at", periodEnd)
       .not("text", "is", null)
+      // Explicit order — .range() pagination is only stable with one, and the
+      // AI-fallback cap below relies on newest-first to protect recent (e.g.
+      // "yesterday's") messages from being crowded out by older backlog.
+      .order("created_at", { ascending: false })
       .range(from, from + PAGE - 1);
     if (error) {
       pageError = error.message;
@@ -206,7 +210,10 @@ export async function runMailingsDetection(periodArg?: string): Promise<DetectRu
     }
   }
 
-  // AI fallback: classify unmatched messages in batches (cap at 200 to stay fast).
+  // AI fallback: classify unmatched messages in batches (cap at 200 to stay
+  // fast). Messages are fetched newest-first, so aiCandidates is already in
+  // that order — slicing the front keeps the MOST RECENT unmatched messages
+  // (e.g. yesterday's) and drops older backlog, instead of the reverse.
   let aiCount = 0;
   const aiCapped = aiCandidates.slice(0, 200);
   if (aiCapped.length > 0) {

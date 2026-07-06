@@ -169,6 +169,61 @@ describe("detectAllSignals — Armenian req excludes done-action words", () => {
   });
 });
 
+describe("detectAllSignals — expanded verb coverage", () => {
+  it("main_taxes done: 'подал декларацию' (подал, not covered by подан)", () => {
+    const sigs = detectAllSignals("Подал декларацию по налогу на прибыль.");
+    assert.ok(sigs.some((s) => s.category === "main_taxes" && s.type === "done"));
+  });
+
+  it("main_taxes done: 'отчитался по налогам'", () => {
+    const sigs = detectAllSignals("Отчитался по налогам за квартал.");
+    assert.ok(sigs.some((s) => s.category === "main_taxes" && s.type === "done"));
+  });
+
+  it("salary done: 'выслал ведомость клиенту'", () => {
+    const sigs = detectAllSignals("Выслал ведомость по зарплате клиенту.");
+    assert.ok(sigs.some((s) => s.category === "salary" && s.type === "done"));
+  });
+
+  it("salary req: 'жду ведомость от клиента' still req, not done", () => {
+    const sigs = detectAllSignals("Жду ведомость по зарплате от клиента.");
+    assert.ok(sigs.some((s) => s.category === "salary" && s.type === "req"));
+    assert.ok(!sigs.some((s) => s.category === "salary" && s.type === "done"));
+  });
+
+  it("primary_docs done: 'переслал документы бухгалтеру'", () => {
+    const sigs = detectAllSignals("Переслал первичные документы бухгалтеру.");
+    assert.ok(sigs.some((s) => s.category === "primary_docs" && s.type === "done"));
+  });
+
+  it("'отправьте документы' (imperative request) fires req, NOT done", () => {
+    const sigs = detectAllSignals("Отправьте, пожалуйста, первичные документы.");
+    assert.ok(sigs.some((s) => s.category === "primary_docs" && s.type === "req"));
+    assert.ok(!sigs.some((s) => s.category === "primary_docs" && s.type === "done"));
+  });
+
+  it("'отправьте ведомость' (imperative request) fires salary req, NOT done", () => {
+    const sigs = detectAllSignals("Отправьте ведомость по зарплате, пожалуйста.");
+    assert.ok(sigs.some((s) => s.category === "salary" && s.type === "req"));
+    assert.ok(!sigs.some((s) => s.category === "salary" && s.type === "done"));
+  });
+
+  it("debts paid: passive 'долг оплачен'", () => {
+    const sigs = detectAllSignals("Долг оплачен полностью.");
+    assert.ok(sigs.some((s) => s.category === "debts" && s.type === "paid"));
+  });
+
+  it("debts paid: 'задолженность выплатила'", () => {
+    const sigs = detectAllSignals("Клиентка задолженность выплатила.");
+    assert.ok(sigs.some((s) => s.category === "debts" && s.type === "paid"));
+  });
+
+  it("debts call: 'созвонились по долгу'", () => {
+    const sigs = detectAllSignals("Созвонились с клиентом по долгу.");
+    assert.ok(sigs.some((s) => s.category === "debts" && s.type === "call"));
+  });
+});
+
 describe("deriveStatus — additional edge cases", () => {
   it("debts: call takes priority over req>=2", () => {
     assert.equal(deriveStatus("debts", { done: 0, req: 2, call: 1, paid: 0 }), "1-й позвонил");
