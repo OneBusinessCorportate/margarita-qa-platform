@@ -10,6 +10,7 @@ import { addDays, type DaySummary } from "@/lib/report";
 import {
   accountantsToMessage,
   buildAccountantMessage,
+  buildFridayFinesMessage,
   buildReportMessage,
   buildWeeklyReportMessage,
   telegramConfigured,
@@ -87,21 +88,25 @@ export default async function MessagesPage({
   const isWeek = isWeekFromMonday(resolved.from, resolved.to);
   const isMultiDay = resolved.from !== resolved.to;
 
-  // Fetch violations (window + month-to-date for the «итого» fine totals),
-  // previous-week baseline and client-request counts in parallel.
+  // Fetch violations (window + week for the пятничный отчёт + month-to-date
+  // for the «итого» fine totals), previous-week baseline and client-request
+  // counts in parallel.
   const monthStart = `${resolved.to.slice(0, 7)}-01`;
-  const [violations, monthViolations, prevWeekReport, requests] = await Promise.all([
-    listViolations({ from: resolved.from, to: resolved.to, accountant: filters.accountant }),
-    listViolations({ from: monthStart, to: resolved.to, accountant: filters.accountant }),
-    isWeek
-      ? getReport({
-          from: addDays(resolved.from, -7),
-          to: addDays(resolved.from, -1),
-          accountant: filters.accountant,
-        })
-      : Promise.resolve(null),
-    countClientRequests(resolved.from, resolved.to),
-  ]);
+  const weekStart = mondayOf(resolved.to);
+  const [violations, weekViolations, monthViolations, prevWeekReport, requests] =
+    await Promise.all([
+      listViolations({ from: resolved.from, to: resolved.to, accountant: filters.accountant }),
+      listViolations({ from: weekStart, to: resolved.to, accountant: filters.accountant }),
+      listViolations({ from: monthStart, to: resolved.to, accountant: filters.accountant }),
+      isWeek
+        ? getReport({
+            from: addDays(resolved.from, -7),
+            to: addDays(resolved.from, -1),
+            accountant: filters.accountant,
+          })
+        : Promise.resolve(null),
+      countClientRequests(resolved.from, resolved.to),
+    ]);
 
   const canonicalAccountants = allAccountants.filter(
     (a) => a.active && a.role === "accountant"
@@ -124,6 +129,15 @@ export default async function MessagesPage({
     requestDays,
     monthFineTotals,
   });
+
+  // «Пятничный отчёт» — the weekly fines review (Mon → the reported day).
+  const fridayMessage = buildFridayFinesMessage(weekViolations, {
+    weekFrom: weekStart,
+    weekTo: resolved.to,
+    monthFineTotals,
+    roster: rosterNames,
+  });
+  const isFriday = new Date(resolved.to + "T00:00:00Z").getUTCDay() === 5;
   const botReady = telegramConfigured();
 
   const periodLabel =
@@ -222,6 +236,31 @@ export default async function MessagesPage({
         </div>
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {reportMessage}
+        </pre>
+      </div>
+
+      {/* Friday fines review — weekly штрафы per person, Margarita's control list */}
+      <div className="card p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">
+            Пятничный отчёт по штрафам
+            {isFriday && (
+              <span className="ml-2 inline-block rounded bg-indigo-100 text-indigo-700 font-semibold px-1.5 py-0.5 text-[11px]">
+                сегодня пятница — пора отправлять
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <CopyButton label="Копировать" className="btn-primary" text={fridayMessage} />
+            <SendTelegramButton
+              text={fridayMessage}
+              configured={botReady}
+              label="Отправить в Telegram"
+            />
+          </div>
+        </div>
+        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
+{fridayMessage}
         </pre>
       </div>
 

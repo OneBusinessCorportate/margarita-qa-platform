@@ -240,6 +240,112 @@ export function buildReportMessage(
   return lines.join("\n");
 }
 
+/** "1 нарушение / 3 нарушения / 7 нарушений" — Russian count form. */
+function fmtViolationCount(n: number): string {
+  const mod100 = n % 100;
+  const mod10 = n % 10;
+  if (mod10 === 1 && mod100 !== 11) return `${n} нарушение`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} нарушения`;
+  return `${n} нарушений`;
+}
+
+export interface FridayFinesOptions {
+  /** ISO Monday and Friday (or today) of the reported week. */
+  weekFrom: string;
+  weekTo: string;
+  /** Month-to-date fine totals per accountant («итого за месяц»). */
+  monthFineTotals?: Record<string, number>;
+  /** Canonical roster — used for the «Без нарушений» line. */
+  roster?: string[];
+}
+
+/**
+ * «Пятничный отчёт» — the weekly fines review Margarita sends on Fridays so
+ * everyone sees their штрафы for the week and she can control the totals:
+ *
+ *   Пятничный отчет по штрафам
+ *
+ *   Неделя: 30.06 — 04.07
+ *
+ *   — Лилит: 1 000 др + Предупреждение (3 средних) /итого за месяц 7 000 драм/
+ *   — Аваг: 2 000 др + Предупреждение (1 среднее) /итого за месяц 20 000 драм/ причина
+ *
+ *   Итого за неделю: 4 нарушения, штрафы 3 000 драм
+ *
+ *   Без нарушений: ✅ Имя, Имя, Имя
+ */
+export function buildFridayFinesMessage(
+  weekViolations: Violation[],
+  options: FridayFinesOptions
+): string {
+  const { weekFrom, weekTo, monthFineTotals = {}, roster = [] } = options;
+  const lines: string[] = [];
+
+  lines.push("Пятничный отчет по штрафам");
+  lines.push("");
+  lines.push(`Неделя: ${fmtDay(weekFrom)} — ${fmtDay(weekTo)}`);
+
+  const withAcc = weekViolations.filter((v) => v.accountant);
+  const byAcc = new Map<
+    string,
+    { sevMap: Map<string, number>; fine: number; count: number; reasons: string[] }
+  >();
+  for (const v of withAcc) {
+    const acc = v.accountant as string;
+    const sev = v.severity ?? "среднее";
+    const entry =
+      byAcc.get(acc) ??
+      { sevMap: new Map<string, number>(), fine: 0, count: 0, reasons: [] };
+    entry.sevMap.set(sev, (entry.sevMap.get(sev) ?? 0) + 1);
+    entry.count += 1;
+    if (typeof v.sanction === "number" && v.sanction > 0) entry.fine += v.sanction;
+    const reason = (v.violation_type ?? "").trim();
+    if (reason && !entry.reasons.includes(reason)) entry.reasons.push(reason);
+    byAcc.set(acc, entry);
+  }
+
+  if (byAcc.size === 0) {
+    lines.push("");
+    lines.push("На этой неделе нарушений нет ✅");
+  } else {
+    lines.push("");
+    // Biggest weekly fine first — the people Margarita should look at.
+    const entries = [...byAcc.entries()].sort(
+      (a, b) => b[1].fine - a[1].fine || b[1].count - a[1].count
+    );
+    let totalFine = 0;
+    let totalCount = 0;
+    for (const [acc, { sevMap, fine, count, reasons }] of entries) {
+      totalFine += fine;
+      totalCount += count;
+      const action = worstViolationAction(sevMap);
+      const sevParts = [...sevMap.entries()]
+        .map(([sev, n]) => fmtSeverityCount(sev, n))
+        .join(", ");
+      const finePrefix = fine > 0 ? `${fmtDram(fine)} др + ` : "";
+      const monthTotal = monthFineTotals[acc] ?? fine;
+      const totalSuffix =
+        monthTotal > 0 ? ` /итого за месяц ${fmtDram(monthTotal)} драм/` : "";
+      const reasonSuffix = reasons.length ? ` ${reasons.join("; ")}` : "";
+      lines.push(`— ${acc}: ${finePrefix}${action} (${sevParts})${totalSuffix}${reasonSuffix}`);
+    }
+    lines.push("");
+    lines.push(
+      `Итого за неделю: ${fmtViolationCount(totalCount)}, штрафы ${fmtDram(totalFine)} драм`
+    );
+  }
+
+  // Who kept the week clean — the positive side of the review.
+  const violators = new Set(byAcc.keys());
+  const clean = roster.filter((name) => !violators.has(name));
+  if (clean.length > 0) {
+    lines.push("");
+    lines.push(`Без нарушений: ✅ ${clean.join(", ")}`);
+  }
+
+  return lines.join("\n");
+}
+
 /** Append "    + ещё N" when a list was truncated to `shown`. */
 function overflow(lines: string[], total: number, shown: number): void {
   if (total > shown) lines.push(`    + ещё ${total - shown}`);
