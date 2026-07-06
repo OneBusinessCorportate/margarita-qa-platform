@@ -127,7 +127,6 @@ export default async function MessagesPage({
     roster: rosterNames,
     requests,
     requestDays,
-    monthFineTotals,
   });
 
   // «Пятничный отчёт» — the weekly fines review (Mon → the reported day).
@@ -165,7 +164,8 @@ export default async function MessagesPage({
         report,
         prevWeekReport && prevWeekReport.totals.evaluatedChats > 0
           ? prevWeekReport
-          : previous ?? null
+          : previous ?? null,
+        { roster: rosterNames }
       )
     : null;
 

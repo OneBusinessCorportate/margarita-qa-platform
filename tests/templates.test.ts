@@ -6,9 +6,11 @@ import {
   buildFridayFinesMessage,
   buildReportMessage,
   buildScoreMessage,
+  buildWeeklyReportMessage,
   surveyInviteAm,
   surveyInviteRu,
 } from "../src/lib/templates";
+import type { DailyReport } from "../src/lib/report";
 import type { Violation } from "../src/lib/types";
 import { buildReport } from "../src/lib/report";
 import { seedChats, seedEvaluations, seedTasks } from "../src/lib/seed-data";
@@ -55,18 +57,19 @@ test("report message shows requests per day in roster order", () => {
   assert.doesNotMatch(msg, /- — 25/); // non-roster name is skipped
 });
 
-test("violation lines: day fine + action + month-to-date total + reason", () => {
+test("violation lines: per-accountant action header + one bullet per violation (code + fine, no name)", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report, {
     violations: [
       {
-        id: "1", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: null,
-        client: null, severity: "Среднее", violation_type: null, gross: null,
-        sanction: 1000, note: null, created_at: "2026-06-15T10:00:00Z",
+        id: "1", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: "B-1",
+        client: "Клиент А", severity: "Критичное", violation_type: "авто из оценки",
+        gross: null, sanction: 1000, note: null, created_at: "2026-06-15T10:00:00Z",
       },
       {
-        id: "2", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: null,
-        client: null, severity: "Среднее", violation_type: null, gross: null,
+        id: "2", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: "B-1",
+        client: "Клиент А", severity: "Среднее",
+        violation_type: "Незакрытый запрос клиента", gross: null,
         sanction: null, note: null, created_at: "2026-06-15T11:00:00Z",
       },
       {
@@ -76,24 +79,25 @@ test("violation lines: day fine + action + month-to-date total + reason", () => 
         sanction: 2000, note: null, created_at: "2026-06-15T12:00:00Z",
       },
       {
-        id: "4", vdate: "2026-06-15", accountant: "Սոնա", chat_agr_no: null,
-        client: null, severity: "Среднее", violation_type: null, gross: null,
+        id: "4", vdate: "2026-06-15", accountant: null, chat_agr_no: "B-2",
+        client: "Клиент Б", severity: "Среднее",
+        violation_type: "Нет расс. по первичной документации", gross: null,
         sanction: null, note: null, created_at: "2026-06-15T13:00:00Z",
       },
     ],
-    monthFineTotals: { "Լիլիթ": 7000, "Ավագ": 20000 },
   });
   assert.match(msg, /Нарушения:/);
-  assert.match(
-    msg,
-    /— Լիլիթ: 1 000 др \+ Предупреждение \(2 средних\) \/итого сумма штрафа 7 000 драм\//
-  );
-  assert.match(
-    msg,
-    /— Ավագ: 2 000 др \+ Предупреждение \(1 среднее\) \/итого сумма штрафа 20 000 драм\/ Не отправлен запрос первичной документации/
-  );
-  // No fines at all → no prefix, no итого tail.
-  assert.match(msg, /— Սոնա: Предупреждение \(1 среднее\)(?!.*драм)/m);
+  assert.match(msg, /— Լիլիթ: Выговор/);
+  // Chat code + fine amount, no client/chat name.
+  assert.match(msg, /  ▸ B-1 — авто из оценки — 1 000 др/);
+  assert.match(msg, /  ▸ B-1 — Незакрытый запрос клиента(?!.*др)/);
+  assert.doesNotMatch(msg, /Клиент А/);
+  assert.doesNotMatch(msg, /Клиент Б/);
+  assert.match(msg, /— Ավագ: Предупреждение/);
+  assert.match(msg, /  ▸ - — Не отправлен запрос первичной документации — 2 000 др/);
+  // Unassigned violations are grouped under "-".
+  assert.match(msg, /— -: Предупреждение/);
+  assert.match(msg, /  ▸ B-2 — Нет расс\. по первичной документации(?!.*др)/);
 });
 
 test("score message includes overall, band, monthly statuses and link", () => {
@@ -188,6 +192,79 @@ test("friday fines message with a clean week", () => {
   });
   assert.match(msg, /На этой неделе нарушений нет ✅/);
   assert.match(msg, /Без нарушений: ✅ Գայանե/);
+});
+
+// --- Weekly (Friday) Armenian summary ---------------------------------------
+
+function fakeReport(over: Partial<DailyReport>): DailyReport {
+  return {
+    filters: {},
+    totals: {
+      activeChats: 0,
+      newChats: 0,
+      chatsWithoutResponsible: 0,
+      evaluatedChats: 0,
+      unansweredChats: 0,
+    },
+    coveragePct: 0,
+    distribution: { Отлично: 0, Хорошо: 0, Плохо: 0, Критично: 0 },
+    serviceQualityPct: 0,
+    perAccountant: [],
+    needsAttention: [],
+    criticalChats: [],
+    unansweredChats: [],
+    tasks: { total: 0, onTime: 0, late: 0, overdue: 0, perAccountant: [] },
+    ...over,
+  };
+}
+
+test("weekly report follows the Armenian Friday structure", () => {
+  const previous = fakeReport({
+    serviceQualityPct: 97,
+    perAccountant: [
+      { accountant: "Լիլիթ", avgScore: 86.6, count: 5, lowCount: 1 },
+      { accountant: "Ռոբերտ", avgScore: 97.4, count: 5, lowCount: 0 },
+      { accountant: "Գայանե", avgScore: 99.6, count: 5, lowCount: 0 },
+    ],
+  });
+  const current = fakeReport({
+    serviceQualityPct: 98,
+    perAccountant: [
+      { accountant: "Լիլիթ", avgScore: 95.0, count: 5, lowCount: 0 },
+      { accountant: "Ռոբերտ", avgScore: 95.0, count: 5, lowCount: 0 },
+      { accountant: "Գայանե", avgScore: 99.4, count: 5, lowCount: 0 },
+    ],
+    criticalChats: [
+      {
+        chat_agr_no: "B-1", chat_name: null, accountant: "Ռոբերտ", score: 40,
+        reasons: ["Незакрытый запрос клиента"],
+      },
+      {
+        chat_agr_no: "B-2", chat_name: null, accountant: "Լիլիթ", score: 30,
+        reasons: ["Незакрытый запрос клиента"],
+      },
+    ],
+    perDayPerAccountant: [
+      { date: "2026-06-29", accountant: "Գայանե", avgScore: 100, count: 1, lowCount: 0 },
+      { date: "2026-06-30", accountant: "Գայանե", avgScore: 100, count: 1, lowCount: 0 },
+      { date: "2026-07-01", accountant: "Գայանե", avgScore: 98, count: 1, lowCount: 0 },
+    ],
+  });
+
+  const msg = buildWeeklyReportMessage(current, previous, {
+    roster: ["Գայանե", "Ռոբերտ", "Լիլիթ"],
+  });
+
+  assert.match(msg, /^1․ Անցած շաբաթվա սերվիսի որակը տոկոսներով - 97%/);
+  assert.match(msg, /2․ Այս շաբաթվա սերվիսի որակը տոկոսներով - 98%/);
+  assert.match(msg, /Առանցձին թիմակիցների մասով․/);
+  assert.match(msg, /3․ .* - Լիլիթ 86\.60 - 95\.00/);
+  assert.match(msg, /4․ .* - Ռոբերտ 97\.40 - 95\.00/);
+  assert.match(msg, /5․ .*Незакрытый запрос клиента/);
+  assert.match(msg, /Գայանե — 99\.60 - 99\.40/);
+  assert.match(msg, /Ռոբերտ — 97\.40 - 95\.00/);
+  assert.match(msg, /Լիլիթ — 86\.60 - 95\.00/);
+  assert.match(msg, /շաբաթվա աստղ՝ Գայանե \/2x - 100, 1x - 98\//);
 });
 
 test("survey invites embed the typeform link with the chat id", () => {

@@ -12,20 +12,12 @@
 // telegramConfigured().
 // ---------------------------------------------------------------------------
 
-import type { DailyReport } from "./report";
+import type { AccountantScore, DailyReport } from "./report";
 import { MONTHLY_CATEGORIES, bandFor, failingMailings, type QualityBand } from "./scoring";
 import type { Chat, Evaluation, Violation } from "./types";
 
 export function telegramConfigured(): boolean {
   return Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
-}
-
-function fmtDateRange(from?: string, to?: string): string {
-  if (from && to && from === to) return from;
-  if (from && to) return `${from} — ${to}`;
-  if (from) return `с ${from}`;
-  if (to) return `по ${to}`;
-  return "за всё время";
 }
 
 /** DD.MM from an ISO date (for the report header). */
@@ -60,11 +52,6 @@ export interface ReportMessageOptions {
   requests?: { accountant: string; count: number }[];
   /** Days in the window — divides `requests` totals into a per-day figure. */
   requestDays?: number;
-  /**
-   * Month-to-date fine totals (drams) per accountant, for the
-   * «/итого сумма штрафа X драм/» tail on each violation line.
-   */
-  monthFineTotals?: Record<string, number>;
 }
 
 /** Period label for the header: a single day, or "DD.MM — DD.MM" for a range. */
@@ -127,23 +114,26 @@ function fmtDram(n: number): string {
  *   ⭐️ Имя: 100% оценка
  *
  *   Нарушения:
- *   — Имя: 1 000 др + Предупреждение (3 средних) /итого сумма штрафа 7 000 драм/ причина
+ *
+ *   — Имя: Выговор
+ *     ▸ B-4742 — причина — 1 000 др
  *
  *   Кол-во запросов за день:
  *
  *   Имя — 8
  *
- * People sections are limited to the canonical roster (options.roster). On a
- * violation line, «X др +» is the fine issued in the reported window and
- * «итого …» is the accountant's month-to-date total (options.monthFineTotals).
+ * People sections are limited to the canonical roster (options.roster). The
+ * violations block lists every accountant who has a violation in the window
+ * (including unassigned rows, shown as "-"), each with one bullet per
+ * violation record: the chat code, the reason, and the fine (if any) —
+ * no chat/client name.
  */
 export function buildReportMessage(
   report: DailyReport,
   options: ReportMessageOptions = {}
 ): string {
   const { serviceQualityPct, perAccountant, filters } = report;
-  const { violations = [], sheetUrl, roster, requests, requestDays, monthFineTotals = {} } =
-    options;
+  const { violations = [], sheetUrl, roster, requests, requestDays } = options;
   const dateISO =
     options.date ??
     filters.to ??
@@ -180,39 +170,35 @@ export function buildReportMessage(
     }
   }
 
-  // ── Violations — one line per person ───────────────────────────────────────
-  // «{X др + }Предупреждение (N средних){ /итого сумма штрафа Y драм/}{ причина}»
-  // X = fines issued in this window; Y = the month-to-date total.
-  const withAcc = violations.filter((v) => v.accountant);
-  if (withAcc.length) {
+  // ── Violations — per-person breakdown, one bullet per violation record ─────
+  // «— Имя: Действие» then «  ▸ код — причина — сумма» for every violation of
+  // that person (rows with no accountant are grouped under "-"). No chat/
+  // client name — just the chat code and the fine, if any.
+  if (violations.length) {
     const byAcc = new Map<
       string,
-      { sevMap: Map<string, number>; fine: number; reasons: string[] }
+      { sevMap: Map<string, number>; items: { code: string; reason: string; money: string }[] }
     >();
-    for (const v of withAcc) {
-      const acc = v.accountant as string;
+    for (const v of violations) {
+      const acc = v.accountant?.trim() || "-";
       const sev = v.severity ?? "среднее";
-      const entry =
-        byAcc.get(acc) ?? { sevMap: new Map<string, number>(), fine: 0, reasons: [] };
+      const entry = byAcc.get(acc) ?? { sevMap: new Map<string, number>(), items: [] };
       entry.sevMap.set(sev, (entry.sevMap.get(sev) ?? 0) + 1);
-      if (typeof v.sanction === "number" && v.sanction > 0) entry.fine += v.sanction;
-      const reason = (v.violation_type ?? "").trim();
-      if (reason && !entry.reasons.includes(reason)) entry.reasons.push(reason);
+      const code = v.chat_agr_no?.trim() || "-";
+      const reason = (v.violation_type ?? "").trim() || "-";
+      const money =
+        typeof v.sanction === "number" && v.sanction > 0 ? ` — ${fmtDram(v.sanction)} др` : "";
+      entry.items.push({ code, reason, money });
       byAcc.set(acc, entry);
     }
     lines.push("");
     lines.push("Нарушения:");
-    for (const [acc, { sevMap, fine, reasons }] of byAcc) {
-      const action = worstViolationAction(sevMap);
-      const sevParts = [...sevMap.entries()]
-        .map(([sev, n]) => fmtSeverityCount(sev, n))
-        .join(", ");
-      const finePrefix = fine > 0 ? `${fmtDram(fine)} др + ` : "";
-      const monthTotal = monthFineTotals[acc] ?? fine;
-      const totalSuffix =
-        monthTotal > 0 ? ` /итого сумма штрафа ${fmtDram(monthTotal)} драм/` : "";
-      const reasonSuffix = reasons.length ? ` ${reasons.join("; ")}` : "";
-      lines.push(`— ${acc}: ${finePrefix}${action} (${sevParts})${totalSuffix}${reasonSuffix}`);
+    for (const [acc, { sevMap, items }] of byAcc) {
+      lines.push("");
+      lines.push(`— ${acc}: ${worstViolationAction(sevMap)}`);
+      for (const item of items) {
+        lines.push(`  ▸ ${item.code} — ${item.reason}${item.money}`);
+      }
     }
   }
 
@@ -432,127 +418,100 @@ export function accountantsToMessage(report: DailyReport): string[] {
     .map(([name]) => name);
 }
 
-/** "16–22 июн 2026" from Mon ISO date. */
-function weekLabelFromISO(from: string, to: string): string {
-  const MONTHS = [
-    "янв","фев","мар","апр","май","июн",
-    "июл","авг","сен","окт","ноя","дек",
-  ];
-  const f = new Date(from + "T00:00:00Z");
-  const t = new Date(to + "T00:00:00Z");
-  const m1 = MONTHS[f.getUTCMonth()];
-  const m2 = MONTHS[t.getUTCMonth()];
-  if (f.getUTCMonth() === t.getUTCMonth() && f.getUTCFullYear() === t.getUTCFullYear()) {
-    return `${f.getUTCDate()}–${t.getUTCDate()} ${m1} ${f.getUTCFullYear()}`;
-  }
-  return `${f.getUTCDate()} ${m1}–${t.getUTCDate()} ${m2} ${f.getUTCFullYear()}`;
+export interface WeeklyReportOptions {
+  /**
+   * Canonical roster order (the active accountant list) for the full
+   * per-person week-over-week listing. Falls back to the scored accountants
+   * from `report` when omitted.
+   */
+  roster?: string[];
 }
 
-export interface WeeklyReportOptions {
-  /** Override the week label shown in the header. */
-  weekLabel?: string;
+/** "86.60" — an accountant's average, always shown with 2 decimals. */
+function fmtAvg(n: number): string {
+  return n.toFixed(2);
 }
 
 /**
- * Weekly summary message for Emilia — the one Margarita sends each Monday.
- * Shows last-vs-this-week service %, who improved/worsened, stars of the week,
- * and top recurring problems. Designed to match the Google Sheets format she
- * used to fill manually.
+ * Пятничный отчёт (Armenian) — the weekly summary Margarita sends every
+ * Friday: last-vs-this-week service %, who improved/worsened with their
+ * averages, the most common recurring problems, the full roster's
+ * week-over-week averages, and the star(s) of the week:
+ *
+ *   1․ Անցած շաբաթվա սերվիսի որակը տոկոսներով - 97%
+ *   2․ Այս շաբաթվա սերվիսի որակը տոկոսներով - 98%
+ *   Առանցձին թիմակիցների մասով․
+ *   3․ Բարելավել է արդյունքները ՝ ... - Անուն 86.60 - 95.00
+ *   4․ Վատացրել է արդյունքները ՝ ... - Անուն 97.40 - 95.00
+ *   5․ Խնդիրները։ Հիմնական ամենաշատ կրկնվողները ՝ պատճառ1, պատճառ2
+ *
+ *   Անուն — 99.60 - 99.40
+ *   ...
+ *
+ *   շաբաթվա աստղ՝ Անուն /3x - 100, 1x - 98/, Անուն2 /3x - 100, 2x - 99/
  */
 export function buildWeeklyReportMessage(
   report: DailyReport,
   previous: DailyReport | null,
   options: WeeklyReportOptions = {}
 ): string {
-  const { from, to } = report.filters;
-  const label =
-    options.weekLabel ??
-    (from && to ? weekLabelFromISO(from, to) : fmtDateRange(from, to));
+  const { roster } = options;
   const lines: string[] = [];
 
-  lines.push(`📊 Еженедельный отчёт | ${label}`);
+  const prevPct = previous ? Math.round(previous.serviceQualityPct) : null;
+  const curPct = Math.round(report.serviceQualityPct);
+  lines.push(`1․ Անցած շաբաթվա սերվիսի որակը տոկոսներով - ${prevPct ?? "—"}%`);
+  lines.push(`2․ Այս շաբաթվա սերվիսի որակը տոկոսներով - ${curPct}%`);
+  lines.push("Առանցձին թիմակիցների մասով․");
+
+  const prevMap = new Map(
+    (previous?.perAccountant ?? []).map((a) => [a.accountant, a.avgScore])
+  );
+  const scored = report.perAccountant.filter((a) => a.count > 0 && a.avgScore >= 0);
+  const delta = (a: AccountantScore) => a.avgScore - (prevMap.get(a.accountant) ?? 0);
+
+  const improved = scored
+    .filter((a) => prevMap.has(a.accountant) && a.avgScore > prevMap.get(a.accountant)!)
+    .sort((a, b) => delta(b) - delta(a));
+  const worsened = scored
+    .filter((a) => prevMap.has(a.accountant) && a.avgScore < prevMap.get(a.accountant)!)
+    .sort((a, b) => delta(a) - delta(b));
+  const fmtMover = (a: AccountantScore) =>
+    `${a.accountant} ${fmtAvg(prevMap.get(a.accountant)!)} - ${fmtAvg(a.avgScore)}`;
+
+  lines.push(
+    `3․ Բարելավել է արդյունքները ՝ նշելով անցած շաբաթվա միջին արդյունքը և այս շաբաթվա միջին արդյունքը - ${improved
+      .map(fmtMover)
+      .join(", ")}`
+  );
+  lines.push(
+    `4․ Վատացրել է արդյունքները ՝ նշելով անցած շաբաթվա միջին արդյունքը և այս շաբաթվա միջին արդյունքը - ${worsened
+      .map(fmtMover)
+      .join(", ")}`
+  );
+
+  // ── Top recurring problems ────────────────────────────────────────────────
+  const probFreq = new Map<string, number>();
+  for (const c of report.criticalChats) {
+    for (const r of c.reasons) probFreq.set(r, (probFreq.get(r) ?? 0) + 1);
+  }
+  const topProblems = [...probFreq.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([p]) => p);
+  lines.push(`5․ Խնդիրները։ Հիմնական ամենաշատ կրկնվողները ՝ ${topProblems.join(", ")}`);
+
+  // ── Full roster, week-over-week ──────────────────────────────────────────
   lines.push("");
-
-  // ── Service quality comparison ───────────────────────────────────────────
-  if (previous) {
-    const prevPct = previous.serviceQualityPct;
-    const curPct = report.serviceQualityPct;
-    const delta = Math.round((curPct - prevPct) * 10) / 10;
-    const arrow = delta > 0 ? `🟢▲ +${delta} п.п.` : delta < 0 ? `🔴▼ ${delta} п.п.` : "→ без изменений";
-    lines.push(`📈 Качество сервиса:`);
-    lines.push(`  Прошлая неделя: ${prevPct}%`);
-    lines.push(`  Эта неделя: ${curPct}%  ${arrow}`);
-  } else {
-    lines.push(`📈 Качество сервиса: ${report.serviceQualityPct}%`);
+  const names = roster && roster.length > 0 ? roster : scored.map((a) => a.accountant);
+  for (const name of names) {
+    const cur = scored.find((a) => a.accountant === name);
+    if (!cur) continue;
+    const prev = prevMap.get(name);
+    lines.push(`${name} — ${prev !== undefined ? fmtAvg(prev) : "—"} - ${fmtAvg(cur.avgScore)}`);
   }
 
-  // ── Per-accountant trend ─────────────────────────────────────────────────
-  if (previous) {
-    const prevMap = new Map(previous.perAccountant.map((a) => [a.accountant, a.avgScore]));
-    const scored = report.perAccountant.filter((a) => a.count > 0 && a.avgScore >= 0);
-
-    const improved = scored
-      .filter((a) => {
-        const p = prevMap.get(a.accountant);
-        return p !== undefined && a.avgScore > p;
-      })
-      .sort((a, b) => {
-        const da = a.avgScore - (prevMap.get(a.accountant) ?? 0);
-        const db = b.avgScore - (prevMap.get(b.accountant) ?? 0);
-        return db - da;
-      });
-
-    const worsened = scored
-      .filter((a) => {
-        const p = prevMap.get(a.accountant);
-        return p !== undefined && a.avgScore < p;
-      })
-      .sort((a, b) => {
-        const da = a.avgScore - (prevMap.get(a.accountant) ?? 0);
-        const db = b.avgScore - (prevMap.get(b.accountant) ?? 0);
-        return da - db;
-      });
-
-    if (improved.length) {
-      lines.push("");
-      lines.push("✅ Улучшили показатели:");
-      for (const a of improved) {
-        const p = prevMap.get(a.accountant)!;
-        lines.push(`• ${a.accountant}: ${p}% → ${a.avgScore}%`);
-      }
-    }
-
-    if (worsened.length) {
-      lines.push("");
-      lines.push("⚠️ Ухудшили показатели:");
-      for (const a of worsened) {
-        const p = prevMap.get(a.accountant)!;
-        lines.push(`• ${a.accountant}: ${p}% → ${a.avgScore}%`);
-      }
-    }
-
-    // ── Full roster ────────────────────────────────────────────────────────
-    lines.push("");
-    lines.push("👥 Результаты по бухгалтерам:");
-    const roster = [...report.perAccountant.filter((a) => a.count > 0 && a.avgScore >= 0)]
-      .sort((a, b) => b.avgScore - a.avgScore);
-    for (const a of roster) {
-      const emoji = BAND_EMOJI[bandFor(a.avgScore)];
-      const prev = prevMap.get(a.accountant);
-      const prevStr = prev !== undefined ? `${prev}% → ` : "";
-      lines.push(`${emoji} ${a.accountant}: ${prevStr}${a.avgScore}%`);
-    }
-  } else {
-    lines.push("");
-    lines.push("👥 Результаты по бухгалтерам:");
-    for (const a of [...report.perAccountant].sort((x, y) => y.avgScore - x.avgScore)) {
-      if (a.count === 0 || a.avgScore < 0) continue;
-      const emoji = BAND_EMOJI[bandFor(a.avgScore)];
-      lines.push(`${emoji} ${a.accountant}: ${a.avgScore}%`);
-    }
-  }
-
-  // ── Stars of the week — accountants with all daily scores ≥ 98 ──────────
+  // ── Star(s) of the week — accountants with all daily scores ≥ 98 ────────
   if (report.perDayPerAccountant && report.perDayPerAccountant.length > 0) {
     const accDays = new Map<string, number[]>();
     for (const d of report.perDayPerAccountant) {
@@ -570,33 +529,17 @@ export function buildWeeklyReportMessage(
       });
 
     if (stars.length > 0) {
-      lines.push("");
-      lines.push("⭐ Звёзды недели:");
-      for (const [name, scores] of stars) {
+      const starParts = stars.map(([name, scores]) => {
         const countByScore = new Map<number, number>();
         for (const s of scores) countByScore.set(s, (countByScore.get(s) ?? 0) + 1);
         const desc = [...countByScore.entries()]
           .sort((a, b) => b[0] - a[0])
-          .map(([s, n]) => `${n}×${s}`)
+          .map(([s, n]) => `${n}x - ${s}`)
           .join(", ");
-        lines.push(`🌟 ${name} (${desc})`);
-      }
-    }
-  }
-
-  // ── Top recurring problems ────────────────────────────────────────────────
-  const probFreq = new Map<string, number>();
-  for (const c of report.criticalChats) {
-    for (const r of c.reasons) {
-      probFreq.set(r, (probFreq.get(r) ?? 0) + 1);
-    }
-  }
-  if (probFreq.size > 0) {
-    lines.push("");
-    lines.push("❗ Основные проблемы:");
-    const sorted = [...probFreq.entries()].sort((a, b) => b[1] - a[1]);
-    for (const [prob, cnt] of sorted.slice(0, 5)) {
-      lines.push(`• ${prob}${cnt > 1 ? ` (×${cnt})` : ""}`);
+        return `${name} /${desc}/`;
+      });
+      lines.push("");
+      lines.push(`շաբաթվա աստղ՝ ${starParts.join(", ")}`);
     }
   }
 
