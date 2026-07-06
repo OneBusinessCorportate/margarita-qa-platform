@@ -139,6 +139,40 @@ export const MONTHLY_CATEGORIES: MonthlyCategory[] = [
 export const PREV_STATUS_DEFAULT = "--";
 
 /**
+ * Day of month when the «рассылки» cycle rolls over. Первичка is requested on
+ * the 28th for the closing month; долги (5), зарплата (10) and налоги (15) of
+ * the FOLLOWING month belong to the same work cycle. So a cycle runs the 28th
+ * → the 27th, and every 28th all mailing statuses reset to «Предстоящая».
+ */
+export const MAILING_CYCLE_START_DAY = 28;
+
+/**
+ * The mailing-cycle key (YYYYMM) an ISO date belongs to. Dates on/after the
+ * 28th roll into the NEXT month's cycle — e.g. 2026-06-28 → "202607", because
+ * its due days (5/10/15) fall in July. Labels stay YYYYMM so existing
+ * mqa_chat_mailings rows keep working.
+ */
+export function mailingPeriodOf(isoDate: string): string {
+  const y = Number(isoDate.slice(0, 4));
+  const m = Number(isoDate.slice(5, 7)); // 1-based
+  const d = Number(isoDate.slice(8, 10));
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return "";
+  const roll = Number.isFinite(d) && d >= MAILING_CYCLE_START_DAY;
+  const my = roll && m === 12 ? y + 1 : y;
+  const mm = roll ? (m === 12 ? 1 : m + 1) : m;
+  return `${my}${String(mm).padStart(2, "0")}`;
+}
+
+/** The mailing period immediately before `period` (YYYYMM arithmetic). */
+export function prevMailingPeriod(period: string): string {
+  const y = Number(period.slice(0, 4));
+  const m = Number(period.slice(4, 6));
+  const py = m === 1 ? y - 1 : y;
+  const pm = m === 1 ? 12 : m - 1;
+  return `${py}${String(pm).padStart(2, "0")}`;
+}
+
+/**
  * Map a (possibly mis-cased or legacy) status string to the category's canonical
  * option, or "" if it isn't one. Carried-forward / imported data sometimes has
  * "нет долга" where the option is "Нет долга" — without this the <select> shows

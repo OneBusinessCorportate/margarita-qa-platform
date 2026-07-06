@@ -11,6 +11,7 @@ import {
   computeOverall,
   daysBetween,
   isStaleActivity,
+  mailingPeriodOf,
   reviewDayForActivity,
   reviewDayOf,
   roleInfo,
@@ -114,7 +115,9 @@ export default function ScoringPanel({
   // Index detected mailings for O(1) lookup filtered to the selected date's period.
   // Filters by period so switching months shows the right detections, not this month's.
   const mailingsByChat = useMemo(() => {
-    const selectedPeriod = date.slice(0, 7).replace("-", ""); // "2026-06-15" → "202606"
+    // Mailing cycle key: the рассылки cycle rolls over on the 28th, so a
+    // date on/after the 28th shows the NEXT cycle's detections.
+    const selectedPeriod = mailingPeriodOf(date);
     const m = new Map<string, Record<string, string>>();
     for (const row of detectedMailings) {
       if (row.period !== selectedPeriod) continue;
@@ -263,11 +266,11 @@ export default function ScoringPanel({
   // The most recent check BEFORE the selected date — carried forward so
   // Margarita only changes what actually changed. Keyed by the representative
   // contract so a prior check saved under any contract in the group carries
-  // forward. Mailing statuses are month-scoped: they carry ONLY within the
-  // same calendar month. When a new month starts, the cycle resets — every
+  // forward. Mailing statuses are cycle-scoped: they carry ONLY within the
+  // same рассылки cycle (28th → 27th). Every 28th the cycle resets — every
   // рассылка goes back to «Предстоящая» (waiting) until the message scan or
-  // Margarita fills it, instead of last month's «Получил» leaking into the
-  // new period. Criteria and the comment still carry across months.
+  // Margarita fills it, instead of last cycle's «Получил» leaking into the
+  // new one. Criteria and the comment still carry across cycles.
   const prevByChat = useMemo(() => {
     const latestBefore = new Map<string, Evaluation>();
     for (const e of evaluations) {
@@ -277,12 +280,12 @@ export default function ScoringPanel({
       const cur = latestBefore.get(key);
       if (!cur || e.checking_date > cur.checking_date) latestBefore.set(key, e);
     }
-    const selectedMonth = date.slice(0, 7);
+    const selectedCycle = mailingPeriodOf(date);
     const out = new Map<string, PrevCheck>();
     for (const [chatNo, e] of latestBefore) {
-      const sameMonth = e.checking_date.slice(0, 7) === selectedMonth;
+      const sameCycle = mailingPeriodOf(e.checking_date.slice(0, 10)) === selectedCycle;
       const monthly: Record<string, string> = {};
-      if (sameMonth) {
+      if (sameCycle) {
         for (const cat of MONTHLY_CATEGORIES) {
           const s = e.scores.monthly?.[cat.id]?.status;
           if (s) monthly[cat.id] = s;
@@ -1402,7 +1405,7 @@ function ChatScoreRow({
       // «вношу данные вручную — они не сохраняются»). «Предстоящая» is the
       // neutral waiting default and «Inactive» follows the client flag —
       // neither is a correction, so they never lock the cell.
-      const mailingPeriod = date.slice(0, 7).replace("-", "");
+      const mailingPeriod = mailingPeriodOf(date);
       for (const cat of MONTHLY_CATEGORIES) {
         const status = monthly[cat.id]?.status ?? "";
         if (!status || status === "Предстоящая" || status === "Inactive") continue;

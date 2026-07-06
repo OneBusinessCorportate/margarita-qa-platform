@@ -11,7 +11,12 @@ import {
 } from "@/lib/repo";
 import { trainAiModel } from "@/lib/ai";
 import { maybeRefreshMailings } from "@/lib/mailings-run";
-import { reviewDayForActivity, reviewDayOf } from "@/lib/scoring";
+import {
+  mailingPeriodOf,
+  prevMailingPeriod,
+  reviewDayForActivity,
+  reviewDayOf,
+} from "@/lib/scoring";
 
 export const dynamic = "force-dynamic";
 
@@ -28,17 +33,15 @@ export default async function ScoringPage() {
     .toISOString()
     .slice(0, 10);
 
-  // Load mailings for both current and previous Yerevan month so the scoring
-  // form shows the right period's detections regardless of which date is selected.
+  // Load mailings for both the current and previous рассылки cycle (28th →
+  // 27th, Yerevan time) so the scoring form shows the right cycle's detections
+  // regardless of which date is selected.
   const nowYerevan = new Date(
     new Date().toLocaleString("en-US", { timeZone: "Asia/Yerevan" })
   );
-  const cy = nowYerevan.getFullYear();
-  const cm = nowYerevan.getMonth() + 1; // 1-based
-  const currentPeriod = `${cy}${String(cm).padStart(2, "0")}`;
-  const prevM = cm === 1 ? 12 : cm - 1;
-  const prevY = cm === 1 ? cy - 1 : cy;
-  const previousPeriod = `${prevY}${String(prevM).padStart(2, "0")}`;
+  const isoYerevan = `${nowYerevan.getFullYear()}-${String(nowYerevan.getMonth() + 1).padStart(2, "0")}-${String(nowYerevan.getDate()).padStart(2, "0")}`;
+  const currentPeriod = mailingPeriodOf(isoYerevan);
+  const previousPeriod = prevMailingPeriod(currentPeriod);
 
   const [
     chats,

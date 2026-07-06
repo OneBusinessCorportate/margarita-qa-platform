@@ -1,127 +1,103 @@
 // ---------------------------------------------------------------------------
-// PDF version of the daily analytics report — the deep-dive attachment that
-// travels with the short Telegram message. The message stays skimmable; the
-// PDF carries the analysis: metrics, trend, per-accountant table, critical
-// chats with reasons, violations with fines, request volumes and rule-based
-// conclusions.
+// PDF version of the daily report — the monitoring-spreadsheet grid the
+// department keeps by hand: one column group per day (% | ⚠ | N), summary
+// rows on top (Оценено чатов, Отлично…Критично, Сервис Бухгалтерии) and one
+// row per accountant with colour-coded score cells.
 //
-// Fonts: DejaVu Sans (vendored in /fonts) — covers Russian AND Armenian, which
-// the built-in PDF fonts don't. pdfkit is listed in
+// Fonts: DejaVu Sans (vendored in /fonts) — covers Russian AND Armenian,
+// which the built-in PDF fonts don't. pdfkit is listed in
 // serverComponentsExternalPackages so its font machinery survives bundling.
-// (No "server-only" marker: pdfkit itself only runs under Node, and the unit
-// test builds a PDF directly.)
+// (No "server-only" marker: the unit test builds a PDF directly under Node.)
 // ---------------------------------------------------------------------------
 import path from "path";
 import PDFDocument from "pdfkit";
-import type { DailyReport } from "./report";
-import { bandFor } from "./scoring";
-import type { Violation } from "./types";
+import type { DailyReport, DaySummary } from "./report";
 
 export interface ReportPdfOptions {
-  previous?: DailyReport | null;
-  violations?: Violation[];
-  /** Canonical employee names; people sections are limited to these. */
+  /** Canonical employee names — the grid's accountant rows, in this order. */
   roster?: string[];
-  requests?: { accountant: string; count: number }[];
-  requestDays?: number;
 }
 
 const FONT_DIR = path.join(process.cwd(), "fonts");
-const PAGE_BOTTOM = 780;
 
-function fmtDay(iso: string): string {
+// Spreadsheet palette (mirrors scoreCellClass on the /messages page).
+interface CellColors {
+  bg: string;
+  fg: string;
+}
+interface Palette {
+  headerBg: string;
+  labelBg: string;
+  summaryBg: string;
+  green: CellColors;
+  plain: CellColors;
+  yellow: CellColors;
+  red: CellColors;
+  excellent: string;
+  good: string;
+  bad: string;
+  critical: string;
+  muted: string;
+  border: string;
+  text: string;
+}
+const COLORS: Palette = {
+  headerBg: "#e5e7eb",
+  labelBg: "#f9fafb",
+  summaryBg: "#eff6ff",
+  green: { bg: "#dcfce7", fg: "#166534" },
+  plain: { bg: "#ffffff", fg: "#374151" },
+  yellow: { bg: "#fef08a", fg: "#854d0e" },
+  red: { bg: "#fecaca", fg: "#b91c1c" },
+  excellent: "#f0fdf4",
+  good: "#fefce8",
+  bad: "#fee2e2",
+  critical: "#fecaca",
+  muted: "#9ca3af",
+  border: "#9ca3af",
+  text: "#111827",
+};
+
+function scoreColors(score: number): { bg: string; fg: string } {
+  if (score >= 98) return COLORS.green;
+  if (score >= 90) return COLORS.plain;
+  if (score >= 80) return COLORS.yellow;
+  return COLORS.red;
+}
+
+function fmtShortDate(iso: string): string {
+  const [, m, d] = iso.slice(0, 10).split("-");
+  return `${d}.${m}`;
+}
+
+function fmtDayFull(iso: string): string {
   const [y, m, d] = iso.slice(0, 10).split("-");
   return d && m ? `${d}.${m}.${y}` : iso;
 }
 
-function periodLabel(report: DailyReport): string {
-  const { from, to } = report.filters;
-  if (from && to && from !== to) return `${fmtDay(from)} — ${fmtDay(to)}`;
-  return fmtDay(to ?? from ?? new Date().toISOString().slice(0, 10));
+function rangeDates(from: string, to: string): string[] {
+  const result: string[] = [];
+  const end = new Date(to + "T00:00:00Z");
+  const cur = new Date(from + "T00:00:00Z");
+  while (cur <= end) {
+    result.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return result;
 }
 
-/** Space-separated thousands: 10000 → "10 000". */
-function fmtNum(n: number): string {
-  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+/** A positioned grid cell about to be drawn. */
+interface Cell {
+  text: string;
+  bg: string;
+  fg: string;
+  bold?: boolean;
+  align?: "left" | "center";
 }
 
 type Doc = InstanceType<typeof PDFDocument>;
 
-function ensureRoom(doc: Doc, needed = 40) {
-  if (doc.y + needed > PAGE_BOTTOM) doc.addPage();
-}
-
-function heading(doc: Doc, text: string) {
-  ensureRoom(doc, 60);
-  doc.moveDown(1);
-  doc.font("Bold").fontSize(13).fillColor("#111").text(text);
-  doc.moveDown(0.4);
-  doc.font("Regular").fontSize(10).fillColor("#222");
-}
-
-function bullet(doc: Doc, text: string) {
-  ensureRoom(doc);
-  doc.text(`•  ${text}`, { indent: 0, lineGap: 2 });
-}
-
-/**
- * Rule-based "Выводы" — the analysis narrative the boss asked to see with the
- * report. Derived deterministically from the same numbers as the message, so
- * it never disagrees with them.
- */
-function conclusions(
-  report: DailyReport,
-  options: ReportPdfOptions,
-  scored: { accountant: string; avgScore: number; count: number; lowCount: number }[]
-): string[] {
-  const out: string[] = [];
-  const prev = options.previous;
-
-  if (prev) {
-    const d = Math.round((report.serviceQualityPct - prev.serviceQualityPct) * 10) / 10;
-    if (d > 0) out.push(`Сервис вырос на ${d} п.п. к прошлому периоду (${prev.serviceQualityPct}% → ${report.serviceQualityPct}%).`);
-    else if (d < 0) out.push(`Сервис снизился на ${Math.abs(d)} п.п. к прошлому периоду (${prev.serviceQualityPct}% → ${report.serviceQualityPct}%).`);
-    else out.push(`Сервис без изменений к прошлому периоду (${report.serviceQualityPct}%).`);
-    const critDiff = report.distribution["Критично"] - prev.distribution["Критично"];
-    if (critDiff > 0) out.push(`Критичных оценок больше на ${critDiff} (${prev.distribution["Критично"]} → ${report.distribution["Критично"]}).`);
-    else if (critDiff < 0) out.push(`Критичных оценок меньше на ${Math.abs(critDiff)} (${prev.distribution["Критично"]} → ${report.distribution["Критично"]}).`);
-  }
-
-  if (report.coveragePct > 0 && report.coveragePct < 95) {
-    out.push(`Охват проверок ${report.coveragePct}% — часть активных чатов осталась без оценки.`);
-  }
-
-  const meaningful = scored.filter((a) => a.count >= 5);
-  if (meaningful.length > 0) {
-    const best = meaningful.reduce((m, a) => (a.avgScore > m.avgScore ? a : m));
-    const worst = meaningful.reduce((m, a) => (a.avgScore < m.avgScore ? a : m));
-    if (best.accountant !== worst.accountant) {
-      out.push(`Лучший результат: ${best.accountant} — ${best.avgScore}% (${best.count} чатов).`);
-      out.push(`Требует внимания: ${worst.accountant} — ${worst.avgScore}% (${worst.count} чатов${worst.lowCount ? `, низких оценок: ${worst.lowCount}` : ""}).`);
-    }
-  }
-
-  const crit = report.criticalChats ?? [];
-  if (crit.length > 0) {
-    const freq = new Map<string, number>();
-    for (const c of crit) for (const r of c.reasons) freq.set(r, (freq.get(r) ?? 0) + 1);
-    const top = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
-    const topStr = top.map(([r, n]) => (n > 1 ? `${r} (×${n})` : r)).join("; ");
-    out.push(`Критичных чатов за период: ${crit.length}.${topStr ? ` Основные причины: ${topStr}.` : ""}`);
-  } else {
-    out.push("Критичных чатов за период нет.");
-  }
-
-  const viol = (options.violations ?? []).filter((v) => v.accountant);
-  if (viol.length > 0) {
-    const fines = viol.reduce((s, v) => s + (typeof v.sanction === "number" && v.sanction > 0 ? v.sanction : 0), 0);
-    out.push(`Нарушений за период: ${viol.length}${fines > 0 ? `, штрафы на сумму ${fmtNum(fines)} драм` : ""}.`);
-  }
-
-  return out;
-}
-
-/** Build the analytics PDF and resolve with its bytes. */
+/** Build the day-by-day monitoring grid PDF and resolve with its bytes. */
 export function buildReportPdf(
   report: DailyReport,
   options: ReportPdfOptions = {}
@@ -129,7 +105,8 @@ export function buildReportPdf(
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: "A4",
-      margins: { top: 46, bottom: 56, left: 46, right: 46 },
+      layout: "landscape",
+      margins: { top: 34, bottom: 34, left: 30, right: 30 },
       info: { Title: "Аналитика качества бухгалтерии" },
     });
     doc.registerFont("Regular", path.join(FONT_DIR, "DejaVuSans.ttf"));
@@ -140,109 +117,245 @@ export function buildReportPdf(
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    const rosterSet =
-      options.roster && options.roster.length > 0 ? new Set(options.roster) : null;
-    const inRoster = (name: string) => !rosterSet || rosterSet.has(name);
-    const scored = report.perAccountant.filter(
-      (a) => a.count > 0 && a.avgScore >= 0 && inRoster(a.accountant)
-    );
+    const { from, to } = report.filters;
+    const fromISO = from ?? to ?? new Date().toISOString().slice(0, 10);
+    const toISO = to ?? fromISO;
+    const isMultiDay = fromISO !== toISO;
 
-    // ── Header ──────────────────────────────────────────────────────────────
-    doc.font("Bold").fontSize(17).fillColor("#111")
-      .text("Аналитика качества бухгалтерии");
-    doc.font("Regular").fontSize(11).fillColor("#555")
-      .text(`Период: ${periodLabel(report)}`);
-    doc.moveDown(0.8);
+    // The grid fits ~10 day columns on landscape A4 — keep the LAST 10.
+    const allDates = rangeDates(fromISO, toISO);
+    const dates = allDates.slice(-10);
 
-    // ── Key metrics ─────────────────────────────────────────────────────────
-    doc.font("Regular").fontSize(10).fillColor("#222");
-    const prev = options.previous;
-    const trend = prev
-      ? ` (прошлый период: ${prev.serviceQualityPct}%)`
-      : "";
-    doc.text(`Сервис Бухгалтерии: ${report.serviceQualityPct}%${trend}`);
-    doc.text(
-      `Охват: оценено ${report.totals.evaluatedChats} из ${report.totals.activeChats} активных (${report.coveragePct}%)`
-    );
-    doc.text(
-      `Оценки: Отлично ${report.distribution["Отлично"]} · Хорошо ${report.distribution["Хорошо"]} · ` +
-        `Плохо ${report.distribution["Плохо"]} · Критично ${report.distribution["Критично"]}`
-    );
+    // ── Data lookups (mirror the /messages page grid) ───────────────────────
+    const dayAccMap = new Map<string, { score: number; count: number; low: number }>();
+    if (isMultiDay && report.perDayPerAccountant) {
+      for (const d of report.perDayPerAccountant) {
+        dayAccMap.set(`${d.date}|${d.accountant}`, {
+          score: d.avgScore,
+          count: d.count,
+          low: d.lowCount,
+        });
+      }
+    } else {
+      for (const a of report.perAccountant) {
+        dayAccMap.set(`${fromISO}|${a.accountant}`, {
+          score: a.avgScore,
+          count: a.count,
+          low: a.lowCount,
+        });
+      }
+    }
+    const dayMap = new Map<string, DaySummary>();
+    if (isMultiDay && report.perDay) {
+      for (const d of report.perDay) dayMap.set(d.date, d);
+    } else {
+      dayMap.set(fromISO, {
+        date: fromISO,
+        activeChats: report.totals.activeChats,
+        evaluatedChats: report.totals.evaluatedChats,
+        newChats: report.totals.newChats,
+        distribution: report.distribution,
+        serviceQualityPct: report.serviceQualityPct,
+      });
+    }
 
-    // ── Conclusions ─────────────────────────────────────────────────────────
-    heading(doc, "Анализ и выводы");
-    for (const line of conclusions(report, options, scored)) bullet(doc, line);
+    const roster =
+      options.roster && options.roster.length > 0
+        ? options.roster
+        : [...new Set(report.perAccountant.map((a) => a.accountant))];
+    const accTotals = new Map(report.perAccountant.map((a) => [a.accountant, a]));
 
-    // ── Per-accountant table ────────────────────────────────────────────────
-    heading(doc, "Результаты по бухгалтерам");
+    // ── Layout ──────────────────────────────────────────────────────────────
     const left = doc.page.margins.left;
-    const col = { name: left, score: left + 220, chats: left + 300, low: left + 380 };
-    doc.font("Bold").fontSize(9).fillColor("#555");
-    const headerY = doc.y;
-    doc.text("Бухгалтер", col.name, headerY, { lineBreak: false });
-    doc.text("Оценка", col.score, headerY, { lineBreak: false });
-    doc.text("Чатов", col.chats, headerY, { lineBreak: false });
-    doc.text("Низких", col.low, headerY);
-    doc.moveDown(0.2);
-    doc.font("Regular").fontSize(10);
-    for (const a of [...scored].sort((x, y) => y.avgScore - x.avgScore)) {
-      ensureRoom(doc);
-      const y = doc.y;
-      const band = bandFor(a.avgScore);
-      const color =
-        band === "Критично" ? "#b91c1c" : band === "Плохо" ? "#b45309" : "#166534";
-      doc.fillColor("#222").text(a.accountant, col.name, y, { lineBreak: false, width: 210 });
-      doc.fillColor(color).text(`${a.avgScore}%`, col.score, y, { lineBreak: false });
-      doc.fillColor("#222").text(String(a.count), col.chats, y, { lineBreak: false });
-      doc.text(a.lowCount ? String(a.lowCount) : "—", col.low, y);
-    }
-    doc.fillColor("#222").text("", left, doc.y); // reset x position
+    const nameW = 130;
+    const dayW = { pct: 30, low: 16, n: 16 };
+    const dayBlockW = dayW.pct + dayW.low + dayW.n;
+    const totalW = isMultiDay ? 40 + 20 : 0;
+    const rowH = 15;
 
-    // ── Critical chats (detail lives here, not in the message) ──────────────
-    const crit = report.criticalChats ?? [];
-    if (crit.length > 0) {
-      heading(doc, `Критичные чаты (${crit.length})`);
-      for (const c of crit) {
-        ensureRoom(doc);
-        const who = c.accountant ? ` — ${c.accountant}` : "";
-        const why = c.reasons.length ? `: ${c.reasons.join("; ")}` : ` (оценка ${c.score}%)`;
-        bullet(doc, `№${c.chat_agr_no}${c.chat_name ? ` ${c.chat_name}` : ""}${who}${why}`);
-      }
-    }
-
-    // ── Violations ──────────────────────────────────────────────────────────
-    const viol = (options.violations ?? []).filter((v) => v.accountant);
-    if (viol.length > 0) {
-      heading(doc, "Нарушения");
-      for (const v of viol) {
-        ensureRoom(doc);
-        const parts = [
-          v.severity ?? "среднее",
-          [v.violation_type, v.note].filter(Boolean).join(" — "),
-          typeof v.sanction === "number" && v.sanction > 0
-            ? `штраф ${fmtNum(v.sanction)} драм`
-            : "",
-        ].filter(Boolean);
-        bullet(doc, `${v.accountant} (${fmtDay(v.vdate)}): ${parts.join(" · ")}`);
-      }
-    }
-
-    // ── Requests per day ────────────────────────────────────────────────────
-    const reqRows = (options.requests ?? []).filter(
-      (r) => r.count > 0 && inRoster(r.accountant)
+    doc.font("Bold").fontSize(14).fillColor(COLORS.text)
+      .text("Аналитика качества бухгалтерии", left, doc.y);
+    doc.font("Regular").fontSize(9).fillColor("#6b7280").text(
+      `Период: ${fmtDayFull(fromISO)} — ${fmtDayFull(toISO)}` +
+        (allDates.length > dates.length
+          ? ` (показаны последние ${dates.length} дн.)`
+          : "")
     );
-    if (reqRows.length > 0) {
-      const days = options.requestDays && options.requestDays > 1 ? options.requestDays : 1;
-      heading(doc, "Кол-во запросов за день");
-      for (const r of reqRows) {
-        ensureRoom(doc);
-        bullet(doc, `${r.accountant} — ${Math.round(r.count / days)}`);
+    doc.moveDown(0.6);
+
+    let y = doc.y;
+
+    const cellRect = (x: number, w: number, cell: Cell) => {
+      doc.rect(x, y, w, rowH).fillAndStroke(cell.bg, COLORS.border);
+      doc
+        .font(cell.bold ? "Bold" : "Regular")
+        .fontSize(7)
+        .fillColor(cell.fg);
+      doc.text(cell.text, x + 2, y + 4, {
+        width: w - 4,
+        align: cell.align ?? "center",
+        lineBreak: false,
+      });
+    };
+
+    /** One grid row: label + per-day cell triplets + optional Итого pair. */
+    const drawRow = (
+      label: Cell,
+      perDay: (date: string) => [Cell, Cell, Cell] | [Cell],
+      totalCells?: [Cell, Cell] | [Cell]
+    ) => {
+      if (y + rowH > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        y = doc.page.margins.top;
       }
+      cellRect(left, nameW, { ...label, align: label.align ?? "left" });
+      let x = left + nameW;
+      for (const d of dates) {
+        const cells = perDay(d);
+        if (cells.length === 1) {
+          cellRect(x, dayBlockW, cells[0]);
+        } else {
+          cellRect(x, dayW.pct, cells[0]);
+          cellRect(x + dayW.pct, dayW.low, cells[1]);
+          cellRect(x + dayW.pct + dayW.low, dayW.n, cells[2]);
+        }
+        x += dayBlockW;
+      }
+      if (isMultiDay && totalCells) {
+        if (totalCells.length === 1) {
+          cellRect(x, totalW, totalCells[0]);
+        } else {
+          cellRect(x, 40, totalCells[0]);
+          cellRect(x + 40, 20, totalCells[1]);
+        }
+      }
+      y += rowH;
+    };
+
+    const th = (text: string): Cell => ({
+      text,
+      bg: COLORS.headerBg,
+      fg: COLORS.text,
+      bold: true,
+    });
+    const plain = (text: string, bg = "#ffffff", fg = COLORS.text): Cell => ({
+      text,
+      bg,
+      fg,
+    });
+
+    // Header row 1: dates.
+    drawRow(
+      th("Бухгалтер"),
+      (d) => [th(fmtShortDate(d))],
+      [th("Итого")]
+    );
+    // Header row 2: sub-columns.
+    drawRow(
+      { text: "", bg: COLORS.headerBg, fg: COLORS.text },
+      () => [th("%"), th("⚠"), th("N")],
+      [th("%"), th("N")]
+    );
+
+    // ── Summary rows ────────────────────────────────────────────────────────
+    const summary = (
+      label: string,
+      value: (d: DaySummary) => string,
+      total: string,
+      labelBg = COLORS.labelBg,
+      cellBg = "#ffffff"
+    ) =>
+      drawRow(
+        { text: label, bg: labelBg, fg: COLORS.text, bold: true },
+        (d) => {
+          const day = dayMap.get(d);
+          return [plain(day ? value(day) : "—", cellBg, day ? COLORS.text : COLORS.muted)];
+        },
+        [plain(total, cellBg, COLORS.text)]
+      );
+
+    summary(
+      "Чаты без ответственных",
+      () => "—",
+      String(report.totals.chatsWithoutResponsible || "—")
+    );
+    summary(
+      "Активных чатов",
+      (d) => (d.activeChats !== undefined ? String(d.activeChats) : "—"),
+      String(report.totals.activeChats),
+      COLORS.summaryBg
+    );
+    summary(
+      "Оценено чатов всего",
+      (d) => String(d.evaluatedChats),
+      String(report.totals.evaluatedChats),
+      COLORS.summaryBg
+    );
+    summary("Отлично", (d) => String(d.distribution["Отлично"]), String(report.distribution["Отлично"]), COLORS.excellent);
+    summary("Хорошо", (d) => String(d.distribution["Хорошо"]), String(report.distribution["Хорошо"]), COLORS.good);
+    summary("Плохо", (d) => String(d.distribution["Плохо"]), String(report.distribution["Плохо"]), COLORS.bad);
+    summary("Критично", (d) => String(d.distribution["Критично"]), String(report.distribution["Критично"]), COLORS.critical);
+
+    // Сервис Бухгалтерии — bold, colour-coded like the sheet.
+    drawRow(
+      { text: "Сервис Бухгалтерии", bg: COLORS.headerBg, fg: COLORS.text, bold: true },
+      (d) => {
+        const day = dayMap.get(d);
+        if (!day || day.evaluatedChats === 0)
+          return [plain("—", "#ffffff", COLORS.muted)];
+        const c = scoreColors(day.serviceQualityPct);
+        return [{ text: String(day.serviceQualityPct), bg: c.bg, fg: c.fg, bold: true }];
+      },
+      [
+        {
+          text: String(report.serviceQualityPct),
+          bg: scoreColors(report.serviceQualityPct).bg,
+          fg: scoreColors(report.serviceQualityPct).fg,
+          bold: true,
+        },
+      ]
+    );
+
+    // ── Per-accountant rows ─────────────────────────────────────────────────
+    for (const acc of roster) {
+      const t = accTotals.get(acc);
+      drawRow(
+        { text: acc, bg: COLORS.labelBg, fg: COLORS.text, bold: true },
+        (d) => {
+          const cell = dayAccMap.get(`${d}|${acc}`);
+          if (!cell || cell.score < 0) {
+            return [
+              plain("—", "#ffffff", COLORS.muted),
+              plain("", "#ffffff", COLORS.muted),
+              plain("", "#ffffff", COLORS.muted),
+            ];
+          }
+          const c = scoreColors(cell.score);
+          return [
+            { text: String(cell.score), bg: c.bg, fg: c.fg },
+            plain(cell.low ? String(cell.low) : "", "#ffffff", COLORS.red.fg),
+            plain(String(cell.count), "#ffffff", "#6b7280"),
+          ];
+        },
+        t && t.avgScore >= 0
+          ? [
+              {
+                text: String(t.avgScore),
+                bg: scoreColors(t.avgScore).bg,
+                fg: scoreColors(t.avgScore).fg,
+                bold: true,
+              },
+              plain(String(t.count), "#ffffff", "#6b7280"),
+            ]
+          : [plain("—", "#ffffff", COLORS.muted), plain("", "#ffffff", COLORS.muted)]
+      );
     }
 
-    doc.moveDown(1.5);
-    doc.fontSize(8).fillColor("#999")
-      .text(`Сформировано автоматически · ${new Date().toISOString().slice(0, 10)}`);
+    doc.font("Regular").fontSize(7).fillColor(COLORS.muted).text(
+      `% — средняя оценка · ⚠ — низкие оценки (Плохо/Критично) · N — оценено чатов · сформировано ${new Date().toISOString().slice(0, 10)}`,
+      left,
+      y + 8
+    );
 
     doc.end();
   });

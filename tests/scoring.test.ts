@@ -300,3 +300,25 @@ test("isTaskDue: open task at/past its (postponed) due date", () => {
     false
   );
 });
+
+// --- mailingPeriodOf: the рассылки cycle rolls over on the 28th --------------
+import { mailingPeriodOf, prevMailingPeriod } from "../src/lib/scoring";
+
+test("mailingPeriodOf: dates before the 28th belong to the current month's cycle", () => {
+  assert.equal(mailingPeriodOf("2026-06-01"), "202606");
+  assert.equal(mailingPeriodOf("2026-06-15"), "202606");
+  assert.equal(mailingPeriodOf("2026-06-27"), "202606");
+});
+
+test("mailingPeriodOf: the 28th and later roll into the NEXT month's cycle", () => {
+  assert.equal(mailingPeriodOf("2026-06-28"), "202607");
+  assert.equal(mailingPeriodOf("2026-06-30"), "202607");
+  // December rolls into January of the next year.
+  assert.equal(mailingPeriodOf("2026-12-28"), "202701");
+  assert.equal(mailingPeriodOf("2026-12-31"), "202701");
+});
+
+test("prevMailingPeriod steps back one cycle, across year boundaries", () => {
+  assert.equal(prevMailingPeriod("202607"), "202606");
+  assert.equal(prevMailingPeriod("202701"), "202612");
+});

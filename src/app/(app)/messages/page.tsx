@@ -68,11 +68,13 @@ export default async function MessagesPage({
     client?: string;
   };
 }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const thisMonday = mondayOf(today);
+  // Default window: NO dates → getDailyAnalytics resolves to the latest day
+  // that actually has evaluations, so the report is a fresh single-day one
+  // (the boss's ask: «за один день, каждый день новая информация»). Explicit
+  // dates from the filter form still win.
   const filters = {
-    from: searchParams.from || thisMonday,
-    to: searchParams.to || today,
+    from: searchParams.from || undefined,
+    to: searchParams.to || undefined,
     accountant: searchParams.accountant || undefined,
     client: searchParams.client || undefined,
   };
@@ -82,18 +84,15 @@ export default async function MessagesPage({
     listAccountants(),
   ]);
 
-  const mondayISO = mondayOf(resolved.to);
-  const isAlreadyWeekStart = resolved.from === mondayISO;
   const isWeek = isWeekFromMonday(resolved.from, resolved.to);
   const isMultiDay = resolved.from !== resolved.to;
 
-  // Fetch violations, weekly-star report, previous-week baseline and
-  // client-request counts in parallel.
-  const [violations, weeklyReport, prevWeekReport, requests] = await Promise.all([
+  // Fetch violations (window + month-to-date for the «итого» fine totals),
+  // previous-week baseline and client-request counts in parallel.
+  const monthStart = `${resolved.to.slice(0, 7)}-01`;
+  const [violations, monthViolations, prevWeekReport, requests] = await Promise.all([
     listViolations({ from: resolved.from, to: resolved.to, accountant: filters.accountant }),
-    isAlreadyWeekStart && isMultiDay
-      ? Promise.resolve(report)
-      : getReport({ from: mondayISO, to: resolved.to, accountant: filters.accountant }),
+    listViolations({ from: monthStart, to: resolved.to, accountant: filters.accountant }),
     isWeek
       ? getReport({
           from: addDays(resolved.from, -7),
@@ -110,14 +109,20 @@ export default async function MessagesPage({
   const rosterNames = canonicalAccountants.map((a) => a.name);
   const requestDays = rangeDates(resolved.from, resolved.to).length;
 
+  // Month-to-date fine totals per accountant («итого сумма штрафа … драм»).
+  const monthFineTotals: Record<string, number> = {};
+  for (const v of monthViolations) {
+    if (!v.accountant || typeof v.sanction !== "number" || v.sanction <= 0) continue;
+    monthFineTotals[v.accountant] = (monthFineTotals[v.accountant] ?? 0) + v.sanction;
+  }
+
   const reportMessage = buildReportMessage(report, {
     violations,
-    previous,
-    weeklyReport,
     sheetUrl: process.env.REPORT_SHEET_URL,
     roster: rosterNames,
     requests,
     requestDays,
+    monthFineTotals,
   });
   const botReady = telegramConfigured();
 
@@ -189,8 +194,7 @@ export default async function MessagesPage({
       <div>
         <h1 className="text-xl font-semibold">Сообщение для Telegram</h1>
         <p className="text-sm text-gray-500">
-          Аналитика за <span className="font-medium">{periodLabel}</span>
-          {previous ? " · с трендом к прошлому периоду" : ""}.{" "}
+          Ежедневный отчет за <span className="font-medium">{periodLabel}</span>.{" "}
           {botReady
             ? "Бот настроен — кнопка «Отправить в Telegram» активна."
             : "Бот не настроен (задайте TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)."}

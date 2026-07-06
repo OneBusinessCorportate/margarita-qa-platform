@@ -43,114 +43,28 @@ const BAND_EMOJI: Record<QualityBand, string> = {
 };
 
 export interface ReportMessageOptions {
-  /** Violations for the period — grouped per accountant in the message. */
+  /** Violations for the reported window — grouped per accountant. */
   violations?: Violation[];
   /** Optional Google-Sheet (or any) link appended at the end. */
   sheetUrl?: string;
   /** ISO date shown in the header; defaults to the filter's `to`, else today. */
   date?: string;
   /**
-   * The preceding comparable period, for the ▲/▼ trend on the service line.
-   * Supplied by getDailyAnalytics; omit to skip the trend.
-   */
-  previous?: DailyReport | null;
-  /**
-   * The current week's report (Mon–today), used to compute weekly star counts.
-   * When provided, each star-of-day entry shows "Звезда N из 5 на этой неделе".
-   */
-  weeklyReport?: DailyReport | null;
-  /** Cap on how many rows each detail list prints before "+ ещё N". */
-  maxList?: number;
-  /**
    * Canonical employee names (the active accountant roster). When provided,
-   * the stars / results / requests sections show ONLY these people — import
-   * artifacts ("-", "#N/A") and ex-employees found in old evaluations are
-   * silently skipped. The overall service % still reflects every evaluated
-   * chat.
+   * the stars / requests sections show ONLY these people — import artifacts
+   * ("-", "#N/A") and ex-employees found in old evaluations are silently
+   * skipped. The overall service % still reflects every evaluated chat.
    */
   roster?: string[];
   /** Client-request totals per accountant for the «Кол-во запросов» section. */
   requests?: { accountant: string; count: number }[];
   /** Days in the window — divides `requests` totals into a per-day figure. */
   requestDays?: number;
-}
-
-/**
- * Compute how many times each accountant was "star of the day" in a weekly
- * report. A star is awarded to whoever scored highest on a given day
- * (100% takes priority; if nobody hit 100%, the day's top scorer wins).
- * Returns a map of accountant name → star count.
- */
-function computeWeeklyStarCounts(
-  weekReport: DailyReport,
-  roster?: Set<string>
-): Map<string, number> {
-  const counts = new Map<string, number>();
-  const source = weekReport.perDayPerAccountant;
-  if (!source || source.length === 0) return counts;
-
-  const byDate = new Map<string, { accountant: string; avgScore: number }[]>();
-  for (const d of source) {
-    if (roster && !roster.has(d.accountant)) continue;
-    if (!byDate.has(d.date)) byDate.set(d.date, []);
-    byDate.get(d.date)!.push(d);
-  }
-
-  for (const dayScores of byDate.values()) {
-    const valid = dayScores.filter((d) => d.avgScore > 0);
-    if (valid.length === 0) continue;
-    const perfect = valid.filter((d) => d.avgScore === 100);
-    const topScore = valid.reduce((m, d) => Math.max(m, d.avgScore), 0);
-    const dayStars = perfect.length > 0 ? perfect : valid.filter((d) => d.avgScore === topScore);
-    for (const s of dayStars) {
-      counts.set(s.accountant, (counts.get(s.accountant) ?? 0) + 1);
-    }
-  }
-  return counts;
-}
-
-/** Number of unique evaluation days in a report (used as the "out of N" denominator). */
-function evalDayCount(report: DailyReport): number {
-  const source = report.perDayPerAccountant;
-  if (!source) return 1; // single-day window
-  return new Set(source.map((d) => d.date)).size;
-}
-
-/**
- * "🟢▲ +0.6 п.п. к 10.06 — SLA улучшился" / "🔴▼ −1.2 п.п. — ухудшение SLA" vs the previous period.
- * Accepts the full current report to compute criteria-based reason.
- */
-function fmtTrend(cur: DailyReport, prev: DailyReport | null | undefined): string {
-  if (!prev) return "";
-  const curPct = cur.serviceQualityPct;
-  const prevPct = prev.serviceQualityPct;
-  const d = Math.round((curPct - prevPct) * 10) / 10;
-  const label = fmtDay(prev.filters.to ?? prev.filters.from ?? "");
-  const to = label ? ` к ${label}` : "";
-
-  let reason = "";
-  if (cur.criteriaAvg && prev.criteriaAvg) {
-    const slaDiff = Math.round((cur.criteriaAvg.sla - prev.criteriaAvg.sla) * 100) / 100;
-    const accDiff = Math.round((cur.criteriaAvg.accuracy - prev.criteriaAvg.accuracy) * 100) / 100;
-    const parts: string[] = [];
-    if (Math.abs(slaDiff) >= 0.05) {
-      parts.push(`SLA ${slaDiff > 0 ? "улучшился" : "ухудшился"} (${slaDiff > 0 ? "+" : ""}${slaDiff.toFixed(2)})`);
-    }
-    if (Math.abs(accDiff) >= 0.05) {
-      parts.push(`Точность ${accDiff > 0 ? "улучшилась" : "ухудшилась"} (${accDiff > 0 ? "+" : ""}${accDiff.toFixed(2)})`);
-    }
-    reason = parts.join(", ");
-  }
-  if (!reason) {
-    const critDiff = cur.distribution["Критично"] - prev.distribution["Критично"];
-    if (critDiff > 0) reason = `критичных оценок больше на ${critDiff}`;
-    else if (critDiff < 0) reason = `критичных оценок меньше на ${Math.abs(critDiff)}`;
-  }
-
-  const reasonSuffix = reason ? ` — ${reason}` : "";
-  if (d > 0) return `  🟢▲ +${d} п.п.${to}${reasonSuffix}`;
-  if (d < 0) return `  🔴▼ ${d} п.п.${to}${reasonSuffix}`;
-  return `  → без изменений${to}`;
+  /**
+   * Month-to-date fine totals (drams) per accountant, for the
+   * «/итого сумма штрафа X драм/» tail on each violation line.
+   */
+  monthFineTotals?: Record<string, number>;
 }
 
 /** Period label for the header: a single day, or "DD.MM — DD.MM" for a range. */
@@ -200,38 +114,35 @@ function fmtDram(n: number): string {
 }
 
 /**
- * Daily accounting analytics message — the simplified structure:
+ * Daily accounting report message — matches the format the department sends:
  *
- *   📊 Аналитика качества бухгалтерии
- *   🗓 DD.MM — DD.MM
+ *   Ежедневный отчет бухгалтерии
  *
- *   🏆 Сервис Бухгалтерии: X%  ▲ +N п.п. к DD.MM — причина
- *   👁 Охват: оценено N из M активных (K%)
+ *   Дата: 15.05
  *
- *   ⭐️ Звезда дня
- *   ⭐️ Имя: 100% — Звезда N из 5 на этой неделе
+ *   Общий уровень сервиса: 84% по отделу
  *
- *   👥 Результаты по бухгалтерам:
- *   🟢 Имя: X% (N чатов)
+ *   Звезда дня
+ *
+ *   ⭐️ Имя: 100% оценка
  *
  *   Нарушения:
- *   — Имя: Предупреждение (3 средних) /итого сумма штрафа 10 000 драм/
+ *   — Имя: 1 000 др + Предупреждение (3 средних) /итого сумма штрафа 7 000 драм/ причина
  *
- *   👔 Менеджеры:
- *   — Имя: 86
+ *   Кол-во запросов за день:
  *
- *   📨 Кол-во запросов за день:
- *   Имя — 99
+ *   Имя — 8
  *
- * People sections are limited to the canonical roster (options.roster); the
- * detailed critical-chat list lives in the PDF attachment, not here.
+ * People sections are limited to the canonical roster (options.roster). On a
+ * violation line, «X др +» is the fine issued in the reported window and
+ * «итого …» is the accountant's month-to-date total (options.monthFineTotals).
  */
 export function buildReportMessage(
   report: DailyReport,
   options: ReportMessageOptions = {}
 ): string {
-  const { totals, serviceQualityPct, coveragePct, perAccountant, filters } = report;
-  const { violations = [], sheetUrl, previous, weeklyReport, roster, requests, requestDays } =
+  const { serviceQualityPct, perAccountant, filters } = report;
+  const { violations = [], sheetUrl, roster, requests, requestDays, monthFineTotals = {} } =
     options;
   const dateISO =
     options.date ??
@@ -242,13 +153,11 @@ export function buildReportMessage(
   const inRoster = (name: string) => !rosterSet || rosterSet.has(name);
   const lines: string[] = [];
 
-  lines.push("📊 Аналитика качества бухгалтерии");
-  lines.push(`🗓 ${periodHeader(report, dateISO)}`);
+  lines.push("Ежедневный отчет бухгалтерии");
   lines.push("");
-  lines.push(`🏆 Сервис Бухгалтерии: ${serviceQualityPct}%${fmtTrend(report, previous)}`);
-  lines.push(
-    `👁 Охват: оценено ${totals.evaluatedChats} из ${totals.activeChats} активных (${coveragePct}%)`
-  );
+  lines.push(`Дата: ${periodHeader(report, dateISO)}`);
+  lines.push("");
+  lines.push(`Общий уровень сервиса: ${serviceQualityPct}% по отделу`);
 
   // ── Stars of the day (roster only) ─────────────────────────────────────────
   const scored = perAccountant.filter(
@@ -262,81 +171,64 @@ export function buildReportMessage(
       ? scored.filter((a) => a.avgScore === topScore)
       : [];
 
-  // Weekly star counts: how many days each accountant was star this week (out of 5 max).
-  const weeklyStarCounts = weeklyReport
-    ? computeWeeklyStarCounts(weeklyReport, rosterSet ?? undefined)
-    : new Map<string, number>();
-  const weekDays = weeklyReport ? 5 : 0;
-
   if (stars.length) {
     lines.push("");
-    lines.push("⭐️ Звезда дня");
+    lines.push("Звезда дня");
+    lines.push("");
     for (const s of stars) {
-      const weekCount = weeklyStarCounts.get(s.accountant) ?? 1;
-      const weekSuffix =
-        weekDays > 0 ? ` — Звезда ${weekCount} из ${weekDays} на этой неделе` : "";
-      lines.push(`⭐️ ${s.accountant}: ${s.avgScore}%${weekSuffix}`);
+      lines.push(`⭐️ ${s.accountant}: ${s.avgScore}% оценка`);
     }
   }
 
-  // ── All accountant results (roster only) ───────────────────────────────────
-  if (scored.length > 0) {
-    const sorted = [...scored].sort((a, b) => b.avgScore - a.avgScore);
-    lines.push("");
-    lines.push("👥 Результаты по бухгалтерам:");
-    lines.push("");
-    for (const a of sorted) {
-      const emoji = BAND_EMOJI[bandFor(a.avgScore)];
-      lines.push(`${emoji} ${a.accountant}: ${a.avgScore}% (${a.count} чатов)`);
-    }
-  }
-
-  // ── Violations — one line per person: action, severity counts, fine total ──
+  // ── Violations — one line per person ───────────────────────────────────────
+  // «{X др + }Предупреждение (N средних){ /итого сумма штрафа Y драм/}{ причина}»
+  // X = fines issued in this window; Y = the month-to-date total.
   const withAcc = violations.filter((v) => v.accountant);
   if (withAcc.length) {
-    const byAcc = new Map<string, { sevMap: Map<string, number>; fine: number }>();
+    const byAcc = new Map<
+      string,
+      { sevMap: Map<string, number>; fine: number; reasons: string[] }
+    >();
     for (const v of withAcc) {
       const acc = v.accountant as string;
       const sev = v.severity ?? "среднее";
-      const entry = byAcc.get(acc) ?? { sevMap: new Map<string, number>(), fine: 0 };
+      const entry =
+        byAcc.get(acc) ?? { sevMap: new Map<string, number>(), fine: 0, reasons: [] };
       entry.sevMap.set(sev, (entry.sevMap.get(sev) ?? 0) + 1);
       if (typeof v.sanction === "number" && v.sanction > 0) entry.fine += v.sanction;
+      const reason = (v.violation_type ?? "").trim();
+      if (reason && !entry.reasons.includes(reason)) entry.reasons.push(reason);
       byAcc.set(acc, entry);
     }
     lines.push("");
     lines.push("Нарушения:");
-    lines.push("");
-    for (const [acc, { sevMap, fine }] of byAcc) {
+    for (const [acc, { sevMap, fine, reasons }] of byAcc) {
       const action = worstViolationAction(sevMap);
       const sevParts = [...sevMap.entries()]
         .map(([sev, n]) => fmtSeverityCount(sev, n))
         .join(", ");
-      const fineSuffix = fine > 0 ? ` /итого сумма штрафа ${fmtDram(fine)} драм/` : "";
-      lines.push(`— ${acc}: ${action} (${sevParts})${fineSuffix}`);
+      const finePrefix = fine > 0 ? `${fmtDram(fine)} др + ` : "";
+      const monthTotal = monthFineTotals[acc] ?? fine;
+      const totalSuffix =
+        monthTotal > 0 ? ` /итого сумма штрафа ${fmtDram(monthTotal)} драм/` : "";
+      const reasonSuffix = reasons.length ? ` ${reasons.join("; ")}` : "";
+      lines.push(`— ${acc}: ${finePrefix}${action} (${sevParts})${totalSuffix}${reasonSuffix}`);
     }
   }
 
-  // ── Manager results — simple lines ─────────────────────────────────────────
-  const mScored = (report.managerScores ?? []).filter((a) => a.count > 0 && a.avgScore >= 0);
-  if (mScored.length > 0) {
-    lines.push("");
-    lines.push("👔 Менеджеры:");
-    lines.push("");
-    for (const a of [...mScored].sort((a, b) => b.avgScore - a.avgScore)) {
-      lines.push(`— ${a.accountant}: ${a.avgScore}`);
-    }
-  }
-
-  // ── Client requests per day (roster only) ──────────────────────────────────
+  // ── Client requests per day (roster only, roster order) ────────────────────
   const reqRows = (requests ?? []).filter((r) => r.count > 0 && inRoster(r.accountant));
   if (reqRows.length > 0) {
+    if (rosterSet) {
+      const order = new Map(roster!.map((n, i) => [n, i]));
+      reqRows.sort((a, b) => (order.get(a.accountant) ?? 99) - (order.get(b.accountant) ?? 99));
+    }
     const days = requestDays && requestDays > 1 ? requestDays : 1;
     lines.push("");
-    lines.push("📨 Кол-во запросов за день:");
+    lines.push("Кол-во запросов за день:");
     lines.push("");
     for (const r of reqRows) {
-      const perDay = Math.round(r.count / days);
-      lines.push(`${r.accountant} — ${perDay}`);
+      lines.push(`${r.accountant} — ${Math.round(r.count / days)}`);
     }
   }
 

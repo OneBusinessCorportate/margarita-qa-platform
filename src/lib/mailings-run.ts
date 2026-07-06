@@ -11,6 +11,7 @@ import { getServiceClient } from "@/lib/supabase/server";
 import { detectAllSignals, deriveStatus, type MailingSignal } from "@/lib/mailings-detect";
 import { telegramChatId } from "@/lib/chat-list";
 import { getAnthropic, CLAUDE_MODEL } from "@/lib/anthropic";
+import { MAILING_CYCLE_START_DAY, mailingPeriodOf } from "@/lib/scoring";
 
 export interface DetectRunResult {
   period: string;
@@ -24,21 +25,26 @@ export interface DetectRunResult {
   status?: number;
 }
 
-/** Current Yerevan month as a YYYYMM period key. */
+/** The mailing cycle (YYYYMM key) the current Yerevan date belongs to. */
 export function currentYerevanPeriod(): string {
   const now = new Date(
     new Date().toLocaleString("en-US", { timeZone: "Asia/Yerevan" })
   );
-  return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return mailingPeriodOf(iso);
 }
 
-/** Armenia is UTC+4 (no DST). Subtracts 4 h so UTC midnight = Yerevan month start. */
+/**
+ * Message-scan bounds for a mailing cycle: the 28th of the PREVIOUS month
+ * (Yerevan midnight) up to the 28th of the period's month. Armenia is UTC+4
+ * (no DST), so Yerevan midnight = UTC minus 4 h.
+ */
 function yerevanPeriodBounds(period: string): { start: string; end: string } {
   const y = Number(period.slice(0, 4));
   const m = Number(period.slice(4, 6)); // 1-based
   const offsetMs = 4 * 60 * 60 * 1000; // UTC+4
-  const start = new Date(Date.UTC(y, m - 1, 1) - offsetMs);
-  const end = new Date(Date.UTC(y, m, 1) - offsetMs);
+  const start = new Date(Date.UTC(y, m - 2, MAILING_CYCLE_START_DAY) - offsetMs);
+  const end = new Date(Date.UTC(y, m - 1, MAILING_CYCLE_START_DAY) - offsetMs);
   return { start: start.toISOString(), end: end.toISOString() };
 }
 

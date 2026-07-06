@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { sendDocumentToTelegram, sendToTelegram } from "@/lib/telegram";
-import { assembleReport } from "@/lib/report-data";
+import { assemblePdfReport } from "@/lib/report-data";
 import { buildReportPdf } from "@/lib/report-pdf";
 
 export const dynamic = "force-dynamic";
@@ -39,19 +39,12 @@ export async function POST(req: Request) {
 
   if (pdf) {
     try {
-      const { report, previous, resolved, violations, roster, requests, requestDays } =
-        await assembleReport(pdf.from, pdf.to);
-      const bytes = await buildReportPdf(report, {
-        previous,
-        violations,
-        roster,
-        requests,
-        requestDays,
-      });
+      const { report, resolved, roster } = await assemblePdfReport(pdf.from, pdf.to);
+      const bytes = await buildReportPdf(report, { roster });
       const docResult = await sendDocumentToTelegram(
         `report-${resolved.from}_${resolved.to}.pdf`,
         bytes,
-        "📎 Полный отчёт с анализом"
+        "📎 Таблица мониторинга за период"
       );
       if (!docResult.ok) {
         // The text already went out — report the attachment failure without
