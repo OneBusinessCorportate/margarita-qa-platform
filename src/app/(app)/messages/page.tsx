@@ -26,15 +26,6 @@ function fmtDay(iso: string): string {
   return d && m ? `${d}.${m}.${y}` : iso;
 }
 
-/** True for any multi-day period that starts on Monday (full week or partial). */
-function isWeekFromMonday(from?: string, to?: string): boolean {
-  if (!from || !to || from === to) return false;
-  try {
-    const f = new Date(from + "T00:00:00Z");
-    return f.getUTCDay() === 1;
-  } catch { return false; }
-}
-
 function rangeDates(from: string, to: string): string[] {
   const result: string[] = [];
   const end = new Date(to + "T00:00:00Z");
@@ -80,31 +71,32 @@ export default async function MessagesPage({
     client: searchParams.client || undefined,
   };
 
-  const [{ report, previous, resolved }, allAccountants] = await Promise.all([
+  const [{ report, resolved }, allAccountants] = await Promise.all([
     getDailyAnalytics(filters),
     listAccountants(),
   ]);
 
-  const isWeek = isWeekFromMonday(resolved.from, resolved.to);
   const isMultiDay = resolved.from !== resolved.to;
 
-  // Fetch violations (window + week for the пятничный отчёт + month-to-date
-  // for the «итого» fine totals), previous-week baseline and client-request
-  // counts in parallel.
+  // Fetch violations (window + week for the пятничного отчёта + month-to-date
+  // for the «итого» fine totals), the week-scoped reports for the Armenian
+  // weekly summary, and client-request counts in parallel. The weekly summary
+  // no longer depends on the page filter being a Monday-started week — it is
+  // ALWAYS built over the week containing the reported day (Mon → that day)
+  // vs the previous full week, so the Friday report is ready on any view.
   const monthStart = `${resolved.to.slice(0, 7)}-01`;
   const weekStart = mondayOf(resolved.to);
-  const [violations, weekViolations, monthViolations, prevWeekReport, requests] =
+  const [violations, weekViolations, monthViolations, thisWeekReport, prevWeekReport, requests] =
     await Promise.all([
       listViolations({ from: resolved.from, to: resolved.to, accountant: filters.accountant }),
       listViolations({ from: weekStart, to: resolved.to, accountant: filters.accountant }),
       listViolations({ from: monthStart, to: resolved.to, accountant: filters.accountant }),
-      isWeek
-        ? getReport({
-            from: addDays(resolved.from, -7),
-            to: addDays(resolved.from, -1),
-            accountant: filters.accountant,
-          })
-        : Promise.resolve(null),
+      getReport({ from: weekStart, to: resolved.to, accountant: filters.accountant }),
+      getReport({
+        from: addDays(weekStart, -7),
+        to: addDays(weekStart, -1),
+        accountant: filters.accountant,
+      }),
       countClientRequests(resolved.from, resolved.to),
     ]);
 
@@ -158,16 +150,13 @@ export default async function MessagesPage({
     waitingCount: (report.unansweredChats ?? []).filter((c) => c.accountant === name).length,
   }));
 
-  // For the weekly summary, compare against the previous full Mon–Sun week.
-  const weeklyMessage = isWeek
-    ? buildWeeklyReportMessage(
-        report,
-        prevWeekReport && prevWeekReport.totals.evaluatedChats > 0
-          ? prevWeekReport
-          : previous ?? null,
-        { roster: rosterNames }
-      )
-    : null;
+  // The Armenian weekly summary — this week (Mon → reported day) against the
+  // previous full Mon–Sun week. Always built; this is THE пятничный отчёт.
+  const weeklyMessage = buildWeeklyReportMessage(
+    thisWeekReport,
+    prevWeekReport.totals.evaluatedChats > 0 ? prevWeekReport : null,
+    { roster: rosterNames }
+  );
 
   // ── Spreadsheet grid data (unified for single-day and multi-day) ───────────
   const periodDates = rangeDates(resolved.from, resolved.to);
@@ -246,17 +235,36 @@ export default async function MessagesPage({
         </pre>
       </div>
 
-      {/* Friday fines review — weekly штрафы per person, Margarita's control list */}
+      {/* Пятничный отчёт — the Armenian weekly summary (service %, movers,
+          problems, roster week-over-week, star of the week). Always visible. */}
       <div className="card p-3 space-y-2">
         <div className="flex items-center justify-between">
           <div className="text-sm font-medium">
-            Пятничный отчёт по штрафам
+            📊 Пятничный отчёт (еженедельный)
             {isFriday && (
               <span className="ml-2 inline-block rounded bg-indigo-100 text-indigo-700 font-semibold px-1.5 py-0.5 text-[11px]">
                 сегодня пятница — пора отправлять
               </span>
             )}
           </div>
+          <div className="flex gap-2">
+            <CopyButton label="Копировать отчёт" className="btn-primary" text={weeklyMessage} />
+            <SendTelegramButton
+              text={weeklyMessage}
+              configured={botReady}
+              label="Отправить в Telegram"
+            />
+          </div>
+        </div>
+        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
+{weeklyMessage}
+        </pre>
+      </div>
+
+      {/* Weekly fines list — штрафы per person, Margarita's control list */}
+      <div className="card p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">Штрафы за неделю</div>
           <div className="flex gap-2">
             <CopyButton label="Копировать" className="btn-primary" text={fridayMessage} />
             <SendTelegramButton
@@ -270,19 +278,6 @@ export default async function MessagesPage({
 {fridayMessage}
         </pre>
       </div>
-
-      {/* Weekly report — shown for any period starting on Monday */}
-      {isWeek && weeklyMessage && (
-        <div className="card p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-medium">📊 Еженедельный отчёт для Эмилии</div>
-            <CopyButton label="Копировать отчёт" className="btn-primary" text={weeklyMessage} />
-          </div>
-          <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
-{weeklyMessage}
-          </pre>
-        </div>
-      )}
 
       {/* ── Spreadsheet monitoring grid (single-day and multi-day) ────────────── */}
       {periodAccountants.length > 0 && (
