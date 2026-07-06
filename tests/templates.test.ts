@@ -168,20 +168,41 @@ test("friday fines message lists weekly fines with month totals and clean list",
   );
   assert.match(msg, /^Пятничный отчет по штрафам/);
   assert.match(msg, /Неделя: 29\.06 — 03\.07/);
-  // Sorted by weekly fine: Аваг (2000) before Лилит (1000).
+  // Лилит: 3 средних за неделю → 1 000 др каждое (manual 1000 on one of them
+  // matches the rule), итого 3 000 — sorted above Аваг (2 000 manual).
   const avag = msg.indexOf("— Ավագ:");
   const lilit = msg.indexOf("— Լիլիթ:");
-  assert.ok(avag >= 0 && lilit >= 0 && avag < lilit, "sorted by weekly fine desc");
+  assert.ok(avag >= 0 && lilit >= 0 && lilit < avag, "sorted by weekly fine desc");
   assert.match(
     msg,
-    /— Լիլիթ: 1 000 др \+ Предупреждение \(3 средних\) \/итого за месяц 7 000 драм\//
+    /— Լիլիթ: 3 000 др \+ Предупреждение \(3 средних\) \/итого за месяц 7 000 драм\//
   );
   assert.match(
     msg,
     /— Ավագ: 2 000 др \+ Предупреждение \(1 среднее\) \/итого за месяц 20 000 драм\/ Не отправлен запрос первичной документации/
   );
-  assert.match(msg, /Итого за неделю: 4 нарушения, штрафы 3 000 драм/);
+  assert.match(msg, /Итого за неделю: 4 нарушения, штрафы 5 000 драм/);
   assert.match(msg, /Без нарушений: ✅ Գայանե, Հասմիկ/);
+});
+
+test("friday fines: money computed from the Условия rules when sanctions are empty", () => {
+  const msg = buildFridayFinesMessage(
+    [
+      // 2 средних за неделю → 1 000 др за каждый чат
+      viol({ id: "1", accountant: "Նաիրա" }),
+      viol({ id: "2", accountant: "Նաիրա", vdate: "2026-07-01" }),
+      // Критичное → 2 000 др
+      viol({ id: "3", accountant: "Օլյա", severity: "Критичное" }),
+      // 1 среднее за неделю → предупреждение, 0 др
+      viol({ id: "4", accountant: "Դավիթ" }),
+    ],
+    { weekFrom: "2026-06-29", weekTo: "2026-07-03" }
+  );
+  assert.match(msg, /— Նաիրա: 2 000 др \+ Предупреждение \(2 средних\)/);
+  assert.match(msg, /— Օլյա: 2 000 др \+ Выговор \(1 критичное\)/);
+  // Դավիթ: single medium → warning, no money prefix
+  assert.match(msg, /— Դավիթ: Предупреждение \(1 среднее\)/);
+  assert.match(msg, /Итого за неделю: 4 нарушения, штрафы 4 000 драм/);
 });
 
 test("friday fines message with a clean week", () => {

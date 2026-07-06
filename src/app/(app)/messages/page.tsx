@@ -15,6 +15,7 @@ import {
   buildWeeklyReportMessage,
   telegramConfigured,
 } from "@/lib/templates";
+import { computeViolationFines } from "@/lib/violations";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
 import PrintComparisonButton from "@/components/PrintComparisonButton";
@@ -86,11 +87,13 @@ export default async function MessagesPage({
   // vs the previous full week, so the Friday report is ready on any view.
   const monthStart = `${resolved.to.slice(0, 7)}-01`;
   const weekStart = mondayOf(resolved.to);
-  const [violations, weekViolations, monthViolations, thisWeekReport, prevWeekReport, requests] =
+  const yearStart = `${resolved.to.slice(0, 4)}-01-01`;
+  const [violations, weekViolations, monthViolations, yearViolations, thisWeekReport, prevWeekReport, requests] =
     await Promise.all([
       listViolations({ from: resolved.from, to: resolved.to, accountant: filters.accountant }),
       listViolations({ from: weekStart, to: resolved.to, accountant: filters.accountant }),
       listViolations({ from: monthStart, to: resolved.to, accountant: filters.accountant }),
+      listViolations({ from: yearStart, to: resolved.to, accountant: filters.accountant }),
       getReport({ from: weekStart, to: resolved.to, accountant: filters.accountant }),
       getReport({
         from: addDays(weekStart, -7),
@@ -106,12 +109,33 @@ export default async function MessagesPage({
   const rosterNames = canonicalAccountants.map((a) => a.name);
   const requestDays = rangeDates(resolved.from, resolved.to).length;
 
-  // Month-to-date fine totals per accountant («итого сумма штрафа … драм»).
+  // Грубое escalation baselines: this-year counts per accountant BEFORE the
+  // window («1-е за год — предупреждение, 2-е — 10 000, 3-е — 30 000»).
+  const grossCountBefore = (cutoff: string): Record<string, number> => {
+    const out: Record<string, number> = {};
+    for (const v of yearViolations) {
+      if (!v.accountant || v.vdate >= cutoff) continue;
+      if (!(v.severity ?? "").toLowerCase().includes("груб")) continue;
+      out[v.accountant] = (out[v.accountant] ?? 0) + 1;
+    }
+    return out;
+  };
+
+  // Month-to-date fine totals per accountant («итого за месяц … драм»),
+  // computed from the «Условия» rules (manual sanction on a violation wins).
+  const monthFines = computeViolationFines(
+    monthViolations.filter((v) => v.accountant),
+    { grossPrior: grossCountBefore(monthStart) }
+  );
   const monthFineTotals: Record<string, number> = {};
-  for (const v of monthViolations) {
-    if (!v.accountant || typeof v.sanction !== "number" || v.sanction <= 0) continue;
-    monthFineTotals[v.accountant] = (monthFineTotals[v.accountant] ?? 0) + v.sanction;
-  }
+  monthViolations
+    .filter((v) => v.accountant)
+    .forEach((v, i) => {
+      if (monthFines[i] > 0) {
+        monthFineTotals[v.accountant as string] =
+          (monthFineTotals[v.accountant as string] ?? 0) + monthFines[i];
+      }
+    });
 
   const reportMessage = buildReportMessage(report, {
     violations,
@@ -121,12 +145,14 @@ export default async function MessagesPage({
     requestDays,
   });
 
-  // «Пятничный отчёт» — the weekly fines review (Mon → the reported day).
+  // Weekly fines block (Mon → the reported day) — appended to the Armenian
+  // weekly summary so the Friday message is ONE text with the money included.
   const fridayMessage = buildFridayFinesMessage(weekViolations, {
     weekFrom: weekStart,
     weekTo: resolved.to,
     monthFineTotals,
     roster: rosterNames,
+    grossPrior: grossCountBefore(weekStart),
   });
   // The reminder badge must reflect the ACTUAL calendar day (Yerevan time),
   // not resolved.to — which defaults to the latest evaluated day and can lag
@@ -151,12 +177,16 @@ export default async function MessagesPage({
   }));
 
   // The Armenian weekly summary — this week (Mon → reported day) against the
-  // previous full Mon–Sun week. Always built; this is THE пятничный отчёт.
-  const weeklyMessage = buildWeeklyReportMessage(
-    thisWeekReport,
-    prevWeekReport.totals.evaluatedChats > 0 ? prevWeekReport : null,
-    { roster: rosterNames }
-  );
+  // previous full Mon–Sun week — plus the fines block with the computed money.
+  // ONE message, one card: this is THE пятничный отчёт.
+  const weeklyMessage =
+    buildWeeklyReportMessage(
+      thisWeekReport,
+      prevWeekReport.totals.evaluatedChats > 0 ? prevWeekReport : null,
+      { roster: rosterNames }
+    ) +
+    "\n\n" +
+    fridayMessage;
 
   // ── Spreadsheet grid data (unified for single-day and multi-day) ───────────
   const periodDates = rangeDates(resolved.from, resolved.to);
@@ -258,24 +288,6 @@ export default async function MessagesPage({
         </div>
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {weeklyMessage}
-        </pre>
-      </div>
-
-      {/* Weekly fines list — штрафы per person, Margarita's control list */}
-      <div className="card p-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">Штрафы за неделю</div>
-          <div className="flex gap-2">
-            <CopyButton label="Копировать" className="btn-primary" text={fridayMessage} />
-            <SendTelegramButton
-              text={fridayMessage}
-              configured={botReady}
-              label="Отправить в Telegram"
-            />
-          </div>
-        </div>
-        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
-{fridayMessage}
         </pre>
       </div>
 

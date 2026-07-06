@@ -15,6 +15,7 @@
 import type { AccountantScore, DailyReport } from "./report";
 import { MONTHLY_CATEGORIES, bandFor, failingMailings, type QualityBand } from "./scoring";
 import type { Chat, Evaluation, Violation } from "./types";
+import { computeViolationFines } from "./violations";
 
 export function telegramConfigured(): boolean {
   return Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
@@ -243,6 +244,8 @@ export interface FridayFinesOptions {
   monthFineTotals?: Record<string, number>;
   /** Canonical roster — used for the «Без нарушений» line. */
   roster?: string[];
+  /** This-year Грубое counts per accountant BEFORE the week (escalation). */
+  grossPrior?: Record<string, number>;
 }
 
 /**
@@ -264,7 +267,7 @@ export function buildFridayFinesMessage(
   weekViolations: Violation[],
   options: FridayFinesOptions
 ): string {
-  const { weekFrom, weekTo, monthFineTotals = {}, roster = [] } = options;
+  const { weekFrom, weekTo, monthFineTotals = {}, roster = [], grossPrior } = options;
   const lines: string[] = [];
 
   lines.push("Пятничный отчет по штрафам");
@@ -272,11 +275,14 @@ export function buildFridayFinesMessage(
   lines.push(`Неделя: ${fmtDay(weekFrom)} — ${fmtDay(weekTo)}`);
 
   const withAcc = weekViolations.filter((v) => v.accountant);
+  // Money per violation from the «Условия» rules (manual sanction still wins).
+  const fines = computeViolationFines(withAcc, { grossPrior });
   const byAcc = new Map<
     string,
     { sevMap: Map<string, number>; fine: number; count: number; reasons: string[] }
   >();
-  for (const v of withAcc) {
+  for (let i = 0; i < withAcc.length; i++) {
+    const v = withAcc[i];
     const acc = v.accountant as string;
     const sev = v.severity ?? "среднее";
     const entry =
@@ -284,7 +290,7 @@ export function buildFridayFinesMessage(
       { sevMap: new Map<string, number>(), fine: 0, count: 0, reasons: [] };
     entry.sevMap.set(sev, (entry.sevMap.get(sev) ?? 0) + 1);
     entry.count += 1;
-    if (typeof v.sanction === "number" && v.sanction > 0) entry.fine += v.sanction;
+    entry.fine += fines[i];
     const reason = (v.violation_type ?? "").trim();
     if (reason && !entry.reasons.includes(reason)) entry.reasons.push(reason);
     byAcc.set(acc, entry);
