@@ -298,14 +298,14 @@ test("autoMonthlyStatus: deadline still ahead this month → Предстоящ�
   assert.equal(autoMonthlyStatus(catBy("main_taxes"), "Active", null, "2026-06-03"), "Предстоящая");
 });
 
-test("autoMonthlyStatus: deadline reached → the mailing's done status", () => {
-  // Once the due day passes, the routine mailing defaults to «done» so Margarita
-  // only flips the exceptions instead of marking each chat by hand.
-  assert.equal(autoMonthlyStatus(catBy("main_taxes"), "Active", null, "2026-06-20"), "Отправил");
-  // On the due day itself it already counts as expected-done.
-  assert.equal(autoMonthlyStatus(catBy("salary"), "Active", null, "2026-06-10"), "Получил");
-  assert.equal(autoMonthlyStatus(catBy("primary_docs"), "Active", null, "2026-06-28"), "Получил");
-  // Before the due day it's still upcoming, not yet done.
+test("autoMonthlyStatus: deadline reached → still Предстоящая until evidence", () => {
+  // Nothing is marked «done» by default: the cell stays in the waiting state
+  // until the message scan (keyword + AI) detects the action or Margarita sets
+  // it by hand. The old optimistic post-deadline «Получил» hid real failures.
+  assert.equal(autoMonthlyStatus(catBy("main_taxes"), "Active", null, "2026-06-20"), "Предстоящая");
+  assert.equal(autoMonthlyStatus(catBy("salary"), "Active", null, "2026-06-10"), "Предстоящая");
+  assert.equal(autoMonthlyStatus(catBy("primary_docs"), "Active", null, "2026-06-28"), "Предстоящая");
+  // Before the due day it's upcoming as well.
   assert.equal(autoMonthlyStatus(catBy("salary"), "Active", null, "2026-06-05"), "Предстоящая");
 });
 

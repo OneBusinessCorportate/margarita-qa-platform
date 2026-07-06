@@ -18,8 +18,8 @@
 //     reflects her real pattern.
 //   • monthly statuses: predicted from the SAME facts the human row auto-fills
 //     from — the debt feed (mqa_chats.debt_status), the client's Inactive flag,
-//     and the deadline ("Предстоящая" before the due day) — then carried-forward
-//     statuses, then "Предстоящая". This is what fixed the biggest miss: the AI
+//     and the waiting default ("Предстоящая" until the message scan detects the
+//     action) — then carried-forward statuses, then "Предстоящая". This is what fixed the biggest miss: the AI
 //     used to mark everything "Предстоящая", so its mailing GATE (and therefore
 //     its total) disagreed with Margarita on every chat with a real debt.
 //   • total: the rules engine on the predicted criteria + monthly, plus a learned

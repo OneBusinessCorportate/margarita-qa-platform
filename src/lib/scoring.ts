@@ -74,13 +74,6 @@ export interface MonthlyCategory {
   statuses: readonly string[];
   /** Statuses that force the whole chat's score to 1. */
   failStatuses: readonly string[];
-  /**
-   * The routine "done" status for this mailing (e.g. «Отправил» / «Получил»).
-   * Once the due day passes, the auto-fill defaults to this so Margarita only
-   * flips the exceptions instead of marking every chat by hand. Omitted for
-   * «Долги», whose follow-up is always her judgement.
-   */
-  expectedStatus?: string;
 }
 
 export const MONTHLY_CATEGORIES: MonthlyCategory[] = [
@@ -91,7 +84,6 @@ export const MONTHLY_CATEGORIES: MonthlyCategory[] = [
     dueDay: 15,
     statuses: ["Отправил", "Не отправил", "Предстоящая", "Inactive"],
     failStatuses: ["Не отправил"],
-    expectedStatus: "Отправил",
   },
   {
     id: "salary",
@@ -108,7 +100,6 @@ export const MONTHLY_CATEGORIES: MonthlyCategory[] = [
       "Inactive",
     ],
     failStatuses: ["Не запросил 1", "Не запросил 2"],
-    expectedStatus: "Получил",
   },
   {
     id: "primary_docs",
@@ -125,7 +116,6 @@ export const MONTHLY_CATEGORIES: MonthlyCategory[] = [
       "Inactive",
     ],
     failStatuses: ["Не запросил 1", "Не запросил 2"],
-    expectedStatus: "Получил",
   },
   {
     id: "debts",

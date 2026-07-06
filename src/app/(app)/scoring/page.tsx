@@ -10,11 +10,18 @@ import {
   listTasks,
 } from "@/lib/repo";
 import { trainAiModel } from "@/lib/ai";
+import { maybeRefreshMailings } from "@/lib/mailings-run";
 import { reviewDayForActivity, reviewDayOf } from "@/lib/scoring";
 
 export const dynamic = "force-dynamic";
 
 export default async function ScoringPage() {
+  // Self-triggering mailing detection: if the current month's keyword + AI
+  // scan is older than 2 h (or never ran), start one in the background. The
+  // page renders immediately with what's in the DB; fresh detections appear
+  // on the next load.
+  maybeRefreshMailings();
+
   // Only the recent window of per-day activity is needed to drive the day view;
   // bound it so the payload stays small (QA reviews recent days).
   const activityFrom = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)

@@ -260,10 +260,14 @@ export default function ScoringPanel({
     return { mergedChats, repOf, mergedAgrs };
   }, [chats]);
 
-  // The most recent check BEFORE the selected date — carried forward in full
-  // (mailing statuses, criteria, comment) so Margarita only changes what
-  // actually changed. Keyed by the representative contract so a prior check
-  // saved under any contract in the group carries forward.
+  // The most recent check BEFORE the selected date — carried forward so
+  // Margarita only changes what actually changed. Keyed by the representative
+  // contract so a prior check saved under any contract in the group carries
+  // forward. Mailing statuses are month-scoped: they carry ONLY within the
+  // same calendar month. When a new month starts, the cycle resets — every
+  // рассылка goes back to «Предстоящая» (waiting) until the message scan or
+  // Margarita fills it, instead of last month's «Получил» leaking into the
+  // new period. Criteria and the comment still carry across months.
   const prevByChat = useMemo(() => {
     const latestBefore = new Map<string, Evaluation>();
     for (const e of evaluations) {
@@ -273,12 +277,16 @@ export default function ScoringPanel({
       const cur = latestBefore.get(key);
       if (!cur || e.checking_date > cur.checking_date) latestBefore.set(key, e);
     }
+    const selectedMonth = date.slice(0, 7);
     const out = new Map<string, PrevCheck>();
     for (const [chatNo, e] of latestBefore) {
+      const sameMonth = e.checking_date.slice(0, 7) === selectedMonth;
       const monthly: Record<string, string> = {};
-      for (const cat of MONTHLY_CATEGORIES) {
-        const s = e.scores.monthly?.[cat.id]?.status;
-        if (s) monthly[cat.id] = s;
+      if (sameMonth) {
+        for (const cat of MONTHLY_CATEGORIES) {
+          const s = e.scores.monthly?.[cat.id]?.status;
+          if (s) monthly[cat.id] = s;
+        }
       }
       out.set(chatNo, {
         date: e.checking_date.slice(0, 10),

@@ -283,13 +283,11 @@ export function autoDebtStatus(debts: string | null | undefined): string | null 
  * guesswork:
  *   - Inactive client                       → "Inactive" (mailing N/A)
  *   - Долги with nothing owed (debt feed)    → "Нет долга"
- *   - deadline still ahead this month        → "Предстоящая" (nothing to do yet)
- *   - deadline reached/passed                → the mailing's "done" status
- *     («Отправил» / «Получил»): these mailings are a recurring template that
- *     normally goes through, so default it as completed and let Margarita flip
- *     only the exceptions — instead of marking «Получил» on every chat by hand
- *     (her request). «Долги» is excluded: it has no expectedStatus, so an owed
- *     debt stays for her to judge.
+ *   - otherwise                              → "Предстоящая": the cell stays in
+ *     the waiting state until the message scan (keyword + AI) detects the
+ *     action in the chat, or Margarita sets it by hand. Nothing is ever marked
+ *     done without evidence — the old post-deadline optimistic «Получил» /
+ *     «Отправил» fill hid real failures behind a default.
  */
 export function autoMonthlyStatus(
   cat: MonthlyCategory,
@@ -303,14 +301,12 @@ export function autoMonthlyStatus(
     if (d && cat.statuses.includes(d)) return d; // "Нет долга"
   }
   const day = Number(checkingDateISO.slice(8, 10));
-  if (Number.isFinite(day) && day > 0) {
-    if (day < cat.dueDay && cat.statuses.includes("Предстоящая")) return "Предстоящая";
-    if (
-      day >= cat.dueDay &&
-      cat.expectedStatus &&
-      cat.statuses.includes(cat.expectedStatus)
-    )
-      return cat.expectedStatus;
+  if (!Number.isFinite(day) || day <= 0 || !cat.statuses.includes("Предстоящая")) {
+    return null;
   }
-  return null;
+  if (day < cat.dueDay) return "Предстоящая";
+  // Deadline passed: the template mailings stay «Предстоящая» until evidence
+  // arrives; «Долги» with money still owed goes blank — the follow-up status
+  // is Margarita's judgement, not something to default.
+  return cat.id === "debts" ? null : "Предстоящая";
 }
