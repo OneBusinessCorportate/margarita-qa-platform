@@ -11,6 +11,7 @@ import {
   accountantsToMessage,
   buildAccountantMessage,
   buildFridayFinesMessage,
+  buildMonthlyFinesMessage,
   buildReportMessage,
   buildWeeklyReportMessage,
   telegramConfigured,
@@ -167,6 +168,15 @@ export default async function MessagesPage({
     roster: rosterNames,
     grossPrior: grossCountBefore(weekStart),
   });
+  // Ежемесячный отчёт по штрафам — one block per person (chat code — problem
+  // — money) over the month-to-date window, with the grand totals at the end.
+  // Same «Условия» pricing as the Friday report, so the figures always agree.
+  const monthlyMessage = buildMonthlyFinesMessage(monthViolations, {
+    monthFrom: monthStart,
+    monthTo: resolved.to,
+    roster: rosterNames,
+    grossPrior: grossCountBefore(monthStart),
+  });
   // The reminder badge must reflect the ACTUAL calendar day (Yerevan time),
   // not resolved.to — which defaults to the latest evaluated day and can lag
   // behind if nobody has scored anything yet today (e.g. still shows last
@@ -301,6 +311,25 @@ export default async function MessagesPage({
         </div>
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {weeklyMessage}
+        </pre>
+      </div>
+
+      {/* Ежемесячный отчёт по штрафам — per-person blocks (chat code — problem
+          — money) with the grand totals. Always visible. */}
+      <div className="card p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">💰 Ежемесячный отчет по штрафам</div>
+          <div className="flex gap-2">
+            <CopyButton label="Копировать отчёт" className="btn-primary" text={monthlyMessage} />
+            <SendTelegramButton
+              text={monthlyMessage}
+              configured={botReady}
+              label="Отправить в Telegram"
+            />
+          </div>
+        </div>
+        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
+{monthlyMessage}
         </pre>
       </div>
 

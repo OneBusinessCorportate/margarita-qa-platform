@@ -376,6 +376,108 @@ export function buildFridayFinesMessage(
   return lines.join("\n");
 }
 
+export interface MonthlyFinesOptions {
+  /** ISO first day of the month and the last reported day (month-to-date). */
+  monthFrom: string;
+  monthTo: string;
+  /** Canonical roster — used for the «Без нарушений» line. */
+  roster?: string[];
+  /** This-year Грубое counts per accountant BEFORE the month (escalation). */
+  grossPrior?: Record<string, number>;
+}
+
+/**
+ * «Ежемесячный отчёт по штрафам» — the monthly fines review: one block per
+ * person listing every штраф of the month (chat code — problem — money), then
+ * the grand totals:
+ *
+ *   Ежемесячный отчет по штрафам
+ *
+ *   Месяц: 01.07 — 31.07
+ *
+ *   — Лилит:
+ *     ▸ B-4742 — Долгий ответ — 1 000 др
+ *     ▸ B-5110 — Грубый ответ — 2 000 др
+ *     Итого: 3 000 др
+ *
+ *   — Аваг:
+ *     ▸ B-1234 — Просрочка отчетности — предупреждение
+ *     Итого: 0 др
+ *
+ *   Сумма всех штрафов: 3 000 др
+ *   Финальный штраф: 3 000 др
+ *
+ *   Без нарушений: ✅ Имя, Имя
+ *
+ * Money comes from the same «Условия» rules as the Friday report
+ * (computeViolationFines — a manual sanction on a violation still wins), so
+ * the monthly figures always match the «итого за месяц» totals shown there.
+ */
+export function buildMonthlyFinesMessage(
+  monthViolations: Violation[],
+  options: MonthlyFinesOptions
+): string {
+  const { monthFrom, monthTo, roster = [], grossPrior } = options;
+  const lines: string[] = [];
+
+  lines.push("Ежемесячный отчет по штрафам");
+  lines.push("");
+  lines.push(`Месяц: ${fmtDay(monthFrom)} — ${fmtDay(monthTo)}`);
+
+  const withAcc = monthViolations.filter((v) => v.accountant);
+  const fines = computeViolationFines(withAcc, { grossPrior });
+  const byAcc = new Map<
+    string,
+    { items: { code: string; reason: string; fine: number }[]; total: number }
+  >();
+  for (let i = 0; i < withAcc.length; i++) {
+    const v = withAcc[i];
+    const acc = v.accountant as string;
+    const entry = byAcc.get(acc) ?? { items: [], total: 0 };
+    entry.items.push({
+      code: v.chat_agr_no?.trim() || "-",
+      reason: (v.violation_type ?? "").trim() || "-",
+      fine: fines[i],
+    });
+    entry.total += fines[i];
+    byAcc.set(acc, entry);
+  }
+
+  if (byAcc.size === 0) {
+    lines.push("");
+    lines.push("В этом месяце нарушений нет ✅");
+  } else {
+    // Biggest monthly fine first — the people Margarita should look at.
+    const entries = [...byAcc.entries()].sort(
+      (a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0])
+    );
+    let grandTotal = 0;
+    for (const [acc, { items, total }] of entries) {
+      grandTotal += total;
+      lines.push("");
+      lines.push(`— ${acc}:`);
+      for (const item of items) {
+        const money = item.fine > 0 ? `${fmtDram(item.fine)} др` : "предупреждение";
+        lines.push(`  ▸ ${item.code} — ${item.reason} — ${money}`);
+      }
+      lines.push(`  Итого: ${fmtDram(total)} др`);
+    }
+    lines.push("");
+    lines.push(`Сумма всех штрафов: ${fmtDram(grandTotal)} др`);
+    lines.push(`Финальный штраф: ${fmtDram(grandTotal)} др`);
+  }
+
+  // Who kept the month clean — the positive side of the review.
+  const violators = new Set(byAcc.keys());
+  const clean = roster.filter((name) => !violators.has(name));
+  if (clean.length > 0) {
+    lines.push("");
+    lines.push(`Без нарушений: ✅ ${clean.join(", ")}`);
+  }
+
+  return lines.join("\n");
+}
+
 /** Append "    + ещё N" when a list was truncated to `shown`. */
 function overflow(lines: string[], total: number, shown: number): void {
   if (total > shown) lines.push(`    + ещё ${total - shown}`);

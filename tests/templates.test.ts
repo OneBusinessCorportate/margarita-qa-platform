@@ -4,6 +4,7 @@ import {
   accountantsToMessage,
   buildAccountantMessage,
   buildFridayFinesMessage,
+  buildMonthlyFinesMessage,
   buildReportMessage,
   buildScoreMessage,
   buildWeeklyReportMessage,
@@ -236,6 +237,58 @@ test("friday fines message with a clean week", () => {
   });
   assert.match(msg, /На этой неделе нарушений нет ✅/);
   assert.match(msg, /Без нарушений: ✅ Գայանե/);
+});
+
+// --- Monthly fines report (ежемесячный отчёт по штрафам) ---------------------
+
+test("monthly fines message: per-person blocks with chat—problem—price and totals", () => {
+  const msg = buildMonthlyFinesMessage(
+    [
+      // Лилит: 2 средних in the same week → 1 000 др each
+      viol({ id: "1", accountant: "Լիլիթ", chat_agr_no: "B-4742", violation_type: "Долгий ответ" }),
+      viol({ id: "2", accountant: "Լիլիթ", vdate: "2026-07-01", chat_agr_no: "B-5110", violation_type: "Грубый ответ" }),
+      // Аваг: критичное → 2 000 др
+      viol({ id: "3", accountant: "Ավագ", severity: "Критичное", chat_agr_no: "B-1234", violation_type: "Ошибка в отправленном инвойсе" }),
+      // Դավիթ: single среднее in its own week → предупреждение (0 др)
+      viol({ id: "4", accountant: "Դավիթ", vdate: "2026-07-10", chat_agr_no: "B-9999", violation_type: "Игнорирование задач" }),
+    ],
+    {
+      monthFrom: "2026-07-01",
+      monthTo: "2026-07-31",
+      roster: ["Լիլիթ", "Ավագ", "Դավիթ", "Գայանե"],
+    }
+  );
+  assert.match(msg, /^Ежемесячный отчет по штрафам/);
+  assert.match(msg, /Месяц: 01\.07 — 31\.07/);
+  // One block per person: chat code — problem — money, then the person's total.
+  assert.match(msg, /— Լիլիթ:\n  ▸ B-4742 — Долгий ответ — 1 000 др\n  ▸ B-5110 — Грубый ответ — 1 000 др\n  Итого: 2 000 др/);
+  assert.match(msg, /— Ավագ:\n  ▸ B-1234 — Ошибка в отправленном инвойсе — 2 000 др\n  Итого: 2 000 др/);
+  assert.match(msg, /— Դավիթ:\n  ▸ B-9999 — Игнорирование задач — предупреждение\n  Итого: 0 др/);
+  // Biggest fine first: Лилит (2 000) before Դավիթ (0).
+  const davit = msg.indexOf("— Դավիթ:");
+  const lilit = msg.indexOf("— Լիլիթ:");
+  assert.ok(lilit >= 0 && davit >= 0 && lilit < davit, "sorted by monthly fine desc");
+  // Grand totals + the final fine line.
+  assert.match(msg, /Сумма всех штрафов: 4 000 др/);
+  assert.match(msg, /Финальный штраф: 4 000 др/);
+  assert.match(msg, /Без нарушений: ✅ Գայանե/);
+});
+
+test("monthly fines message: manual sanction wins and clean month is celebrated", () => {
+  const withManual = buildMonthlyFinesMessage(
+    [viol({ id: "1", accountant: "Նաիրա", chat_agr_no: "B-1", violation_type: "Долгий ответ", sanction: 5000 })],
+    { monthFrom: "2026-07-01", monthTo: "2026-07-31" }
+  );
+  assert.match(withManual, /▸ B-1 — Долгий ответ — 5 000 др/);
+  assert.match(withManual, /Финальный штраф: 5 000 др/);
+
+  const clean = buildMonthlyFinesMessage([], {
+    monthFrom: "2026-07-01",
+    monthTo: "2026-07-31",
+    roster: ["Գայանե"],
+  });
+  assert.match(clean, /В этом месяце нарушений нет ✅/);
+  assert.match(clean, /Без нарушений: ✅ Գայանե/);
 });
 
 // --- Weekly (Friday) Armenian summary ---------------------------------------
