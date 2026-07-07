@@ -15,7 +15,7 @@ import {
   buildWeeklyReportMessage,
   telegramConfigured,
 } from "@/lib/templates";
-import { computeViolationFines } from "@/lib/violations";
+import { computeIndividualFines, computeViolationFines } from "@/lib/violations";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
 import PrintComparisonButton from "@/components/PrintComparisonButton";
@@ -137,24 +137,16 @@ export default async function MessagesPage({
       }
     });
 
-  // Money for EVERY violation in the daily report, from the «Условия» pricing
-  // rules. The «Среднее: 2 и более за неделю» rule needs the whole week as
-  // context (a single-day window alone would undercount), so fines are
-  // computed over the union of the report window and the week-to-date rows,
-  // with this-year Грубое escalation carried in. A manual sanction on a
-  // violation still wins inside computeViolationFines.
-  const fineCutoff = resolved.from < weekStart ? resolved.from : weekStart;
-  const weekIds = new Set(weekViolations.map((v) => v.id));
-  const fineContext = [
-    ...weekViolations,
-    ...violations.filter((v) => !weekIds.has(v.id)),
-  ].sort((a, b) => a.vdate.localeCompare(b.vdate));
-  const contextFines = computeViolationFines(fineContext, {
-    grossPrior: grossCountBefore(fineCutoff),
+  // Money for EVERY violation in the daily report, priced INDIVIDUALLY per
+  // case (Среднее → 1 000 др, Критичное → 2 000 др, Грубое → this-year
+  // escalation) — each нарушение carries its own concrete amount, with no
+  // weekly grouping. A manual sanction on a violation still wins.
+  const individualFines = computeIndividualFines(violations, {
+    grossPrior: grossCountBefore(resolved.from),
   });
   const fineById: Record<string, number> = {};
-  fineContext.forEach((v, i) => {
-    fineById[v.id] = contextFines[i];
+  violations.forEach((v, i) => {
+    fineById[v.id] = individualFines[i];
   });
 
   const reportMessage = buildReportMessage(report, {

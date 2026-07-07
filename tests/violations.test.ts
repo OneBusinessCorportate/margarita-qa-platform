@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeViolationFines } from "../src/lib/violations.js";
+import { computeIndividualFines, computeViolationFines } from "../src/lib/violations.js";
 
 const v = (over: Partial<Parameters<typeof computeViolationFines>[0][0]> = {}) => ({
   vdate: "2026-07-06",
@@ -57,4 +57,34 @@ test("manual sanction always overrides the computed amount", () => {
     v({ severity: "Критичное", sanction: 500 }), // manual wins over 2000
   ]);
   assert.deepEqual(fines, [5000, 500]);
+});
+
+// --- computeIndividualFines — each case priced on its own (daily report) ----
+
+test("individual pricing: every medium costs 1 000 even when it's the only one", () => {
+  assert.deepEqual(computeIndividualFines([v()]), [1000]);
+});
+
+test("individual pricing: severities map to their own amounts per case", () => {
+  const fines = computeIndividualFines([
+    v(), // Среднее → 1 000
+    v({ severity: "Критичное" }), // → 2 000
+    v({ severity: "Среднее", accountant: "Բ" }), // → 1 000, own case
+  ]);
+  assert.deepEqual(fines, [1000, 2000, 1000]);
+});
+
+test("individual pricing: gross keeps the per-year escalation", () => {
+  const fines = computeIndividualFines(
+    [
+      v({ severity: "Грубое", vdate: "2026-03-01" }),
+      v({ severity: "Грубое", vdate: "2026-05-01" }),
+    ],
+    { grossPrior: { Ա: 1 } }
+  );
+  assert.deepEqual(fines, [10000, 30000]); // 2nd and 3rd gross this year
+});
+
+test("individual pricing: manual sanction still wins", () => {
+  assert.deepEqual(computeIndividualFines([v({ sanction: 500 })]), [500]);
 });

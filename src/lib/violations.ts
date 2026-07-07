@@ -163,6 +163,33 @@ export interface FineViolation {
   sanction: number | null;
 }
 
+const sevOf = (v: FineViolation) => (v.severity ?? "среднее").toLowerCase();
+
+/**
+ * Gross («Грубое») escalation per accountant across `violations`, in date
+ * order: 1-е за год → предупреждение (0), 2-е → 10 000, 3-е+ → 30 000.
+ * `grossPrior` = this-year counts BEFORE the window, so escalation carries
+ * over. Returns a map input-index → fine for the gross rows only.
+ */
+function grossFinesByIndex(
+  violations: FineViolation[],
+  grossPrior: Record<string, number>
+): Map<number, number> {
+  const grossSeen = new Map<string, number>();
+  const grossOrder = violations
+    .map((v, i) => ({ v, i }))
+    .filter(({ v }) => sevOf(v).includes("груб"))
+    .sort((a, b) => a.v.vdate.localeCompare(b.v.vdate) || a.i - b.i);
+  const byIndex = new Map<number, number>();
+  for (const { v, i } of grossOrder) {
+    const acc = v.accountant ?? "";
+    const nth = (grossPrior[acc] ?? 0) + (grossSeen.get(acc) ?? 0) + 1;
+    grossSeen.set(acc, (grossSeen.get(acc) ?? 0) + 1);
+    byIndex.set(i, GROSS_FINES[Math.min(nth, GROSS_FINES.length) - 1]);
+  }
+  return byIndex;
+}
+
 /**
  * Compute the fine (драм) for every violation per the «Условия» rules:
  *   • Среднее   — 1 за неделю → предупреждение (0 др); 2 и более за неделю
@@ -184,7 +211,6 @@ export function computeViolationFines(
   const mediumPerAccWeek = new Map<string, number>();
   const accWeekKey = (v: FineViolation) =>
     `${v.accountant ?? ""}|${mondayOf(v.vdate)}`;
-  const sevOf = (v: FineViolation) => (v.severity ?? "среднее").toLowerCase();
   for (const v of violations) {
     const sev = sevOf(v);
     if (!sev.includes("критич") && !sev.includes("груб")) {
@@ -193,19 +219,7 @@ export function computeViolationFines(
     }
   }
 
-  // Gross escalation index per accountant, in date order across the window.
-  const grossSeen = new Map<string, number>();
-  const grossOrder = violations
-    .map((v, i) => ({ v, i }))
-    .filter(({ v }) => sevOf(v).includes("груб"))
-    .sort((a, b) => a.v.vdate.localeCompare(b.v.vdate) || a.i - b.i);
-  const grossFineByIndex = new Map<number, number>();
-  for (const { v, i } of grossOrder) {
-    const acc = v.accountant ?? "";
-    const nth = (grossPrior[acc] ?? 0) + (grossSeen.get(acc) ?? 0) + 1;
-    grossSeen.set(acc, (grossSeen.get(acc) ?? 0) + 1);
-    grossFineByIndex.set(i, GROSS_FINES[Math.min(nth, GROSS_FINES.length) - 1]);
-  }
+  const grossFineByIndex = grossFinesByIndex(violations, grossPrior);
 
   return violations.map((v, i) => {
     if (typeof v.sanction === "number" && v.sanction > 0) return v.sanction;
@@ -213,5 +227,29 @@ export function computeViolationFines(
     if (sev.includes("груб")) return grossFineByIndex.get(i) ?? 0;
     if (sev.includes("критич")) return CRITICAL_FINE;
     return (mediumPerAccWeek.get(accWeekKey(v)) ?? 0) >= 2 ? MEDIUM_FINE : 0;
+  });
+}
+
+/**
+ * Fine per violation priced INDIVIDUALLY — every case has its own concrete
+ * amount, with no weekly grouping (the daily «Аналитика качества» view):
+ *   • Среднее   — 1 000 др за каждый случай
+ *   • Критичное — 2 000 др за каждый случай
+ *   • Грубое    — per-year escalation (1-е предупреждение / 10 000 / 30 000)
+ * Unlike computeViolationFines, a violation's amount never changes
+ * retroactively as the week fills up. A manual sanction (> 0) still wins.
+ */
+export function computeIndividualFines(
+  violations: FineViolation[],
+  options: { grossPrior?: Record<string, number> } = {}
+): number[] {
+  const { grossPrior = {} } = options;
+  const grossFineByIndex = grossFinesByIndex(violations, grossPrior);
+  return violations.map((v, i) => {
+    if (typeof v.sanction === "number" && v.sanction > 0) return v.sanction;
+    const sev = sevOf(v);
+    if (sev.includes("груб")) return grossFineByIndex.get(i) ?? 0;
+    if (sev.includes("критич")) return CRITICAL_FINE;
+    return MEDIUM_FINE;
   });
 }
