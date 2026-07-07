@@ -100,6 +100,29 @@ test("violation lines: per-accountant action header + one bullet per violation (
   assert.match(msg, /  ▸ B-2 — Нет расс\. по первичной документации(?!.*др)/);
 });
 
+test("daily report money comes from the Условия rules when fineById is passed", () => {
+  const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  const msg = buildReportMessage(report, {
+    violations: [
+      viol({
+        id: "a", accountant: "Լիլիթ", chat_agr_no: "B-1",
+        severity: "Критичное", violation_type: "Грубый ответ",
+      }),
+      viol({ id: "b", accountant: "Լիլիթ", chat_agr_no: "B-2", violation_type: "Долгий ответ" }),
+      viol({ id: "c", accountant: "Դավիթ", chat_agr_no: "B-3", violation_type: "Долгий ответ" }),
+    ],
+    fineById: { a: 2000, b: 1000, c: 0 },
+  });
+  // Per-person header carries the person's fine total.
+  assert.match(msg, /— Լիլիթ: Выговор · штраф 3 000 др/);
+  assert.match(msg, /  ▸ B-1 — Грубый ответ — 2 000 др/);
+  assert.match(msg, /  ▸ B-2 — Долгий ответ — 1 000 др/);
+  // A computed 0 → «предупреждение» on the line, no money on the person line.
+  assert.match(msg, /— Դավիթ: Предупреждение\n/);
+  assert.match(msg, /  ▸ B-3 — Долгий ответ — предупреждение/);
+  assert.match(msg, /Итого штрафов: 3 000 др/);
+});
+
 test("score message includes overall, band, monthly statuses and link", () => {
   const ev = seedEvaluations[0];
   const chat = seedChats.find((c) => c.agr_no === ev.chat_agr_no) ?? null;

@@ -53,6 +53,15 @@ export interface ReportMessageOptions {
   requests?: { accountant: string; count: number }[];
   /** Days in the window — divides `requests` totals into a per-day figure. */
   requestDays?: number;
+  /**
+   * Computed fine (драм) per violation id, from the «Условия» pricing rules
+   * (computeViolationFines — Среднее 2+/неделю → 1 000, Критичное → 2 000,
+   * Грубое → 10 000 / 30 000; a manual sanction wins inside the computation).
+   * When provided, EVERY violation line shows its money: the amount, or
+   * «предупреждение» when the rules say 0. Without it the line falls back to
+   * the manually entered sanction only (legacy behaviour).
+   */
+  fineById?: Record<string, number>;
 }
 
 /** Period label for the header: a single day, or "DD.MM — DD.MM" for a range. */
@@ -134,7 +143,7 @@ export function buildReportMessage(
   options: ReportMessageOptions = {}
 ): string {
   const { serviceQualityPct, perAccountant, filters } = report;
-  const { violations = [], sheetUrl, roster, requests, requestDays } = options;
+  const { violations = [], sheetUrl, roster, requests, requestDays, fineById } = options;
   const dateISO =
     options.date ??
     filters.to ??
@@ -172,34 +181,63 @@ export function buildReportMessage(
   }
 
   // ── Violations — per-person breakdown, one bullet per violation record ─────
-  // «— Имя: Действие» then «  ▸ код — причина — сумма» for every violation of
-  // that person (rows with no accountant are grouped under "-"). No chat/
-  // client name — just the chat code and the fine, if any.
+  // «— Имя: Действие · штраф N др» then «  ▸ код — причина — сумма» for every
+  // violation of that person (rows with no accountant are grouped under "-").
+  // No chat/client name — just the chat code and the money. With `fineById`
+  // the money comes from the «Условия» pricing rules for EVERY line (0 др →
+  // «предупреждение»); otherwise only a manually entered sanction shows.
   if (violations.length) {
     const byAcc = new Map<
       string,
-      { sevMap: Map<string, number>; items: { code: string; reason: string; money: string }[] }
+      {
+        sevMap: Map<string, number>;
+        fine: number;
+        items: { code: string; reason: string; money: string }[];
+      }
     >();
+    let totalFine = 0;
     for (const v of violations) {
       const acc = v.accountant?.trim() || "-";
       const sev = v.severity ?? "среднее";
-      const entry = byAcc.get(acc) ?? { sevMap: new Map<string, number>(), items: [] };
+      const entry =
+        byAcc.get(acc) ??
+        { sevMap: new Map<string, number>(), fine: 0, items: [] };
       entry.sevMap.set(sev, (entry.sevMap.get(sev) ?? 0) + 1);
       const code = v.chat_agr_no?.trim() || "-";
       const reason = (v.violation_type ?? "").trim() || "-";
+      const computed = fineById?.[v.id];
+      const fine =
+        typeof computed === "number"
+          ? computed
+          : typeof v.sanction === "number" && v.sanction > 0
+            ? v.sanction
+            : null;
       const money =
-        typeof v.sanction === "number" && v.sanction > 0 ? ` — ${fmtDram(v.sanction)} др` : "";
+        fine === null
+          ? ""
+          : fine > 0
+            ? ` — ${fmtDram(fine)} др`
+            : " — предупреждение";
+      if (fine !== null && fine > 0) {
+        entry.fine += fine;
+        totalFine += fine;
+      }
       entry.items.push({ code, reason, money });
       byAcc.set(acc, entry);
     }
     lines.push("");
     lines.push("Нарушения:");
-    for (const [acc, { sevMap, items }] of byAcc) {
+    for (const [acc, { sevMap, fine, items }] of byAcc) {
       lines.push("");
-      lines.push(`— ${acc}: ${worstViolationAction(sevMap)}`);
+      const fineSuffix = fine > 0 ? ` · штраф ${fmtDram(fine)} др` : "";
+      lines.push(`— ${acc}: ${worstViolationAction(sevMap)}${fineSuffix}`);
       for (const item of items) {
         lines.push(`  ▸ ${item.code} — ${item.reason}${item.money}`);
       }
+    }
+    if (totalFine > 0) {
+      lines.push("");
+      lines.push(`Итого штрафов: ${fmtDram(totalFine)} др`);
     }
   }
 

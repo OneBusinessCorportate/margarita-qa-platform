@@ -51,6 +51,9 @@ import CopyButton from "./CopyButton";
 import ViolationModal from "./ViolationModal";
 import TaskModal from "./TaskModal";
 
+/** A stored mailing status for one category: value + where it came from. */
+type MailingCell = { status: string; source: ChatMailing["source"] };
+
 /** Everything carried forward from the most recent check before the chosen date. */
 interface PrevCheck {
   date: string;
@@ -112,20 +115,6 @@ export default function ScoringPanel({
   const router = useRouter();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
   const [date, setDate] = useState(latestActivityDate ?? today());
-  // Index detected mailings for O(1) lookup filtered to the selected date's period.
-  // Filters by period so switching months shows the right detections, not this month's.
-  const mailingsByChat = useMemo(() => {
-    // Mailing cycle key: the рассылки cycle rolls over on the 28th, so a
-    // date on/after the 28th shows the NEXT cycle's detections.
-    const selectedPeriod = mailingPeriodOf(date);
-    const m = new Map<string, Record<string, string>>();
-    for (const row of detectedMailings) {
-      if (row.period !== selectedPeriod) continue;
-      if (!m.has(row.agr_no)) m.set(row.agr_no, {});
-      m.get(row.agr_no)![row.category] = row.status;
-    }
-    return m;
-  }, [detectedMailings, date]);
   // Default to the day view: Margarita works through one day's chats in time
   // order, bottom-to-top. "All active chats" stays a click away.
   const [scope, setScope] = useState<Scope>("day");
@@ -262,6 +251,28 @@ export default function ScoringPanel({
     }
     return { mergedChats, repOf, mergedAgrs };
   }, [chats]);
+
+  // Index the stored mailing statuses (mqa_chat_mailings) for O(1) lookup,
+  // filtered to the selected date's рассылки cycle (rolls over on the 28th, so
+  // a date on/after the 28th shows the NEXT cycle) and folded onto the
+  // REPRESENTATIVE chat of a merged group — auto-detection can store a row
+  // under any of the contracts sharing one Telegram chat. Manual (QA-confirmed)
+  // rows always win over auto-detected ones; the source travels along so the
+  // row UI can show 📌 for a manually saved status.
+  const mailingsByChat = useMemo(() => {
+    const selectedPeriod = mailingPeriodOf(date);
+    const m = new Map<string, Record<string, MailingCell>>();
+    for (const row of detectedMailings) {
+      if (row.period !== selectedPeriod) continue;
+      const key = repOf.get(row.agr_no) ?? row.agr_no;
+      if (!m.has(key)) m.set(key, {});
+      const cats = m.get(key)!;
+      const cur = cats[row.category];
+      if (cur && cur.source === "manual" && row.source !== "manual") continue;
+      cats[row.category] = { status: row.status, source: row.source };
+    }
+    return m;
+  }, [detectedMailings, date, repOf]);
 
   // The most recent check BEFORE the selected date — carried forward so
   // Margarita only changes what actually changed. Keyed by the representative
@@ -1108,7 +1119,7 @@ export default function ScoringPanel({
                 manualAdded={scope === "day" && isIncluded(chat.agr_no)}
                 onRemoveManual={() => setChatIncluded(chat.agr_no, false)}
                 duplicateAgrs={mergedAgrs.get(chat.agr_no) ?? []}
-                detectedStatuses={mailingsByChat.get(chat.agr_no) ?? {}}
+                mailingRows={mailingsByChat.get(chat.agr_no) ?? {}}
                 hideControl={
                   scope === "day"
                     ? {
@@ -1193,7 +1204,7 @@ function ChatScoreRow({
   duplicateAgrs = [],
   hideControl = null,
   addToReviewControl = null,
-  detectedStatuses = {},
+  mailingRows = {},
 }: {
   chat: Chat;
   accountants: Accountant[];
@@ -1215,9 +1226,18 @@ function ChatScoreRow({
   duplicateAgrs?: string[];
   hideControl?: HideControl;
   addToReviewControl?: AddToReviewControl;
-  detectedStatuses?: Record<string, string>;
+  mailingRows?: Record<string, MailingCell>;
 }) {
   const prevStatuses = prev?.monthly ?? {};
+  // Split the stored mailing rows into "value per category" (drives prefill and
+  // the reference badges) and "which categories QA saved by hand" (manual rows
+  // must win over every automatic source — they are her explicit judgement).
+  const detectedStatuses: Record<string, string> = {};
+  const manualMailing = new Set<string>();
+  for (const [cat, cell] of Object.entries(mailingRows)) {
+    detectedStatuses[cat] = cell.status;
+    if (cell.source === "manual") manualMailing.add(cat);
+  }
   // No saved check for this date yet, but a previous one exists → pre-fill from
   // it so Margarita only edits what changed.
   const prefilledFromPrev = !existing && !!prev;
@@ -1261,16 +1281,25 @@ function ChatScoreRow({
     });
     for (const c of MONTHLY_CATEGORIES) {
       const prevVal = canonicalMonthlyStatus(c, prevStatuses[c.id]);
-      // «Долги» is fully derived from the OneBusiness debts system (overdue +
-      // contact log) and wins over everything — that's the column the user
-      // wants filled automatically end-to-end.
-      // For the other рассылки, the auto-detected status from THIS month's
-      // message scan fills the cell by default (it's month-specific evidence, so
-      // it beats a carried-over previous value and the deadline placeholder).
-      // Margarita only changes it when the detection is wrong; the 🔍 badge
-      // below the dropdown shows the same detected value for reference.
+      // Priority order:
+      //   1. A MANUAL row from mqa_chat_mailings — the status QA saved by hand.
+      //      It is period-keyed (cycle = 28th → 27th), so a value set once holds
+      //      every day of the cycle and resets to «Предстоящая» on the 28th.
+      //      It beats everything, including the debt feed — her correction must
+      //      never be overwritten by an automatic source (her complaint: «вношу
+      //      данные вручную — назавтра они пропадают»).
+      //   2. «Долги» from the OneBusiness debts system (overdue + contact log) —
+      //      the column she wants filled automatically end-to-end.
+      //   3. The auto-detected status from THIS cycle's message scan (it's
+      //      cycle-specific evidence, so it beats a carried-over previous value
+      //      and the deadline placeholder). The 🔍 badge below the dropdown
+      //      shows the same detected value for reference.
+      //   4. The value carried from the last check in the same cycle, then the
+      //      deadline placeholder, then the AI model.
       const detected = canonicalMonthlyStatus(c, detectedStatuses[c.id] ?? null);
+      const manual = manualMailing.has(c.id) ? detected : "";
       const status =
+        manual ||
         (c.id === "debts" ? canonicalMonthlyStatus(c, chat.debt_status) : "") ||
         detected ||
         prevVal ||
@@ -1336,6 +1365,53 @@ function ChatScoreRow({
   const setMon = (id: string, status: string) =>
     setMonthly((m) => ({ ...m, [id]: { ...m[id], status } }));
 
+  // Categories persisted to mqa_chat_mailings during THIS session (drives the
+  // 📌 badge immediately, before a server refresh brings the row back).
+  const [manualMailingLocal, setManualMailingLocal] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [mailingPersistError, setMailingPersistError] = useState(false);
+
+  /**
+   * Persist a mailing status THE MOMENT it changes — no «Оценить» needed. The
+   * status is upserted as a MANUAL row in mqa_chat_mailings keyed by
+   * (chat, cycle, category): set once, it holds for the whole рассылки cycle
+   * (28th → 27th) on every day's view, survives reloads and auto-detect runs,
+   * and resets to «Предстоящая» on the 28th when the period key rolls over.
+   * Picking «—» (empty) deletes the manual row, handing the cell back to
+   * auto-detection. Failures are surfaced, not swallowed — silent best-effort
+   * saves were how her manual data used to get lost.
+   */
+  function persistMailing(category: string, status: string) {
+    fetch("/api/mailings/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agr_no: chat.agr_no,
+        period: mailingPeriodOf(date),
+        category,
+        status,
+      }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(String(res.status));
+        setMailingPersistError(false);
+        setManualMailingLocal((s) => {
+          const next = new Set(s);
+          if (status) next.add(category);
+          else next.delete(category);
+          return next;
+        });
+      })
+      .catch(() => setMailingPersistError(true));
+  }
+
+  /** User changed a mailing dropdown / badge: update the row AND persist. */
+  const changeMon = (id: string, status: string) => {
+    setMon(id, status);
+    persistMailing(id, status);
+  };
+
   /** One click: agree with the AI — its row becomes Margarita's answer. */
   function acceptAi() {
     setCriteria({ ...ai.criteria });
@@ -1398,28 +1474,20 @@ function ChatScoreRow({
       const saved: Evaluation = await res.json();
       setSavedId(saved.id);
       onSaved(saved);
-      // Persist Margarita's mailing corrections as MANUAL rows in
-      // mqa_chat_mailings: any status she saved that differs from the
-      // auto-detected value is her judgement and must survive future
-      // auto-detect runs, page reloads and other chats' rows (her complaint:
-      // «вношу данные вручную — они не сохраняются»). «Предстоящая» is the
-      // neutral waiting default and «Inactive» follows the client flag —
-      // neither is a correction, so they never lock the cell.
-      const mailingPeriod = mailingPeriodOf(date);
+      // Safety net: direct dropdown changes already persisted via changeMon,
+      // but values that landed WITHOUT a change event (carried from the last
+      // check, accepted from the AI row, prefilled from the debt feed) become
+      // part of her saved judgement the moment she hits «Оценить» — so promote
+      // them to manual rows in mqa_chat_mailings too. «Предстоящая» is the
+      // neutral auto-prefill placeholder and «Inactive» follows the client
+      // flag — neither is a correction here, so the save never locks them
+      // (an EXPLICIT pick of either persists through changeMon instead).
       for (const cat of MONTHLY_CATEGORIES) {
         const status = monthly[cat.id]?.status ?? "";
         if (!status || status === "Предстоящая" || status === "Inactive") continue;
+        if (manualMailingLocal.has(cat.id)) continue; // already persisted
         if ((detectedStatuses[cat.id] ?? "") === status) continue;
-        fetch("/api/mailings/confirm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            agr_no: chat.agr_no,
-            period: mailingPeriod,
-            category: cat.id,
-            status,
-          }),
-        }).catch(() => {/* best-effort */});
+        persistMailing(cat.id, status);
       }
       // Also update the chat's assigned accountant when it changed — so the
       // change persists across all views, not just this evaluation row.
@@ -1831,13 +1899,20 @@ function ChatScoreRow({
           const detected = canonicalMonthlyStatus(c, detectedStatuses[c.id] ?? null);
           const current = monthly[c.id]?.status ?? "";
           const matches = Boolean(detected) && detected === current;
+          // The cell's current value is a SAVED manual row: either persisted
+          // just now (local set), or loaded from the server and still showing
+          // that same value. It holds until the 28th (cycle reset).
+          const savedManually =
+            Boolean(current) &&
+            (manualMailingLocal.has(c.id) ||
+              (manualMailing.has(c.id) && matches));
           return (
             <td key={c.id} className={`${youCell} text-center`}>
               <div className="flex flex-col items-center gap-0.5">
                 <select
                   className="input w-[96px] text-xs"
                   value={monthly[c.id]?.status ?? ""}
-                  onChange={(e) => setMon(c.id, e.target.value)}
+                  onChange={(e) => changeMon(c.id, e.target.value)}
                   title={c.name}
                 >
                   <option value="">—</option>
@@ -1847,14 +1922,21 @@ function ChatScoreRow({
                     </option>
                   ))}
                 </select>
-                {detected ? (
+                {savedManually ? (
+                  <span
+                    className="block h-[15px] w-[96px] truncate rounded px-1 text-[10px] leading-[15px] text-green-700"
+                    title="Сохранено вручную — действует каждый день до 28-го числа (сброс цикла рассылок)"
+                  >
+                    📌 сохранено
+                  </span>
+                ) : detected ? (
                   <button
                     type="button"
-                    onClick={() => setMon(c.id, detected)}
+                    onClick={() => changeMon(c.id, detected)}
                     title={
                       matches
                         ? `Авто-распознано из сообщений бухгалтера: «${detected}»`
-                        : `Авто-распознано из сообщений: «${detected}». Нажмите, чтобы применить.`
+                        : `Авто-распознано из сообщений: «${detected}». Нажмите, чтобы применить и сохранить до 28-го.`
                     }
                     className={`block h-[15px] w-[96px] truncate rounded px-1 text-[10px] leading-[15px] ${
                       matches
@@ -1907,6 +1989,14 @@ function ChatScoreRow({
               title="Нарушение автоматически добавлено в журнал «Нарушения»"
             >
               ⚠️ в нарушениях
+            </div>
+          )}
+          {mailingPersistError && (
+            <div
+              className="mt-1 text-[10px] text-red-600"
+              title="Статус рассылки не записался в базу — проверьте сеть и выберите значение ещё раз"
+            >
+              ⚠ рассылка не сохранилась
             </div>
           )}
           {error && <span className="ml-1 text-[10px] text-red-600">{error}</span>}
@@ -2113,7 +2203,7 @@ function ChatGroup({
   duplicateAgrs = [],
   hideControl = null,
   addToReviewControl = null,
-  detectedStatuses = {},
+  mailingRows = {},
 }: {
   chat: Chat;
   accountants: Accountant[];
@@ -2139,7 +2229,7 @@ function ChatGroup({
   duplicateAgrs?: string[];
   hideControl?: HideControl;
   addToReviewControl?: AddToReviewControl;
-  detectedStatuses?: Record<string, string>;
+  mailingRows?: Record<string, MailingCell>;
 }) {
   const [showManager, setShowManager] = useState(Boolean(managerEval));
   const [showLawyer, setShowLawyer] = useState(Boolean(lawyerEval));
@@ -2168,7 +2258,7 @@ function ChatGroup({
         duplicateAgrs={duplicateAgrs}
         hideControl={hideControl}
         addToReviewControl={addToReviewControl}
-        detectedStatuses={detectedStatuses}
+        mailingRows={mailingRows}
       />
       {showManager && (
         <RoleQaRow

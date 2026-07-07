@@ -137,12 +137,33 @@ export default async function MessagesPage({
       }
     });
 
+  // Money for EVERY violation in the daily report, from the «Условия» pricing
+  // rules. The «Среднее: 2 и более за неделю» rule needs the whole week as
+  // context (a single-day window alone would undercount), so fines are
+  // computed over the union of the report window and the week-to-date rows,
+  // with this-year Грубое escalation carried in. A manual sanction on a
+  // violation still wins inside computeViolationFines.
+  const fineCutoff = resolved.from < weekStart ? resolved.from : weekStart;
+  const weekIds = new Set(weekViolations.map((v) => v.id));
+  const fineContext = [
+    ...weekViolations,
+    ...violations.filter((v) => !weekIds.has(v.id)),
+  ].sort((a, b) => a.vdate.localeCompare(b.vdate));
+  const contextFines = computeViolationFines(fineContext, {
+    grossPrior: grossCountBefore(fineCutoff),
+  });
+  const fineById: Record<string, number> = {};
+  fineContext.forEach((v, i) => {
+    fineById[v.id] = contextFines[i];
+  });
+
   const reportMessage = buildReportMessage(report, {
     violations,
     sheetUrl: process.env.REPORT_SHEET_URL,
     roster: rosterNames,
     requests,
     requestDays,
+    fineById,
   });
 
   // Weekly fines block (Mon → the reported day) — appended to the Armenian
