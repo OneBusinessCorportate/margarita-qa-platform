@@ -242,10 +242,15 @@ test("reviewDayForActivity rolls Friday-after-19:00 activity to Monday", () => {
     reviewDayForActivity("2026-06-19T19:00:00Z", "2026-06-19"),
     "2026-06-22"
   );
-  // A non-Friday weekday evening is unaffected (Tuesday stays Tuesday).
+  // A non-Friday weekday BEFORE close (14:00Z = 18:00 Yerevan) stays same day.
+  assert.equal(
+    reviewDayForActivity("2026-06-16T14:00:00Z", "2026-06-16"),
+    "2026-06-16"
+  );
+  // …but after close (16:00Z = 20:00 Yerevan) it rolls to the next weekday.
   assert.equal(
     reviewDayForActivity("2026-06-16T16:00:00Z", "2026-06-16"),
-    "2026-06-16"
+    "2026-06-17"
   );
   // No timestamp → behaves exactly like reviewDayOf on the fallback date.
   assert.equal(reviewDayForActivity(null, "2026-06-20"), "2026-06-22"); // Sat → Mon
