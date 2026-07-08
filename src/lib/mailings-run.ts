@@ -72,13 +72,19 @@ For each numbered message below, identify mailing signals (if any).
 
 Signal categories and types:
 - main_taxes/done: accountant sent/submitted tax returns or VAT
+- main_taxes/neg: taxes explicitly NOT sent/submitted ("не отправлено", "չի ուղարկվել")
 - salary/done: accountant received/provided salary docs/payroll
 - salary/req: accountant requested salary docs from client
+- salary/neg: salary docs explicitly NOT received/done ("не получил", "չի կատարվում")
 - primary_docs/done: accountant received/provided primary documents (acts, invoices)
 - primary_docs/req: accountant requested primary docs from client
+- primary_docs/neg: primary docs explicitly NOT received/done ("не прислали", "не сделано")
 - debts/paid: client paid debt / debt is closed
 - debts/call: accountant called client about debt
 - debts/req: accountant wrote to client about debt
+
+A NEGATED action ("не получил", "не отправлено", "не сделано", Armenian "չ-" prefix
+like "չստացա"/"չի կատարվում") is NEVER "done" or "paid" — use the "neg" type instead.
 
 Messages may be in Russian, Armenian, or mixed. Reply ONLY with a JSON array, one entry per message:
 [{"idx": 0, "signals": [{"category": "debts", "type": "req"}]}, ...]
@@ -100,7 +106,7 @@ ${numbered}`;
           results[entry.idx] = entry.signals.filter(
             (s) =>
               ["main_taxes", "salary", "primary_docs", "debts"].includes(s.category) &&
-              ["done", "req", "call", "paid"].includes(s.type)
+              ["done", "req", "call", "paid", "neg"].includes(s.type)
           );
         }
       }
@@ -182,7 +188,7 @@ export async function runMailingsDetection(periodArg?: string): Promise<DetectRu
   type CountKey = string; // `${agr_no}|${category}`
   const counters = new Map<
     CountKey,
-    { agr_no: string; category: string; done: number; req: number; call: number; paid: number; latestAt: string }
+    { agr_no: string; category: string; done: number; req: number; call: number; paid: number; neg: number; latestAt: string }
   >();
 
   // Track unmatched messages for AI fallback (only if Anthropic is configured).
@@ -202,7 +208,7 @@ export async function runMailingsDetection(periodArg?: string): Promise<DetectRu
     for (const signal of signals) {
       const key: CountKey = `${agr_no}|${signal.category}`;
       if (!counters.has(key)) {
-        counters.set(key, { agr_no, category: signal.category, done: 0, req: 0, call: 0, paid: 0, latestAt: msg.created_at });
+        counters.set(key, { agr_no, category: signal.category, done: 0, req: 0, call: 0, paid: 0, neg: 0, latestAt: msg.created_at });
       }
       const c = counters.get(key)!;
       c[signal.type]++;
@@ -227,7 +233,7 @@ export async function runMailingsDetection(periodArg?: string): Promise<DetectRu
       for (const signal of msgSignals) {
         const key: CountKey = `${agr_no}|${signal.category}`;
         if (!counters.has(key)) {
-          counters.set(key, { agr_no, category: signal.category, done: 0, req: 0, call: 0, paid: 0, latestAt: msg.created_at });
+          counters.set(key, { agr_no, category: signal.category, done: 0, req: 0, call: 0, paid: 0, neg: 0, latestAt: msg.created_at });
         }
         const c = counters.get(key)!;
         c[signal.type]++;
