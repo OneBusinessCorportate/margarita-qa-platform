@@ -15,6 +15,7 @@
 
 import { AUDIT_SOURCE, type RawViolation } from "./audit-source-data";
 import { computeIndividualFines, type FineViolation } from "./violations";
+import type { Violation } from "./types";
 import {
   VALID_EMPLOYEES,
   resolveEmployee,
@@ -395,4 +396,45 @@ export function buildEmployeeAudit(): EmployeeAudit {
       droppedViolations: dropped,
     },
   };
+}
+
+/**
+ * Исправленные нарушения за окно дат [from..to] в форме доменного типа
+ * Violation — для ежедневного текстового отчёта (buildReportMessage). Источник
+ * — лист «Нарушения» (только 14 валидных сотрудников), код чата вытащен из
+ * названия клиента, сумма посчитана по правилам «Условия». Вместе с массивом
+ * возвращаем fineById: id → сумма штрафа, чтобы в отчёте у каждой строки была
+ * своя сумма (0 др → «предупреждение»). Опционально фильтруем по бухгалтеру
+ * (принимает любое написание — приводим к каноническому короткому имени).
+ */
+export function auditDailyViolations(
+  from: string,
+  to: string,
+  accountant?: string | null
+): { violations: Violation[]; fineById: Record<string, number> } {
+  const audit = buildEmployeeAudit();
+  const wantShort = accountant ? canonicalShortName(accountant) : null;
+  const rows: Violation[] = [];
+  const fineById: Record<string, number> = {};
+  let i = 0;
+  for (const v of audit.violations) {
+    if (!v.date || v.date < from || v.date > to) continue;
+    if (wantShort && v.employee !== wantShort) continue;
+    const id = `audit-${v.date}-${i++}`;
+    fineById[id] = v.amount;
+    rows.push({
+      id,
+      vdate: v.date,
+      accountant: v.employee,
+      chat_agr_no: v.chatCode,
+      client: v.client,
+      severity: v.severity,
+      violation_type: v.type,
+      gross: v.gross ? v.type : null,
+      sanction: v.sanction,
+      note: null,
+      created_at: `${v.date}T00:00:00.000Z`,
+    });
+  }
+  return { violations: rows, fineById };
 }

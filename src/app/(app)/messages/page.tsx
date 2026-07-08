@@ -16,7 +16,8 @@ import {
   buildWeeklyReportMessage,
   telegramConfigured,
 } from "@/lib/templates";
-import { computeIndividualFines, computeViolationFines } from "@/lib/violations";
+import { computeViolationFines } from "@/lib/violations";
+import { auditDailyViolations } from "@/lib/employee-audit";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
 import PrintComparisonButton from "@/components/PrintComparisonButton";
@@ -89,9 +90,11 @@ export default async function MessagesPage({
   const monthStart = `${resolved.to.slice(0, 7)}-01`;
   const weekStart = mondayOf(resolved.to);
   const yearStart = `${resolved.to.slice(0, 4)}-01-01`;
-  const [violations, weekViolations, monthViolations, yearViolations, thisWeekReport, prevWeekReport, requests] =
+  // Ежедневные нарушения теперь берём из исправленного аудита (см. ниже), а не
+  // из БД — здесь тянем только недельные / месячные / годовые срезы для
+  // пятничного и месячного отчётов, которые считаются по правилам «Условия».
+  const [weekViolations, monthViolations, yearViolations, thisWeekReport, prevWeekReport, requests] =
     await Promise.all([
-      listViolations({ from: resolved.from, to: resolved.to, accountant: filters.accountant }),
       listViolations({ from: weekStart, to: resolved.to, accountant: filters.accountant }),
       listViolations({ from: monthStart, to: resolved.to, accountant: filters.accountant }),
       listViolations({ from: yearStart, to: resolved.to, accountant: filters.accountant }),
@@ -138,20 +141,19 @@ export default async function MessagesPage({
       }
     });
 
-  // Money for EVERY violation in the daily report, priced INDIVIDUALLY per
-  // case (Среднее → 1 000 др, Критичное → 2 000 др, Грубое → this-year
-  // escalation) — each нарушение carries its own concrete amount, with no
-  // weekly grouping. A manual sanction on a violation still wins.
-  const individualFines = computeIndividualFines(violations, {
-    grossPrior: grossCountBefore(resolved.from),
-  });
-  const fineById: Record<string, number> = {};
-  violations.forEach((v, i) => {
-    fineById[v.id] = individualFines[i];
-  });
+  // Нарушения для ежедневного отчёта берём из ИСПРАВЛЕННЫХ данных (лист
+  // «Нарушения», только 14 валидных сотрудников), строго за день отчёта
+  // [resolved.from..resolved.to]. Код чата и сумма (правила «Условия»:
+  // Среднее → 1 000, Критичное → 2 000, Грубое → эскалация) уже посчитаны в
+  // аудите. Это заменяет прежний источник из БД, где данные были некорректны.
+  const { violations: dailyViolations, fineById } = auditDailyViolations(
+    resolved.from,
+    resolved.to,
+    filters.accountant
+  );
 
   const reportMessage = buildReportMessage(report, {
-    violations,
+    violations: dailyViolations,
     sheetUrl: process.env.REPORT_SHEET_URL,
     roster: rosterNames,
     requests,

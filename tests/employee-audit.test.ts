@@ -66,3 +66,33 @@ test("матрица источников покрывает все 14", () => {
   assert.equal(audit.sourceMatrix.length, 14);
   assert.ok(audit.sourceMatrix.every((s) => s.inList));
 });
+
+test("auditDailyViolations: только за день и только валидные", async () => {
+  const { auditDailyViolations } = await import("../src/lib/employee-audit");
+  const { violations, fineById } = auditDailyViolations("2026-05-26", "2026-05-26");
+  assert.ok(violations.length > 0, "26.05 должны быть нарушения");
+  for (const v of violations) {
+    assert.equal(v.vdate, "2026-05-26");
+    assert.ok(isValidEmployee(v.accountant), `${v.accountant} валиден`);
+    assert.equal(typeof fineById[v.id], "number");
+  }
+  // код чата вытащен из клиента
+  assert.ok(violations.some((v) => v.chat_agr_no && /^[BNT]-\d+$/.test(v.chat_agr_no)));
+});
+
+test("auditDailyViolations: фильтр по бухгалтеру принимает любое написание", async () => {
+  const { auditDailyViolations } = await import("../src/lib/employee-audit");
+  // русское написание → маппится на Լիлит
+  const ru = auditDailyViolations("2026-05-26", "2026-05-26", "Лилит");
+  const arm = auditDailyViolations("2026-05-26", "2026-05-26", "Լիլիթ");
+  assert.equal(ru.violations.length, arm.violations.length);
+  assert.ok(arm.violations.every((v) => v.accountant === "Լիլիթ"));
+});
+
+test("extractChatCode: латиница и кириллица сводятся к одному коду", async () => {
+  const { extractChatCode } = await import("../src/lib/employee-audit");
+  assert.equal(extractChatCode("ПНХ ООО RU-B-4066"), "B-4066");
+  assert.equal(extractChatCode("ИП Блатов/В-4349 RU"), "B-4349"); // кирилл. В → B
+  assert.equal(extractChatCode("Рути N-138 RU"), "N-138");
+  assert.equal(extractChatCode("ИП Артур Манукян"), null);
+});
