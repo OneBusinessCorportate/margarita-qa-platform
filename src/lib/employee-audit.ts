@@ -14,12 +14,30 @@
 // ---------------------------------------------------------------------------
 
 import { AUDIT_SOURCE, type RawViolation } from "./audit-source-data";
+import { computeIndividualFines, type FineViolation } from "./violations";
 import {
   VALID_EMPLOYEES,
   resolveEmployee,
   canonicalShortName,
   type ValidEmployee,
 } from "./valid-employees";
+
+/**
+ * Вытащить код договора/чата из названия клиента: B-4066 / В-4349 (кириллица) /
+ * N-138 / T-1 и т.п., иначе — «голый» номер 3–5 цифр. Возвращает null, если
+ * кода нет (тогда показываем само название клиента).
+ */
+export function extractChatCode(client: string | null): string | null {
+  if (!client) return null;
+  const m = client.match(/([BВNНTТ])\s*-\s*(\d{1,5})/i);
+  if (m) {
+    // латинизируем префикс, чтобы B-4066 и В-4066 совпадали
+    const lat = m[1].toUpperCase().replace("В", "B").replace("Н", "N").replace("Т", "T");
+    return `${lat}-${m[2]}`;
+  }
+  const bare = client.match(/\b(\d{3,5})\b/);
+  return bare ? bare[1] : null;
+}
 
 /** Один пересчитанный элемент нарушения (для раздела D). */
 export interface AuditViolation {
@@ -34,6 +52,28 @@ export interface AuditViolation {
   explanation: string | null;
   sanction: number | null; // если проставлена в источнике
   confirmed: boolean; // подтверждено (есть решение/апелляция закрыта) или на проверке
+  chatCode: string | null; // код проблемного чата/договора (B-4066, N-138 …)
+  amount: number; // сумма штрафа (драм) по правилам «Условия»
+}
+
+/** Одна строка разбивки по бухгалтеру: код чата — тип — сумма. */
+export interface AccountantViolationLine {
+  date: string | null;
+  chatCode: string | null;
+  client: string | null;
+  type: string | null;
+  severity: string | null;
+  gross: boolean;
+  amount: number;
+}
+
+/** Разбивка нарушений по одному бухгалтеру (для ежедневного отчёта). */
+export interface PerAccountantViolations {
+  employee: string;
+  employeeFull: string;
+  lines: AccountantViolationLine[];
+  count: number;
+  total: number; // сумма штрафов по бухгалтеру (драм)
 }
 
 /** Санкция/бонус из листа KPI (раздел E). */
@@ -88,6 +128,7 @@ export interface EmployeeAudit {
   invalidNames: UnmatchedName[]; // раздел C
   reviewNames: UnmatchedName[]; // требует ручной проверки
   violations: AuditViolation[]; // раздел D (только валидные)
+  perAccountant: PerAccountantViolations[]; // разбивка для ежедневного отчёта
   penalties: MoneyItem[]; // раздел E — санкции (драм)
   bonuses: MoneyItem[]; // раздел E — бонусы
   sourceMatrix: SourceRow[]; // раздел F
@@ -145,10 +186,26 @@ export function buildEmployeeAudit(): EmployeeAudit {
   >();
   let dropped = 0;
 
+  // Считаем сумму штрафа для каждого валидного нарушения по правилам «Условия»
+  // (Среднее — 1 000, Критичное — 2 000, Грубое — эскалация). Грубость берём из
+  // отдельной колонки листа, а не только из «тяжести».
+  const validRows = violations.filter(
+    (v) => resolveEmployee(v.accountant).status === "valid"
+  );
+  const fineInput: FineViolation[] = validRows.map((v) => ({
+    vdate: v.date ?? "",
+    accountant: canonicalShortName(v.accountant),
+    severity: v.gross ? "Грубое" : v.severity,
+    sanction: v.sanction,
+  }));
+  const fines = computeIndividualFines(fineInput);
+  let validIdx = 0;
+
   for (const v of violations) {
     const r = resolveEmployee(v.accountant);
     if (r.status === "valid") {
       const short = r.employee.short;
+      const amount = fines[validIdx++] ?? 0;
       violCountByEmp.set(short, (violCountByEmp.get(short) ?? 0) + 1);
       auditViolations.push({
         date: v.date,
@@ -162,6 +219,8 @@ export function buildEmployeeAudit(): EmployeeAudit {
         explanation: v.description,
         sanction: v.sanction,
         confirmed: isConfirmed(v),
+        chatCode: extractChatCode(v.client),
+        amount,
       });
     } else if (r.status === "unassigned") {
       dropped += 1;
@@ -177,6 +236,36 @@ export function buildEmployeeAudit(): EmployeeAudit {
     }
   }
   auditViolations.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+
+  // --- разбивка по бухгалтерам: код чата — тип — сумма (для отчёта) ---
+  const perAccByShort = new Map<string, PerAccountantViolations>();
+  for (const e of VALID_EMPLOYEES) {
+    perAccByShort.set(e.short, {
+      employee: e.short,
+      employeeFull: e.canonical,
+      lines: [],
+      count: 0,
+      total: 0,
+    });
+  }
+  for (const v of auditViolations) {
+    const g = perAccByShort.get(v.employee);
+    if (!g) continue;
+    g.lines.push({
+      date: v.date,
+      chatCode: v.chatCode,
+      client: v.client,
+      type: v.type,
+      severity: v.severity,
+      gross: v.gross,
+      amount: v.amount,
+    });
+    g.count += 1;
+    g.total += v.amount;
+  }
+  const perAccountant = [...perAccByShort.values()].sort(
+    (a, b) => b.total - a.total || b.count - a.count
+  );
 
   // невалидные имена также из KPI и КК Сопровождения
   const noteUnmatched = (name: string, source: string) => {
@@ -290,6 +379,7 @@ export function buildEmployeeAudit(): EmployeeAudit {
     invalidNames,
     reviewNames,
     violations: auditViolations,
+    perAccountant,
     penalties,
     bonuses,
     sourceMatrix,

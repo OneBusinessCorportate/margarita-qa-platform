@@ -10,6 +10,8 @@ import DashboardFilters from "@/components/DashboardFilters";
 import ReportView from "@/components/ReportView";
 import SaveReportButton from "@/components/SaveReportButton";
 import ExportPdfButton from "@/components/ExportPdfButton";
+import AccountantViolationBreakdown from "@/components/AccountantViolationBreakdown";
+import { buildEmployeeAudit } from "@/lib/employee-audit";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +55,18 @@ export default async function DashboardPage({
   const report = snapshot ? snapshot.report : analytics!.report;
   const previousReport = analytics?.previous ?? null;
   const periodLabel = snapshot ? snapshot.label : reportSnapshotLabel(filters);
+
+  // Разбивка нарушений по бухгалтерам (код чата · тип · сумма) — из
+  // исправленного аудита. Если задан фильтр по бухгалтеру — показываем только
+  // его. Это добавочный блок; остальной отчёт не меняется.
+  const audit = buildEmployeeAudit();
+  const perAccountant = filters.accountant
+    ? audit.perAccountant.filter(
+        (g) =>
+          g.employee === filters.accountant ||
+          g.employeeFull === filters.accountant
+      )
+    : audit.perAccountant;
 
   return (
     <div className="space-y-4">
@@ -100,6 +114,13 @@ export default async function DashboardPage({
       </div>
 
       <ReportView report={report} previousReport={previousReport} />
+
+      {/* Нарушения по бухгалтерам: код чата · тип · сумма (исправленный аудит). */}
+      <AccountantViolationBreakdown
+        perAccountant={perAccountant}
+        dateFrom={audit.meta.dateFrom}
+        dateTo={audit.meta.dateTo}
+      />
 
       {/* История отчётов — saved snapshots, newest first. */}
       <div className="card overflow-x-auto no-print">
