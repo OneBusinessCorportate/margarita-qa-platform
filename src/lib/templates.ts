@@ -55,10 +55,11 @@ export interface ReportMessageOptions {
   requestDays?: number;
   /**
    * Computed fine (драм) per violation id — the daily report uses
-   * computeIndividualFines (each case priced on its own: Среднее → 1 000,
-   * Критичное → 2 000, Грубое → per-year escalation; a manual sanction wins
-   * inside the computation). When provided, EVERY violation line shows its
-   * money: the amount, or «предупреждение» when the rules say 0. Without it
+   * computeViolationFines (weekly rule: Среднее → 1-е за неделю предупреждение
+   * (0 др), 2-е и далее 1 000 др; Критичное → 2 000; Грубое → per-year
+   * escalation; a manual sanction wins inside the computation). When provided,
+   * EVERY violation line shows its money: the amount, or «предупреждение» when
+   * the rules say 0. Without it
    * the line falls back to the manually entered sanction only (legacy).
    */
   fineById?: Record<string, number>;

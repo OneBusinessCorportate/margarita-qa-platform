@@ -229,27 +229,3 @@ export function computeViolationFines(
     return (mediumPerAccWeek.get(accWeekKey(v)) ?? 0) >= 2 ? MEDIUM_FINE : 0;
   });
 }
-
-/**
- * Fine per violation priced INDIVIDUALLY — every case has its own concrete
- * amount, with no weekly grouping (the daily «Аналитика качества» view):
- *   • Среднее   — 1 000 др за каждый случай
- *   • Критичное — 2 000 др за каждый случай
- *   • Грубое    — per-year escalation (1-е предупреждение / 10 000 / 30 000)
- * Unlike computeViolationFines, a violation's amount never changes
- * retroactively as the week fills up. A manual sanction (> 0) still wins.
- */
-export function computeIndividualFines(
-  violations: FineViolation[],
-  options: { grossPrior?: Record<string, number> } = {}
-): number[] {
-  const { grossPrior = {} } = options;
-  const grossFineByIndex = grossFinesByIndex(violations, grossPrior);
-  return violations.map((v, i) => {
-    if (typeof v.sanction === "number" && v.sanction > 0) return v.sanction;
-    const sev = sevOf(v);
-    if (sev.includes("груб")) return grossFineByIndex.get(i) ?? 0;
-    if (sev.includes("критич")) return CRITICAL_FINE;
-    return MEDIUM_FINE;
-  });
-}

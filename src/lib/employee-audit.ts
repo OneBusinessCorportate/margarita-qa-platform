@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { AUDIT_SOURCE, type RawViolation } from "./audit-source-data";
-import { computeIndividualFines, type FineViolation } from "./violations";
+import { computeViolationFines, type FineViolation } from "./violations";
 import type { Violation } from "./types";
 import {
   VALID_EMPLOYEES,
@@ -187,9 +187,13 @@ export function buildEmployeeAudit(): EmployeeAudit {
   >();
   let dropped = 0;
 
-  // Считаем сумму штрафа для каждого валидного нарушения по правилам «Условия»
-  // (Среднее — 1 000, Критичное — 2 000, Грубое — эскалация). Грубость берём из
-  // отдельной колонки листа, а не только из «тяжести».
+  // Считаем сумму штрафа для каждого валидного нарушения по правилам «Условия»:
+  //   • Среднее   — 1-е за неделю (на бухгалтера) → предупреждение (0 др),
+  //                 2-е и далее за ту же неделю → 1 000 др за каждый чат
+  //   • Критичное — 2 000 др за случай
+  //   • Грубое    — эскалация за год (предупреждение / 10 000 / 30 000)
+  // Одно нарушение за неделю НЕ штрафуется деньгами — только предупреждение.
+  // Грубость берём из отдельной колонки листа, а не только из «тяжести».
   const validRows = violations.filter(
     (v) => resolveEmployee(v.accountant).status === "valid"
   );
@@ -199,7 +203,7 @@ export function buildEmployeeAudit(): EmployeeAudit {
     severity: v.gross ? "Грубое" : v.severity,
     sanction: v.sanction,
   }));
-  const fines = computeIndividualFines(fineInput);
+  const fines = computeViolationFines(fineInput);
   let validIdx = 0;
 
   for (const v of violations) {

@@ -11,7 +11,8 @@ const drams = (n: number) => `${n.toLocaleString("ru-RU")} др.`;
  * Разбивка нарушений по каждому бухгалтеру для ежедневного отчёта:
  * код проблемного чата — тип нарушения — сумма штрафа. Данные — из
  * исправленного аудита (только 14 валидных сотрудников). Суммы посчитаны по
- * правилам «Условия»: Среднее — 1 000, Критичное — 2 000, Грубое — эскалация.
+ * правилам «Условия»: Среднее — 1-е за неделю предупреждение, 2-е и далее
+ * 1 000 др; Критичное — 2 000; Грубое — эскалация.
  */
 export default function AccountantViolationBreakdown({
   perAccountant,
@@ -33,8 +34,9 @@ export default function AccountantViolationBreakdown({
         </div>
         <div className="text-xs text-gray-500">
           Из исправленного журнала нарушений ({fmtDate(dateFrom)} —{" "}
-          {fmtDate(dateTo)}). Суммы по правилам «Условия»: Среднее — 1 000 др.,
-          Критичное — 2 000 др., Грубое — эскалация. Итого: {drams(grandTotal)}.
+          {fmtDate(dateTo)}). Суммы по правилам «Условия»: Среднее — 1-е за
+          неделю предупреждение, 2-е и далее 1 000 др., Критичное — 2 000 др.,
+          Грубое — эскалация. Итого: {drams(grandTotal)}.
         </div>
       </div>
 
@@ -87,7 +89,11 @@ export default function AccountantViolationBreakdown({
                         </span>
                       </td>
                       <td className="tabular-nums whitespace-nowrap">
-                        {drams(l.amount)}
+                        {l.amount > 0 ? (
+                          drams(l.amount)
+                        ) : (
+                          <span className="text-gray-500">предупреждение</span>
+                        )}
                       </td>
                     </tr>
                   ))}

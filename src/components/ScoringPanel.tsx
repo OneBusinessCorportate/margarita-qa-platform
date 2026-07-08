@@ -1380,17 +1380,17 @@ function ChatScoreRow({
   const [mailingPersistError, setMailingPersistError] = useState(false);
 
   /**
-   * Persist a mailing status THE MOMENT it changes — no «Оценить» needed. The
-   * status is upserted as a MANUAL row in mqa_chat_mailings keyed by
-   * (chat, cycle, category): set once, it holds for the whole рассылки cycle
-   * (28th → 27th) on every day's view, survives reloads and auto-detect runs,
-   * and resets to «Предстоящая» on the 28th when the period key rolls over.
-   * Picking «—» (empty) deletes the manual row, handing the cell back to
-   * auto-detection. Failures are surfaced, not swallowed — silent best-effort
-   * saves were how her manual data used to get lost.
+   * Persist ONE mailing status to mqa_chat_mailings as a MANUAL row keyed by
+   * (chat, cycle, category). Awaitable — throws on failure so the caller can
+   * surface it. Called from save() so the «Оценить» button is the SINGLE save
+   * point (her teammate's request: «сохранять только кнопкой Оценить»). A status
+   * set once holds for the whole рассылки cycle (28th → 27th) on every day's
+   * view, survives reloads and auto-detect runs, and resets to «Предстоящая» on
+   * the 28th when the period key rolls over. An empty status («—») deletes the
+   * manual row, handing the cell back to auto-detection.
    */
-  function persistMailing(category: string, status: string) {
-    fetch("/api/mailings/confirm", {
+  async function persistMailing(category: string, status: string): Promise<void> {
+    const res = await fetch("/api/mailings/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1399,24 +1399,15 @@ function ChatScoreRow({
         category,
         status,
       }),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(String(res.status));
-        setMailingPersistError(false);
-        setManualMailingLocal((s) => {
-          const next = new Set(s);
-          if (status) next.add(category);
-          else next.delete(category);
-          return next;
-        });
-      })
-      .catch(() => setMailingPersistError(true));
+    });
+    if (!res.ok) throw new Error(String(res.status));
   }
 
-  /** User changed a mailing dropdown / badge: update the row AND persist. */
+  /** User changed a mailing dropdown / badge: update the row only. Nothing is
+   *  written to the database until she presses «Оценить» — there is no separate
+   *  auto-save, so one click saves the whole row at once. */
   const changeMon = (id: string, status: string) => {
     setMon(id, status);
-    persistMailing(id, status);
   };
 
   /** One click: agree with the AI — its row becomes Margarita's answer. */
@@ -1481,21 +1472,34 @@ function ChatScoreRow({
       const saved: Evaluation = await res.json();
       setSavedId(saved.id);
       onSaved(saved);
-      // Safety net: direct dropdown changes already persisted via changeMon,
-      // but values that landed WITHOUT a change event (carried from the last
-      // check, accepted from the AI row, prefilled from the debt feed) become
-      // part of her saved judgement the moment she hits «Оценить» — so promote
-      // them to manual rows in mqa_chat_mailings too. «Предстоящая» is the
-      // neutral auto-prefill placeholder and «Inactive» follows the client
-      // flag — neither is a correction here, so the save never locks them
-      // (an EXPLICIT pick of either persists through changeMon instead).
-      for (const cat of MONTHLY_CATEGORIES) {
-        const status = monthly[cat.id]?.status ?? "";
-        if (!status || status === "Предстоящая" || status === "Inactive") continue;
-        if (manualMailingLocal.has(cat.id)) continue; // already persisted
-        if ((detectedStatuses[cat.id] ?? "") === status) continue;
-        persistMailing(cat.id, status);
-      }
+      // Single save point: «Оценить» writes the WHOLE row at once. The mailing
+      // dropdowns no longer save on their own, so here we promote every status
+      // she set to a manual row in mqa_chat_mailings (so it holds for the whole
+      // рассылки cycle, survives reloads and auto-detect runs). «Предстоящая» /
+      // «Inactive» are neutral auto-prefill placeholders, not corrections, so
+      // they are never locked. An empty pick on a category that HAD a manual
+      // row clears it (hands the cell back to auto-detection). Everything runs
+      // together and any failure is surfaced — no more "save twice / next day
+      // it disappears".
+      const savedManual = new Set<string>();
+      let mailingFailed = false;
+      await Promise.all(
+        MONTHLY_CATEGORIES.map(async (cat) => {
+          const status = monthly[cat.id]?.status ?? "";
+          if (status === "Предстоящая" || status === "Inactive") return;
+          const hadManual =
+            manualMailing.has(cat.id) || manualMailingLocal.has(cat.id);
+          if (!status && !hadManual) return; // nothing to store, nothing to clear
+          try {
+            await persistMailing(cat.id, status);
+            if (status) savedManual.add(cat.id);
+          } catch {
+            mailingFailed = true;
+          }
+        })
+      );
+      setManualMailingLocal(savedManual);
+      setMailingPersistError(mailingFailed);
       // Also update the chat's assigned accountant when it changed — so the
       // change persists across all views, not just this evaluation row.
       const newAcc = accountant || null;
