@@ -177,6 +177,13 @@ export default function ViolationsPanel({
       }
       const saved: Violation = await res.json();
       setRows((p) => [saved, ...p]);
+      // Keep the just-saved row visible: if its date falls outside the current
+      // (default: today-only) filter window, widen the window so the row doesn't
+      // instantly vanish — the "saved but disappeared" report for backdated entries.
+      if (!showAllDates) {
+        if (saved.vdate < fFrom) setFFrom(saved.vdate);
+        if (saved.vdate > fTo) setFTo(saved.vdate);
+      }
       setDraft(blankDraft());
     } catch {
       setError("Сетевая ошибка");
@@ -232,9 +239,14 @@ export default function ViolationsPanel({
     if (!confirm("Удалить запись о нарушении?")) return;
     try {
       const res = await fetch(`/api/violations/${id}`, { method: "DELETE" });
-      if (res.ok) setRows((p) => p.filter((v) => v.id !== id));
+      if (res.ok) {
+        setRows((p) => p.filter((v) => v.id !== id));
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error || "Не удалось удалить запись");
+      }
     } catch {
-      // ignore
+      setError("Сетевая ошибка при удалении");
     }
   }
 

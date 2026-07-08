@@ -184,8 +184,15 @@ export default function ScoringPanel({
   async function runMailingDetect() {
     setDetectingMailings(true);
     try {
-      await fetch("/api/mailings/detect", { method: "POST" });
+      const res = await fetch("/api/mailings/detect", { method: "POST" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(`Не удалось запустить распознавание рассылок: ${d.error || res.status}`);
+        return;
+      }
       router.refresh();
+    } catch {
+      alert("Сетевая ошибка при распознавании рассылок");
     } finally {
       setDetectingMailings(false);
     }

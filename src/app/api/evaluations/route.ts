@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createEvaluation, listEvaluations } from "@/lib/repo";
+import { storageGuard, dbErrorResponse } from "@/lib/api-guard";
 import type { NewEvaluationInput } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,8 @@ function parseInput(body: any): NewEvaluationInput | null {
 }
 
 export async function POST(req: Request) {
+  const blocked = storageGuard();
+  if (blocked) return blocked;
   let body: any;
   try {
     body = await req.json();
@@ -62,6 +65,10 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-  const created = await createEvaluation(input);
-  return NextResponse.json(created, { status: 201 });
+  try {
+    const created = await createEvaluation(input);
+    return NextResponse.json(created, { status: 201 });
+  } catch (e) {
+    return dbErrorResponse(e);
+  }
 }

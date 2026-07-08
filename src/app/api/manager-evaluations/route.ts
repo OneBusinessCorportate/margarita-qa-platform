@@ -3,6 +3,7 @@ import {
   createManagerEvaluation,
   listManagerEvaluations,
 } from "@/lib/repo";
+import { storageGuard, dbErrorResponse } from "@/lib/api-guard";
 import type { NewManagerEvaluationInput } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +42,8 @@ function parseInput(body: any): NewManagerEvaluationInput | null {
 }
 
 export async function POST(req: Request) {
+  const blocked = storageGuard();
+  if (blocked) return blocked;
   let body: any;
   try {
     body = await req.json();
@@ -51,6 +54,10 @@ export async function POST(req: Request) {
   if (!input) {
     return NextResponse.json({ error: "Укажите менеджера" }, { status: 400 });
   }
-  const created = await createManagerEvaluation(input);
-  return NextResponse.json(created, { status: 201 });
+  try {
+    const created = await createManagerEvaluation(input);
+    return NextResponse.json(created, { status: 201 });
+  } catch (e) {
+    return dbErrorResponse(e);
+  }
 }

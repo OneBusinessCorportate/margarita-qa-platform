@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createTask, listTasks } from "@/lib/repo";
+import { storageGuard, dbErrorResponse } from "@/lib/api-guard";
 import type { NewTaskInput } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +13,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const blocked = storageGuard();
+  if (blocked) return blocked;
   let body: any;
   try {
     body = await req.json();
@@ -39,6 +42,10 @@ export async function POST(req: Request) {
     checking_date: body.checking_date ?? undefined,
     recurring: body.recurring === true,
   };
-  const created = await createTask(input);
-  return NextResponse.json(created, { status: 201 });
+  try {
+    const created = await createTask(input);
+    return NextResponse.json(created, { status: 201 });
+  } catch (e) {
+    return dbErrorResponse(e);
+  }
 }

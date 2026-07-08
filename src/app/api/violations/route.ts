@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createViolation, listViolations } from "@/lib/repo";
+import { storageGuard, dbErrorResponse } from "@/lib/api-guard";
 import type { NewViolationInput } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const blocked = storageGuard();
+  if (blocked) return blocked;
   let body: any;
   try {
     body = await req.json();
@@ -39,6 +42,10 @@ export async function POST(req: Request) {
         : Number(body.sanction),
     note: body.note ?? null,
   };
-  const created = await createViolation(input);
-  return NextResponse.json(created, { status: 201 });
+  try {
+    const created = await createViolation(input);
+    return NextResponse.json(created, { status: 201 });
+  } catch (e) {
+    return dbErrorResponse(e);
+  }
 }

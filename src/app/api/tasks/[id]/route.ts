@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { updateTask } from "@/lib/repo";
 import { getSession } from "@/lib/session";
+import { storageGuard, dbErrorResponse } from "@/lib/api-guard";
 import type { TaskPatch } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,8 @@ export async function PATCH(
   req: Request,
   { params }: { params: { id: string } }
 ) {
+  const blocked = storageGuard();
+  if (blocked) return blocked;
   let body: any;
   try {
     body = await req.json();
@@ -26,6 +29,10 @@ export async function PATCH(
       typeof body.qa_confirmed === "boolean" ? body.qa_confirmed : undefined,
     qa_confirmed_by: session?.email ?? null,
   };
-  const updated = await updateTask(params.id, patch);
-  return NextResponse.json(updated);
+  try {
+    const updated = await updateTask(params.id, patch);
+    return NextResponse.json(updated);
+  } catch (e) {
+    return dbErrorResponse(e);
+  }
 }

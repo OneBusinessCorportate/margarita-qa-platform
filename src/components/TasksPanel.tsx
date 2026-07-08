@@ -137,7 +137,10 @@ export default function TasksPanel({
   }
 
   // PATCH an existing task (status, completion, QA confirmation) and reflect it.
+  // Optimistic, but if the server rejects it we ROLL BACK and surface the error
+  // — otherwise a failed save silently "sticks" in the UI and reverts on reload.
   async function patchTask(id: string, patch: Record<string, unknown>) {
+    const before = tasks.find((t) => t.id === id);
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     try {
       const res = await fetch(`/api/tasks/${id}`, {
@@ -145,12 +148,17 @@ export default function TasksPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
-      if (res.ok) {
-        const updated: Task = await res.json();
-        setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        if (before) setTasks((prev) => prev.map((t) => (t.id === id ? before : t)));
+        setError(d.error || "Не удалось сохранить изменение задачи");
+        return;
       }
+      const updated: Task = await res.json();
+      setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
     } catch {
-      /* optimistic update already applied; a refresh will reconcile */
+      if (before) setTasks((prev) => prev.map((t) => (t.id === id ? before : t)));
+      setError("Сетевая ошибка — изменение задачи не сохранено");
     }
   }
 
