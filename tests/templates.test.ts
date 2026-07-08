@@ -397,3 +397,36 @@ test("weekly fines breakdown: пусто, если нарушений нет", (
     ""
   );
 });
+
+test("weekly fines breakdown: с ростером показывает ВСЕХ сотрудников", () => {
+  const msg = buildWeeklyFinesBreakdown(
+    [
+      viol({ id: "1", accountant: "Դավիթ", chat_agr_no: "B-4783", violation_type: "Отсутствие письменной фиксации договоренностей" }),
+      viol({ id: "2", accountant: "Դավիթ", chat_agr_no: "B-4783", severity: "Критичное", violation_type: null }),
+    ],
+    {
+      weekFrom: "2026-07-06",
+      weekTo: "2026-07-08",
+      roster: ["Դավիթ", "Օլյա", "Ավագ"],
+    }
+  );
+  // Нарушитель — как раньше (1-е среднее за неделю — предупреждение, критичное — 2 000).
+  assert.match(msg, /— Դավիթ:/);
+  assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — предупреждение/);
+  assert.match(msg, /▸ B-4783 — - — 2 000 др/);
+  assert.match(msg, /Итого: 2 000 др/);
+  // Остальные сотрудники ростера — строкой «без нарушений».
+  assert.match(msg, /— Օլյա: без нарушений/);
+  assert.match(msg, /— Ավագ: без нарушений/);
+});
+
+test("weekly fines breakdown: с ростером и без нарушений — все «без нарушений»", () => {
+  const msg = buildWeeklyFinesBreakdown([], {
+    weekFrom: "2026-07-06",
+    weekTo: "2026-07-08",
+    roster: ["Դավիթ", "Օլյա"],
+  });
+  assert.match(msg, /^Нарушения за неделю \(06\.07 — 08\.07\):/);
+  assert.match(msg, /— Դավիթ: без нарушений/);
+  assert.match(msg, /— Օլյա: без нарушений/);
+});

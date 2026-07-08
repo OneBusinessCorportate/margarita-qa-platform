@@ -483,6 +483,13 @@ export interface WeeklyFinesBreakdownOptions {
   weekTo: string;
   /** This-year Грубое counts per accountant BEFORE the week (escalation). */
   grossPrior?: Record<string, number>;
+  /**
+   * Полный список действующих сотрудников. Когда задан, блок показывает ВСЕХ
+   * бухгалтеров: сначала те, у кого есть нарушения (как раньше — по убыванию
+   * штрафа), затем остальные строкой «— Имя: без нарушений» в порядке ростера.
+   * Без ростера поведение прежнее — только нарушители.
+   */
+  roster?: string[];
 }
 
 /**
@@ -491,17 +498,19 @@ export interface WeeklyFinesBreakdownOptions {
  * тип — сумма» → «Итого: N др»). Суммы по правилам «Условия» через
  * computeViolationFines (недельная логика: 1-е среднее за неделю —
  * предупреждение, 2-е и далее — 1 000 др, критичное — 2 000, грубое —
- * эскалация; ручная санкция перебивает). Пустая строка, если нарушений нет —
- * тогда блок в отчёт не добавляется. Фильтрацию по валидным сотрудникам делает
- * вызывающая сторона.
+ * эскалация; ручная санкция перебивает). С `roster` в блок попадают ВСЕ
+ * сотрудники (у кого нет нарушений — строкой «без нарушений»); без ростера —
+ * только нарушители, и пустая строка, если нарушений нет. Фильтрацию по
+ * валидным сотрудникам делает вызывающая сторона.
  */
 export function buildWeeklyFinesBreakdown(
   weekViolations: Violation[],
   options: WeeklyFinesBreakdownOptions
 ): string {
-  const { weekFrom, weekTo, grossPrior } = options;
+  const { weekFrom, weekTo, grossPrior, roster } = options;
+  const hasRoster = Boolean(roster && roster.length > 0);
   const withAcc = weekViolations.filter((v) => v.accountant);
-  if (withAcc.length === 0) return "";
+  if (withAcc.length === 0 && !hasRoster) return "";
 
   const fines = computeViolationFines(withAcc, { grossPrior });
   const byAcc = new Map<
@@ -520,7 +529,7 @@ export function buildWeeklyFinesBreakdown(
     entry.total += fines[i];
     byAcc.set(acc, entry);
   }
-  if (byAcc.size === 0) return "";
+  if (byAcc.size === 0 && !hasRoster) return "";
 
   const lines: string[] = [];
   lines.push(`Нарушения за неделю (${fmtDay(weekFrom)} — ${fmtDay(weekTo)}):`);
@@ -537,6 +546,17 @@ export function buildWeeklyFinesBreakdown(
     }
     lines.push(`  Итого: ${fmtDram(total)} др`);
   }
+
+  // Остальные сотрудники ростера, у кого за неделю нарушений нет.
+  if (hasRoster) {
+    const violators = new Set(byAcc.keys());
+    for (const name of roster!) {
+      if (violators.has(name)) continue;
+      lines.push("");
+      lines.push(`— ${name}: без нарушений`);
+    }
+  }
+
   return lines.join("\n");
 }
 

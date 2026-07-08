@@ -173,6 +173,7 @@ export default async function MessagesPage({
       weekFrom: weekStart,
       weekTo: resolved.to,
       grossPrior: grossCountBefore(weekStart),
+      roster: rosterNames,
     }
   );
   if (weeklyBreakdown) {
