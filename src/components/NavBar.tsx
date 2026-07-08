@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/registration", label: "Регистрация" },
   { href: "/tasks", label: "Задачи" },
   { href: "/violations", label: "Нарушения" },
+  { href: "/audit", label: "Аудит сотрудников" },
   { href: "/handbook", label: "Регламент" },
   { href: "/dashboard", label: "Отчёт" },
   { href: "/messages", label: "Сообщения" },

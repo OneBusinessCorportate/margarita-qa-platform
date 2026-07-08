@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { getServiceClient } from "./supabase/server";
 import { store } from "./mock-store";
 import { TABLES } from "./tables";
+import { isValidEmployee } from "./valid-employees";
 import {
   CRITERIA,
   bandFor,
@@ -294,6 +295,18 @@ export async function createChatFromLink(
 
 // --- Accountants -----------------------------------------------------------
 
+/**
+ * Оставляем только действующих сотрудников: для роли «accountant» — строго 14
+ * человек из утверждённого списка (valid-employees), иначе отсекаем уволенных,
+ * чужие отделы и опечатки (Գայանե Դ․, Էմիլյա, Սոնա, Տաթև, Սաթենիկ …), которые
+ * по-прежнему помечены active в общей БД. Не-бухгалтерские роли (юрист,
+ * регистрация, менеджер) не трогаем — их в списке 14 и не должно быть.
+ */
+function keepValidAccountant(a: Accountant): boolean {
+  if ((a.role ?? "accountant") !== "accountant") return true;
+  return isValidEmployee(a.name);
+}
+
 export async function listAccountants(): Promise<Accountant[]> {
   const sb = getServiceClient();
   if (sb) {
@@ -304,9 +317,11 @@ export async function listAccountants(): Promise<Accountant[]> {
       .neq("role", "dismissed")
       .order("name");
     if (error) throw error;
-    return (data ?? []) as Accountant[];
+    return ((data ?? []) as Accountant[]).filter(keepValidAccountant);
   }
-  return store().accountants.filter((a) => a.active && a.role !== "dismissed");
+  return store()
+    .accountants.filter((a) => a.active && a.role !== "dismissed")
+    .filter(keepValidAccountant);
 }
 
 // --- Evaluations -----------------------------------------------------------

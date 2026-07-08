@@ -1,8 +1,11 @@
 import { BANDS } from "@/lib/scoring";
 import type { DailyReport } from "@/lib/report";
+import { isValidEmployee } from "@/lib/valid-employees";
 
 const INVALID_NAMES = new Set(["-", "—", "--", "#N/A", "", " "]);
 
+// Менеджеры / юристы — не бухгалтеры, их не проверяем по списку 14; отсекаем
+// только служебные пустышки.
 function isValidName(name: string): boolean {
   return !INVALID_NAMES.has(name.trim());
 }
@@ -54,7 +57,12 @@ export default function ReportView({
   previousReport?: DailyReport | null;
 }) {
   const needsAttention = report.needsAttention ?? [];
-  const validAccountants = report.perAccountant.filter((a) => isValidName(a.accountant));
+  // Таблица «Сервис по бухгалтерам» — только 14 действующих сотрудников из
+  // утверждённого списка (valid-employees). Уволенные / чужие отделы / опечатки
+  // (Գայանե Դ․, Էմիլյա, Սոնա, Տաթև …) в дашборд не попадают.
+  const validAccountants = report.perAccountant.filter((a) =>
+    isValidEmployee(a.accountant)
+  );
   const managerScores = (report.managerScores ?? []).filter((a) => isValidName(a.accountant));
   const lawyerScores = (report.lawyerScores ?? []).filter((a) => isValidName(a.accountant));
 

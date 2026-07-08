@@ -8,20 +8,23 @@
 import type { Accountant, Chat, Evaluation, Task } from "./types";
 import { bandFor, computeOverall } from "./scoring";
 
+// Действующие бухгалтеры — строго 14 из утверждённого списка (valid-employees).
+// Короткие имена совпадают с `short` там же и служат ключом (FK для чатов).
 export const seedAccountants: Accountant[] = [
   { name: "Գայանե", active: true, role: "accountant" },
-  { name: "Լիլիթ", active: true, role: "accountant" },
-  { name: "Նաիրա", active: true, role: "accountant" },
-  { name: "Լիլիթ Ք․", active: true, role: "accountant" },
   { name: "Օլյա", active: true, role: "accountant" },
-  { name: "Ավագ", active: true, role: "accountant" },
   { name: "Ստելլա", active: true, role: "accountant" },
+  { name: "Նաիրա", active: true, role: "accountant" },
+  { name: "Արփինե", active: true, role: "accountant" },
   { name: "Թագուհի", active: true, role: "accountant" },
-  { name: "Հասմիկ", active: true, role: "accountant" },
+  { name: "Ավագ", active: true, role: "accountant" },
   { name: "Նաիրա Մ․", active: true, role: "accountant" },
-  { name: "Էմիլյա", active: true, role: "accountant" },
-  { name: "Սոնա", active: true, role: "accountant" },
-  { name: "Գայանե Դ․", active: true, role: "accountant" },
+  { name: "Հասմիկ", active: true, role: "accountant" },
+  { name: "Լիլիթ", active: true, role: "accountant" },
+  { name: "Դավիթ", active: true, role: "accountant" },
+  { name: "Ռոբերտ", active: true, role: "accountant" },
+  { name: "Լիլիթ Ք․", active: true, role: "accountant" },
+  { name: "Արթուր", active: true, role: "accountant" },
   { name: "Mane Lawer", active: true, role: "other-specialist" },
   { name: "Gohar Registration", active: true, role: "other-specialist" },
   { name: "Manager", active: true, role: "other-specialist" },

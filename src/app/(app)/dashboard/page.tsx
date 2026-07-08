@@ -148,6 +148,15 @@ export default async function DashboardPage({
 
       {/* Detail lives on its own pages — link instead of repeating it here. */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 no-print">
+        <Link href="/audit" className="card p-3 hover:bg-gray-50 flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium">Аудит сотрудников</div>
+            <div className="text-xs text-gray-500">
+              только 14 действующих · нарушения, штрафы и бонусы из Excel · кто отсутствует
+            </div>
+          </div>
+          <span className="text-blue-600">→</span>
+        </Link>
         <Link href="/scoring" className="card p-3 hover:bg-gray-50 flex items-center justify-between">
           <div>
             <div className="text-sm font-medium">По чатам — статусы и качество</div>
