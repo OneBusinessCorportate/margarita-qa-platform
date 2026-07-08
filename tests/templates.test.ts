@@ -7,6 +7,7 @@ import {
   buildMonthlyFinesMessage,
   buildReportMessage,
   buildScoreMessage,
+  buildWeeklyFinesBreakdown,
   buildWeeklyReportMessage,
   surveyInviteAm,
   surveyInviteRu,
@@ -369,4 +370,30 @@ test("survey invites embed the typeform link with the chat id", () => {
   assert.match(surveyInviteRu(chat), /typeform\.com/);
   assert.ok(surveyInviteRu(chat).includes(`client_id=${chat.agr_no}`));
   assert.ok(surveyInviteAm(chat).includes(`client_id=${chat.agr_no}`));
+});
+
+// --- Weekly per-accountant fines breakdown (для ежедневного отчёта) ----------
+
+test("weekly fines breakdown: per-accountant chat—type—money with Итого", () => {
+  const msg = buildWeeklyFinesBreakdown(
+    [
+      viol({ id: "1", accountant: "Դավիթ", chat_agr_no: "B-4783", violation_type: "Отсутствие письменной фиксации договоренностей" }),
+      viol({ id: "2", accountant: "Դավիթ", chat_agr_no: "B-4783", severity: "Критичное", violation_type: null }),
+      viol({ id: "3", accountant: "Դավիթ", chat_agr_no: "B-4282", violation_type: "Нет расс. по первичной документации" }),
+      viol({ id: "4", accountant: "Դավիթ", chat_agr_no: "B-4282", severity: "Критичное", violation_type: null }),
+    ],
+    { weekFrom: "2026-07-06", weekTo: "2026-07-08" }
+  );
+  assert.match(msg, /^Нарушения за неделю \(06\.07 — 08\.07\):/);
+  assert.match(msg, /— Դավիթ:/);
+  assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — 1 000 др/);
+  assert.match(msg, /▸ B-4783 — - — 2 000 др/);
+  assert.match(msg, /Итого: 6 000 др/);
+});
+
+test("weekly fines breakdown: пусто, если нарушений нет", () => {
+  assert.equal(
+    buildWeeklyFinesBreakdown([], { weekFrom: "2026-07-06", weekTo: "2026-07-08" }),
+    ""
+  );
 });

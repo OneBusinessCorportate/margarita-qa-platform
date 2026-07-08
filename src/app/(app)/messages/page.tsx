@@ -13,11 +13,13 @@ import {
   buildFridayFinesMessage,
   buildMonthlyFinesMessage,
   buildReportMessage,
+  buildWeeklyFinesBreakdown,
   buildWeeklyReportMessage,
   telegramConfigured,
 } from "@/lib/templates";
 import { computeViolationFines } from "@/lib/violations";
 import { auditDailyViolations } from "@/lib/employee-audit";
+import { isValidEmployee } from "@/lib/valid-employees";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
 import PrintComparisonButton from "@/components/PrintComparisonButton";
@@ -152,7 +154,7 @@ export default async function MessagesPage({
     filters.accountant
   );
 
-  const reportMessage = buildReportMessage(report, {
+  let reportMessage = buildReportMessage(report, {
     violations: dailyViolations,
     sheetUrl: process.env.REPORT_SHEET_URL,
     roster: rosterNames,
@@ -160,6 +162,25 @@ export default async function MessagesPage({
     requestDays,
     fineById,
   });
+
+  // Индивидуальная разбивка нарушений ЗА НЕДЕЛЮ (Пн → день отчёта) по каждому
+  // бухгалтеру: «— Имя: / ▸ код — тип — сумма / Итого: N др». Только валидные
+  // сотрудники. Вставляем блок в ежедневный отчёт перед «Кол-во запросов»,
+  // ничего другого в отчёте не меняя.
+  const weeklyBreakdown = buildWeeklyFinesBreakdown(
+    weekViolations.filter((v) => v.accountant && isValidEmployee(v.accountant)),
+    {
+      weekFrom: weekStart,
+      weekTo: resolved.to,
+      grossPrior: grossCountBefore(weekStart),
+    }
+  );
+  if (weeklyBreakdown) {
+    const marker = "Кол-во запросов за день:";
+    reportMessage = reportMessage.includes(marker)
+      ? reportMessage.replace(marker, `${weeklyBreakdown}\n\n${marker}`)
+      : `${reportMessage}\n\n${weeklyBreakdown}`;
+  }
 
   // Weekly fines block (Mon → the reported day) — appended to the Armenian
   // weekly summary so the Friday message is ONE text with the money included.

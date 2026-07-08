@@ -478,6 +478,68 @@ export function buildMonthlyFinesMessage(
   return lines.join("\n");
 }
 
+export interface WeeklyFinesBreakdownOptions {
+  weekFrom: string;
+  weekTo: string;
+  /** This-year Грубое counts per accountant BEFORE the week (escalation). */
+  grossPrior?: Record<string, number>;
+}
+
+/**
+ * Индивидуальная разбивка нарушений ЗА НЕДЕЛЮ по каждому бухгалтеру — блок для
+ * вставки в ежедневный отчёт. Формат как в ежемесячном («— Имя:» → «▸ код —
+ * тип — сумма» → «Итого: N др»). Суммы по правилам «Условия» через
+ * computeViolationFines (недельная логика: 1-е среднее за неделю —
+ * предупреждение, 2-е и далее — 1 000 др, критичное — 2 000, грубое —
+ * эскалация; ручная санкция перебивает). Пустая строка, если нарушений нет —
+ * тогда блок в отчёт не добавляется. Фильтрацию по валидным сотрудникам делает
+ * вызывающая сторона.
+ */
+export function buildWeeklyFinesBreakdown(
+  weekViolations: Violation[],
+  options: WeeklyFinesBreakdownOptions
+): string {
+  const { weekFrom, weekTo, grossPrior } = options;
+  const withAcc = weekViolations.filter((v) => v.accountant);
+  if (withAcc.length === 0) return "";
+
+  const fines = computeViolationFines(withAcc, { grossPrior });
+  const byAcc = new Map<
+    string,
+    { items: { code: string; reason: string; fine: number }[]; total: number }
+  >();
+  for (let i = 0; i < withAcc.length; i++) {
+    const v = withAcc[i];
+    const acc = v.accountant as string;
+    const entry = byAcc.get(acc) ?? { items: [], total: 0 };
+    entry.items.push({
+      code: v.chat_agr_no?.trim() || "-",
+      reason: (v.violation_type ?? "").trim() || "-",
+      fine: fines[i],
+    });
+    entry.total += fines[i];
+    byAcc.set(acc, entry);
+  }
+  if (byAcc.size === 0) return "";
+
+  const lines: string[] = [];
+  lines.push(`Нарушения за неделю (${fmtDay(weekFrom)} — ${fmtDay(weekTo)}):`);
+  // Больший штраф — выше.
+  const entries = [...byAcc.entries()].sort(
+    (a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0])
+  );
+  for (const [acc, { items, total }] of entries) {
+    lines.push("");
+    lines.push(`— ${acc}:`);
+    for (const item of items) {
+      const money = item.fine > 0 ? `${fmtDram(item.fine)} др` : "предупреждение";
+      lines.push(`  ▸ ${item.code} — ${item.reason} — ${money}`);
+    }
+    lines.push(`  Итого: ${fmtDram(total)} др`);
+  }
+  return lines.join("\n");
+}
+
 /** Append "    + ещё N" when a list was truncated to `shown`. */
 function overflow(lines: string[], total: number, shown: number): void {
   if (total > shown) lines.push(`    + ещё ${total - shown}`);
