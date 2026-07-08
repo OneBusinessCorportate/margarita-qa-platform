@@ -23,13 +23,17 @@ export default function SaveReportButton({ filters }: { filters: Filters }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(filters),
       });
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `Ошибка ${res.status}`);
+      }
       setState("saved");
       router.refresh(); // show the new entry in the history list
       setTimeout(() => setState("idle"), 2000);
-    } catch {
+    } catch (e) {
       setState("idle");
-      alert("Не удалось сохранить отчёт. Попробуйте ещё раз.");
+      const msg = e instanceof Error ? e.message : "Попробуйте ещё раз.";
+      alert(`Не удалось сохранить отчёт: ${msg}`);
     }
   }
 

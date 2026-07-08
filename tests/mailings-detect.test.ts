@@ -224,6 +224,101 @@ describe("detectAllSignals — expanded verb coverage", () => {
   });
 });
 
+describe("detectAllSignals — punctuation / case / ЗП variants", () => {
+  const positives = [
+    "Зарплата — Получил",
+    "Зарплата - получил",
+    "Зарплата получил",
+    "Зарплата: получил",
+    "ЗП получил",
+    "Зарплата — отправлено",
+    "Зарплата — сделано",
+    "ЗАРПЛАТА ПОЛУЧИЛ",
+  ];
+  for (const text of positives) {
+    it(`salary/done fires for «${text}»`, () => {
+      const sigs = detectAllSignals(text);
+      assert.ok(
+        sigs.some((s) => s.category === "salary" && s.type === "done"),
+        `expected salary/done for «${text}»`
+      );
+      assert.ok(
+        !sigs.some((s) => s.category === "salary" && s.type === "neg"),
+        `must NOT be neg for «${text}»`
+      );
+    });
+  }
+});
+
+describe("detectAllSignals — negation must NOT count as completed", () => {
+  const negatives = [
+    "Зарплата — не получил",
+    "Зарплата - не получил",
+    "Зарплата не получила",
+    "Зарплата — не отправлено",
+    "ЗП не сделано",
+    "Ведомость по зарплате пока не получили",
+  ];
+  for (const text of negatives) {
+    it(`salary NOT done, marked neg for «${text}»`, () => {
+      const sigs = detectAllSignals(text);
+      assert.ok(
+        !sigs.some((s) => s.category === "salary" && s.type === "done"),
+        `must NOT be done for «${text}»`
+      );
+      assert.ok(
+        sigs.some((s) => s.category === "salary" && s.type === "neg"),
+        `expected salary/neg for «${text}»`
+      );
+    });
+  }
+
+  it("negated salary derives a not-completed status, never «Получил»", () => {
+    assert.equal(deriveStatus("salary", { done: 0, req: 0, call: 0, paid: 0, neg: 1 }), "Запросил 1, не получил");
+  });
+
+  it("negated taxes derive «Не отправил»", () => {
+    const sigs = detectAllSignals("Налоги за месяц не отправлены.");
+    assert.ok(sigs.some((s) => s.category === "main_taxes" && s.type === "neg"));
+    assert.ok(!sigs.some((s) => s.category === "main_taxes" && s.type === "done"));
+    assert.equal(deriveStatus("main_taxes", { done: 0, req: 0, call: 0, paid: 0, neg: 1 }), "Не отправил");
+  });
+
+  it("a later real completion still wins over an earlier negative", () => {
+    assert.equal(deriveStatus("salary", { done: 1, req: 0, call: 0, paid: 0, neg: 1 }), "Получил");
+  });
+
+  it("primary_docs negation: «документы не прислали» is not done", () => {
+    const sigs = detectAllSignals("Первичные документы клиент не прислал.");
+    assert.ok(sigs.some((s) => s.category === "primary_docs" && s.type === "neg"));
+    assert.ok(!sigs.some((s) => s.category === "primary_docs" && s.type === "done"));
+  });
+
+  it("debts negation: «долг не оплачен» is not «Нет долга»", () => {
+    const sigs = detectAllSignals("Долг клиент так и не оплатил.");
+    assert.ok(!sigs.some((s) => s.category === "debts" && s.type === "paid"));
+  });
+
+  it("Armenian negation: «աշխատավարձ ... չի կատարվում» is not done", () => {
+    const sigs = detectAllSignals(
+      "Աշխատավարձի հաշվարկը չի կատարվում ընկերությունում աշխատակիցների բացակայության պատճառով"
+    );
+    assert.ok(!sigs.some((s) => s.category === "salary" && s.type === "done"));
+    assert.ok(sigs.some((s) => s.category === "salary" && s.type === "neg"));
+  });
+});
+
+describe("detectAllSignals — «сделано» completion synonyms", () => {
+  it("salary done: «Зарплата сделано»", () => {
+    const sigs = detectAllSignals("Зарплата сделано за месяц.");
+    assert.ok(sigs.some((s) => s.category === "salary" && s.type === "done"));
+  });
+  it("primary_docs done: «Первичка готова»", () => {
+    const sigs = detectAllSignals("Первичка готова, всё оформлено.");
+    assert.ok(sigs.some((s) => s.category === "primary_docs" && s.type === "done"));
+  });
+});
+
 describe("deriveStatus — additional edge cases", () => {
   it("debts: call takes priority over req>=2", () => {
     assert.equal(deriveStatus("debts", { done: 0, req: 2, call: 1, paid: 0 }), "1-й позвонил");
