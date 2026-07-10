@@ -35,7 +35,10 @@ export default function ViolationModal({
   onSaved?: (v: Violation) => void;
 }) {
   const [vdate, setVdate] = useState(defaultDate ?? today());
-  const [severity, setSeverity] = useState("Критичное");
+  // Стандартный сервис по умолчанию: штраф по недельной эскалации «Условия»
+  // (1-й чат за неделю — предупреждение, 2-й и далее — 1 000 др). «Критичное»
+  // (2 000) / «Грубое» выбираются вручную, если случай этого требует.
+  const [severity, setSeverity] = useState("Среднее");
   const [violationType, setViolationType] = useState("");
   const [sanction, setSanction] = useState("");
   const [note, setNote] = useState("");

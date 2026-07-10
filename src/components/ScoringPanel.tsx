@@ -1511,7 +1511,12 @@ function ChatScoreRow({
         }).catch(() => {/* best-effort */});
       }
       // Auto-log a violation whenever a NEW evaluation lands as "Критично".
-      // Uses the saved total_score so override is respected.
+      // Uses the saved total_score so override is respected. Тяжесть по
+      // умолчанию — «Среднее» (стандартный сервис): по «Условия» штраф идёт по
+      // недельной эскалации (1-й чат за неделю — предупреждение, 2-й и далее —
+      // 1 000 др), а НЕ фиксированные 2 000. «Критичное»/«Грубое» ставится
+      // вручную, если чат действительно критичный («… в других случаях
+      // СТАНДАРТНЫЙ»).
       if (isNew && bandFor(saved.total_score) === "Критично") {
         fetch("/api/violations", {
           method: "POST",
@@ -1521,7 +1526,7 @@ function ChatScoreRow({
             accountant: accountant || null,
             chat_agr_no: chat.agr_no,
             client: chat.chat_name || null,
-            severity: "Критичное",
+            severity: "Среднее",
             violation_type: null,
             sanction: null,
             note: "авто из оценки",

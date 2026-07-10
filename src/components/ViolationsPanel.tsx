@@ -28,7 +28,9 @@ function blankDraft(): Draft {
     accountant: "",
     chat_agr_no: "",
     client: "",
-    severity: "Критичное",
+    // Стандартный сервис по умолчанию (недельная эскалация «Условия»:
+    // предупреждение → 1 000 др). «Критичное»/«Грубое» — вручную.
+    severity: "Среднее",
     violation_type: "",
     sanction: "",
     note: "",
@@ -41,7 +43,7 @@ function violationToDraft(v: Violation): Draft {
     accountant: v.accountant ?? "",
     chat_agr_no: v.chat_agr_no ?? "",
     client: v.client ?? "",
-    severity: v.severity ?? "Критичное",
+    severity: v.severity ?? "Среднее",
     violation_type: v.violation_type ?? "",
     sanction: v.sanction != null ? String(v.sanction) : "",
     note: v.note ?? "",
