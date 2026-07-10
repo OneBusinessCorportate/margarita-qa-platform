@@ -1382,12 +1382,12 @@ function ChatScoreRow({
   /**
    * Persist ONE mailing status to mqa_chat_mailings as a MANUAL row keyed by
    * (chat, cycle, category). Awaitable — throws on failure so the caller can
-   * surface it. Called from save() so the «Оценить» button is the SINGLE save
-   * point (her teammate's request: «сохранять только кнопкой Оценить»). A status
-   * set once holds for the whole рассылки cycle (28th → 27th) on every day's
-   * view, survives reloads and auto-detect runs, and resets to «Предстоящая» on
-   * the 28th when the period key rolls over. An empty status («—») deletes the
-   * manual row, handing the cell back to auto-detection.
+   * surface it. Called both on every dropdown change (auto-save, see changeMon)
+   * and again from save() as a backstop. A status set once holds for the whole
+   * рассылки cycle (28th → 27th) on every day's view, survives reloads and
+   * auto-detect runs, and resets to «Предстоящая» on the 28th when the period
+   * key rolls over. An empty status («—») deletes the manual row, handing the
+   * cell back to auto-detection.
    */
   async function persistMailing(category: string, status: string): Promise<void> {
     const res = await fetch("/api/mailings/confirm", {
@@ -1403,11 +1403,39 @@ function ChatScoreRow({
     if (!res.ok) throw new Error(String(res.status));
   }
 
-  /** User changed a mailing dropdown / badge: update the row only. Nothing is
-   *  written to the database until she presses «Оценить» — there is no separate
-   *  auto-save, so one click saves the whole row at once. */
+  /**
+   * Auto-save a рассылка the instant its dropdown changes, so a status
+   * Margarita picks is never lost if she moves to the next chat without pressing
+   * «Оценить» (her complaint: «вношу вручную — назавтра пропадают»). A real
+   * status is locked as a manual row for the whole cycle; a neutral placeholder
+   * («Предстоящая» / «Inactive») or «—» is not a correction, so it DELETES any
+   * existing manual lock and hands the cell back to auto-detection. The 📌 badge
+   * (manualMailingLocal) updates immediately so she sees it stuck.
+   */
+  async function autoSaveMailing(category: string, status: string): Promise<void> {
+    const lock =
+      status !== "" && status !== "Предстоящая" && status !== "Inactive";
+    try {
+      await persistMailing(category, lock ? status : "");
+      setManualMailingLocal((prev) => {
+        const next = new Set(prev);
+        if (lock) next.add(category);
+        else next.delete(category);
+        return next;
+      });
+      setMailingPersistError(false);
+    } catch {
+      setMailingPersistError(true);
+    }
+  }
+
+  /** User changed a mailing dropdown / badge: update the row AND persist it
+   *  immediately (auto-save), so the рассылка holds for the whole cycle even if
+   *  she never presses «Оценить». «Оценить» still re-saves everything as a
+   *  backstop. */
   const changeMon = (id: string, status: string) => {
     setMon(id, status);
+    void autoSaveMailing(id, status);
   };
 
   /** One click: agree with the AI — its row becomes Margarita's answer. */
