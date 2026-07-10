@@ -63,16 +63,28 @@ export default async function MessagesPage({
     client?: string;
   };
 }) {
-  // Default window: NO dates → getDailyAnalytics resolves to the latest day
-  // that actually has evaluations, so the report is a fresh single-day one
-  // (the boss's ask: «за один день, каждый день новая информация»). Explicit
-  // dates from the filter form still win.
+  // Ежедневный отчёт — СТРОГО за сегодня (по календарю Еревана, UTC+4). Раньше
+  // без дат бралась «последний оценённый день», из-за чего отчёт мог отставать
+  // и показывать данные за прошлый день/пятницу. Теперь по умолчанию — только
+  // сегодня; если за сегодня ещё нет оценок, отчёт честно показывает сегодня
+  // (а не старый день). Явные даты из фильтра по-прежнему имеют приоритет.
+  const todayYerevan = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Yerevan",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
   const filters = {
     from: searchParams.from || undefined,
     to: searchParams.to || undefined,
     accountant: searchParams.accountant || undefined,
     client: searchParams.client || undefined,
   };
+  if (!filters.from && !filters.to) {
+    filters.from = todayYerevan;
+    filters.to = todayYerevan;
+  }
 
   const [{ report, resolved }, allAccountants] = await Promise.all([
     getDailyAnalytics(filters),
