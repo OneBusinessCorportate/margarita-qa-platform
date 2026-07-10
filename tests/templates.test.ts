@@ -374,7 +374,10 @@ test("survey invites embed the typeform link with the chat id", () => {
 
 // --- Weekly per-accountant fines breakdown (для ежедневного отчёта) ----------
 
-test("weekly fines breakdown: per-accountant chat—type—money with Итого", () => {
+test("weekly fines breakdown: 2 проблемы в одном чате = ОДНО нарушение (за каждый чат)", () => {
+  // Каждый чат встречается дважды (среднее + критичное). По «Условия» это ОДНО
+  // нарушение на чат — худшая тяжесть (критичное), штраф один раз (2 000 др), а
+  // не 1 000 + 2 000. Два разных чата → 2 нарушения × 2 000 = 4 000, не 6 000.
   const msg = buildWeeklyFinesBreakdown(
     [
       viol({ id: "1", accountant: "Դավիթ", chat_agr_no: "B-4783", violation_type: "Отсутствие письменной фиксации договоренностей" }),
@@ -386,9 +389,9 @@ test("weekly fines breakdown: per-accountant chat—type—money with Итого
   );
   assert.match(msg, /^Нарушения за неделю \(06\.07 — 08\.07\):/);
   assert.match(msg, /— Դավիթ:/);
-  assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — 1 000 др/);
-  assert.match(msg, /▸ B-4783 — - — 2 000 др/);
-  assert.match(msg, /Итого: 6 000 др/);
+  assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — 2 000 др/);
+  assert.match(msg, /▸ B-4282 — Нет расс\. по первичной документации — 2 000 др/);
+  assert.match(msg, /Итого: 4 000 др/);
 });
 
 test("weekly fines breakdown: пусто, если нарушений нет", () => {
@@ -410,10 +413,9 @@ test("weekly fines breakdown: с ростером показывает ВСЕХ 
       roster: ["Դավիթ", "Օլյա", "Ավագ"],
     }
   );
-  // Нарушитель — как раньше (1-е среднее за неделю — предупреждение, критичное — 2 000).
+  // Один чат с двумя проблемами — ОДНО нарушение (худшая тяжесть — критичное → 2 000).
   assert.match(msg, /— Դավիթ:/);
-  assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — предупреждение/);
-  assert.match(msg, /▸ B-4783 — - — 2 000 др/);
+  assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — 2 000 др/);
   assert.match(msg, /Итого: 2 000 др/);
   // Остальные сотрудники ростера — строкой «без нарушений».
   assert.match(msg, /— Օլյա: без нарушений/);

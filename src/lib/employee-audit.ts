@@ -14,7 +14,11 @@
 // ---------------------------------------------------------------------------
 
 import { AUDIT_SOURCE, type RawViolation } from "./audit-source-data";
-import { computeViolationFines, type FineViolation } from "./violations";
+import {
+  computeViolationFines,
+  groupNarusheniya,
+  type FineViolation,
+} from "./violations";
 import type { Violation } from "./types";
 import {
   VALID_EMPLOYEES,
@@ -187,13 +191,15 @@ export function buildEmployeeAudit(): EmployeeAudit {
   >();
   let dropped = 0;
 
-  // Считаем сумму штрафа для каждого валидного нарушения по правилам «Условия»:
-  //   • Среднее   — 1-е за неделю (на бухгалтера) → предупреждение (0 др),
-  //                 2-е и далее за ту же неделю → 1 000 др за каждый чат
-  //   • Критичное — 2 000 др за случай
+  // Считаем сумму штрафа по правилам «Условия». ЕДИНИЦА нарушения — ЧАТ, а не
+  // отдельная строка: несколько проблем в одном чате за неделю — это ОДНО
+  // нарушение (худшая тяжесть, штраф один раз). Отсюда:
+  //   • Среднее   — 1 чат за неделю (на бухгалтера) → предупреждение (0 др),
+  //                 2 и более чатов за ту же неделю → 1 000 др за каждый чат
+  //   • Критичное — 2 000 др за чат
   //   • Грубое    — эскалация за год (предупреждение / 10 000 / 30 000)
-  // Одно нарушение за неделю НЕ штрафуется деньгами — только предупреждение.
   // Грубость берём из отдельной колонки листа, а не только из «тяжести».
+  // Схлопывание в нарушения и расчёт — в groupNarusheniya (см. violations.ts).
   const validRows = violations.filter(
     (v) => resolveEmployee(v.accountant).status === "valid"
   );
@@ -202,6 +208,11 @@ export function buildEmployeeAudit(): EmployeeAudit {
     accountant: canonicalShortName(v.accountant),
     severity: v.gross ? "Грубое" : v.severity,
     sanction: v.sanction,
+    // Chat identity so several problems in the SAME chat collapse into one
+    // нарушение («… за каждый чат»). Code first, client name as fallback.
+    chat_agr_no: extractChatCode(v.client),
+    client: v.client,
+    violation_type: v.gross || v.service || v.standard,
   }));
   const fines = computeViolationFines(fineInput);
   let validIdx = 0;
@@ -243,6 +254,10 @@ export function buildEmployeeAudit(): EmployeeAudit {
   auditViolations.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
 
   // --- разбивка по бухгалтерам: код чата — тип — сумма (для отчёта) ---
+  // Строим по НАРУШЕНИЯМ, а не по строкам журнала: несколько проблем в одном
+  // чате за неделю — это одно нарушение (худшая тяжесть, штраф один раз), как
+  // требуют «Условия» («… за каждый чат»). Поэтому count = число нарушений (не
+  // строк), а total = сумма штрафов по нарушениям.
   const perAccByShort = new Map<string, PerAccountantViolations>();
   for (const e of VALID_EMPLOYEES) {
     perAccByShort.set(e.short, {
@@ -253,20 +268,24 @@ export function buildEmployeeAudit(): EmployeeAudit {
       total: 0,
     });
   }
-  for (const v of auditViolations) {
-    const g = perAccByShort.get(v.employee);
+  // fineInput[i].accountant — уже каноническое короткое имя (canonicalShortName).
+  for (const n of groupNarusheniya(fineInput)) {
+    const g = perAccByShort.get(n.accountant);
     if (!g) continue;
     g.lines.push({
-      date: v.date,
-      chatCode: v.chatCode,
-      client: v.client,
-      type: v.type,
-      severity: v.severity,
-      gross: v.gross,
-      amount: v.amount,
+      date: n.vdate || null,
+      chatCode: n.chat_agr_no,
+      client: n.client,
+      type: n.types.join(", ") || null,
+      severity: n.severity,
+      gross: n.klass === "gross",
+      amount: n.fine,
     });
     g.count += 1;
-    g.total += v.amount;
+    g.total += n.fine;
+  }
+  for (const g of perAccByShort.values()) {
+    g.lines.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
   }
   const perAccountant = [...perAccByShort.values()].sort(
     (a, b) => b.total - a.total || b.count - a.count

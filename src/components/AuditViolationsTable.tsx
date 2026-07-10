@@ -109,7 +109,9 @@ export default function AuditViolationsTable({
                 <td>{v.type ?? "—"}</td>
                 <td className="max-w-[28rem]">{v.explanation ?? "—"}</td>
                 <td className="tabular-nums whitespace-nowrap">
-                  {v.sanction ? `${v.sanction.toLocaleString("ru-RU")} др.` : "—"}
+                  {v.amount > 0
+                    ? `${v.amount.toLocaleString("ru-RU")} др.`
+                    : "предупреждение"}
                 </td>
                 <td className="whitespace-nowrap">
                   {v.confirmed ? (

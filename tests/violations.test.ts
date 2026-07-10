@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeViolationFines } from "../src/lib/violations.js";
+import { computeViolationFines, groupNarusheniya } from "../src/lib/violations.js";
 
 const v = (over: Partial<Parameters<typeof computeViolationFines>[0][0]> = {}) => ({
   vdate: "2026-07-06",
@@ -57,4 +57,44 @@ test("manual sanction always overrides the computed amount", () => {
     v({ severity: "Критичное", sanction: 500 }), // manual wins over 2000
   ]);
   assert.deepEqual(fines, [5000, 500]);
+});
+
+// --- «за каждый чат»: несколько проблем в одном чате = ОДНО нарушение ---------
+
+test("2 проблемы в ОДНОМ чате за неделю = одно нарушение (предупреждение, не 2×1 000)", () => {
+  const rows = [v({ chat_agr_no: "B-1" }), v({ chat_agr_no: "B-1", vdate: "2026-07-08" })];
+  // Один чат за неделю → предупреждение; штраф не начисляется дважды.
+  assert.deepEqual(computeViolationFines(rows), [0, 0]);
+  assert.equal(groupNarusheniya(rows).length, 1);
+});
+
+test("2 РАЗНЫХ чата за неделю → 2 нарушения → 1 000 др за каждый", () => {
+  const fines = computeViolationFines([
+    v({ chat_agr_no: "B-1" }),
+    v({ chat_agr_no: "B-2" }),
+  ]);
+  assert.deepEqual(fines, [1000, 1000]);
+});
+
+test("один чат со средним И критичным = одно нарушение, худшая тяжесть → 2 000 один раз", () => {
+  const fines = computeViolationFines([
+    v({ chat_agr_no: "B-1" }),
+    v({ chat_agr_no: "B-1", severity: "Критичное", vdate: "2026-07-07" }),
+  ]);
+  // Не 1 000 + 2 000: чат — одно нарушение, критичное → 2 000, начислено один раз.
+  assert.deepEqual(fines, [2000, 0]);
+  const [n] = groupNarusheniya([
+    v({ chat_agr_no: "B-1" }),
+    v({ chat_agr_no: "B-1", severity: "Критичное", vdate: "2026-07-07" }),
+  ]);
+  assert.equal(n.severity, "Критичное");
+  assert.equal(n.fine, 2000);
+});
+
+test("groupNarusheniya собирает описания проблем чата в один список", () => {
+  const [n] = groupNarusheniya([
+    v({ chat_agr_no: "B-1", violation_type: "Долгий ответ" }),
+    v({ chat_agr_no: "B-1", vdate: "2026-07-07", violation_type: "Игнорирование задач" }),
+  ]);
+  assert.deepEqual(n.types, ["Долгий ответ", "Игнорирование задач"]);
 });

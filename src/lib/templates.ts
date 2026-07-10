@@ -15,7 +15,7 @@
 import type { AccountantScore, DailyReport } from "./report";
 import { MONTHLY_CATEGORIES, bandFor, failingMailings, type QualityBand } from "./scoring";
 import type { Chat, Evaluation, Violation } from "./types";
-import { computeViolationFines } from "./violations";
+import { groupNarusheniya } from "./violations";
 
 export function telegramConfigured(): boolean {
   return Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
@@ -55,12 +55,14 @@ export interface ReportMessageOptions {
   requestDays?: number;
   /**
    * Computed fine (драм) per violation id — the daily report uses
-   * computeViolationFines (weekly rule: Среднее → 1-е за неделю предупреждение
-   * (0 др), 2-е и далее 1 000 др; Критичное → 2 000; Грубое → per-year
-   * escalation; a manual sanction wins inside the computation). When provided,
-   * EVERY violation line shows its money: the amount, or «предупреждение» when
-   * the rules say 0. Without it
-   * the line falls back to the manually entered sanction only (legacy).
+   * computeViolationFines. Одно нарушение — это ОДИН чат за неделю (несколько
+   * проблем в том же чате считаются как одно, худшая тяжесть, штраф один раз):
+   * Среднее → 1-й чат за неделю предупреждение (0 др), 2-й и далее 1 000 др за
+   * каждый чат; Критичное → 2 000; Грубое → эскалация за год; ручная санкция
+   * перебивает. When provided, EVERY violation line shows its money: the amount,
+   * or «предупреждение» when the rules say 0 (a chat's 2nd+ problem shows 0 — it
+   * is the same нарушение, already priced). Without it the line falls back to the
+   * manually entered sanction only (legacy).
    */
   fineById?: Record<string, number>;
 }
@@ -314,24 +316,23 @@ export function buildFridayFinesMessage(
   lines.push(`Неделя: ${fmtDay(weekFrom)} — ${fmtDay(weekTo)}`);
 
   const withAcc = weekViolations.filter((v) => v.accountant);
-  // Money per violation from the «Условия» rules (manual sanction still wins).
-  const fines = computeViolationFines(withAcc, { grossPrior });
+  // One нарушение = one chat/week (worst severity, fined once) — «за каждый чат».
+  const narusheniya = groupNarusheniya(withAcc, { grossPrior });
   const byAcc = new Map<
     string,
     { sevMap: Map<string, number>; fine: number; count: number; reasons: string[] }
   >();
-  for (let i = 0; i < withAcc.length; i++) {
-    const v = withAcc[i];
-    const acc = v.accountant as string;
-    const sev = v.severity ?? "среднее";
+  for (const n of narusheniya) {
+    const acc = n.accountant;
     const entry =
       byAcc.get(acc) ??
       { sevMap: new Map<string, number>(), fine: 0, count: 0, reasons: [] };
-    entry.sevMap.set(sev, (entry.sevMap.get(sev) ?? 0) + 1);
+    entry.sevMap.set(n.severity, (entry.sevMap.get(n.severity) ?? 0) + 1);
     entry.count += 1;
-    entry.fine += fines[i];
-    const reason = (v.violation_type ?? "").trim();
-    if (reason && !entry.reasons.includes(reason)) entry.reasons.push(reason);
+    entry.fine += n.fine;
+    for (const reason of n.types) {
+      if (reason && !entry.reasons.includes(reason)) entry.reasons.push(reason);
+    }
     byAcc.set(acc, entry);
   }
 
@@ -411,8 +412,9 @@ export interface MonthlyFinesOptions {
  *   Без нарушений: ✅ Имя, Имя
  *
  * Money comes from the same «Условия» rules as the Friday report
- * (computeViolationFines — a manual sanction on a violation still wins), so
- * the monthly figures always match the «итого за месяц» totals shown there.
+ * (groupNarusheniya — одно нарушение на чат за неделю, ручная санкция
+ * перебивает), so the monthly figures always match the «итого за месяц» totals
+ * shown there. A chat with several problems is ONE строка, fined once.
  */
 export function buildMonthlyFinesMessage(
   monthViolations: Violation[],
@@ -426,21 +428,21 @@ export function buildMonthlyFinesMessage(
   lines.push(`Месяц: ${fmtDay(monthFrom)} — ${fmtDay(monthTo)}`);
 
   const withAcc = monthViolations.filter((v) => v.accountant);
-  const fines = computeViolationFines(withAcc, { grossPrior });
+  // One block per нарушение (chat/week collapsed, worst severity, fined once).
+  const narusheniya = groupNarusheniya(withAcc, { grossPrior });
   const byAcc = new Map<
     string,
     { items: { code: string; reason: string; fine: number }[]; total: number }
   >();
-  for (let i = 0; i < withAcc.length; i++) {
-    const v = withAcc[i];
-    const acc = v.accountant as string;
+  for (const n of narusheniya) {
+    const acc = n.accountant;
     const entry = byAcc.get(acc) ?? { items: [], total: 0 };
     entry.items.push({
-      code: v.chat_agr_no?.trim() || "-",
-      reason: (v.violation_type ?? "").trim() || "-",
-      fine: fines[i],
+      code: n.chat_agr_no?.trim() || "-",
+      reason: n.types.join(", ") || "-",
+      fine: n.fine,
     });
-    entry.total += fines[i];
+    entry.total += n.fine;
     byAcc.set(acc, entry);
   }
 
@@ -497,9 +499,10 @@ export interface WeeklyFinesBreakdownOptions {
  * Индивидуальная разбивка нарушений ЗА НЕДЕЛЮ по каждому бухгалтеру — блок для
  * вставки в ежедневный отчёт. Формат как в ежемесячном («— Имя:» → «▸ код —
  * тип — сумма» → «Итого: N др»). Суммы по правилам «Условия» через
- * computeViolationFines (недельная логика: 1-е среднее за неделю —
- * предупреждение, 2-е и далее — 1 000 др, критичное — 2 000, грубое —
- * эскалация; ручная санкция перебивает). С `roster` в блок попадают ВСЕ
+ * groupNarusheniya (одно нарушение — ОДИН чат за неделю, худшая тяжесть, штраф
+ * один раз: 1-й чат за неделю — предупреждение, 2-й и далее — 1 000 др за каждый
+ * чат, критичное — 2 000, грубое — эскалация; ручная санкция перебивает). С
+ * `roster` в блок попадают ВСЕ
  * сотрудники (у кого нет нарушений — строкой «без нарушений»); без ростера —
  * только нарушители, и пустая строка, если нарушений нет. Фильтрацию по
  * валидным сотрудникам делает вызывающая сторона.
@@ -513,21 +516,21 @@ export function buildWeeklyFinesBreakdown(
   const withAcc = weekViolations.filter((v) => v.accountant);
   if (withAcc.length === 0 && !hasRoster) return "";
 
-  const fines = computeViolationFines(withAcc, { grossPrior });
+  // One line per нарушение (chat/week collapsed, worst severity, fined once).
+  const narusheniya = groupNarusheniya(withAcc, { grossPrior });
   const byAcc = new Map<
     string,
     { items: { code: string; reason: string; fine: number }[]; total: number }
   >();
-  for (let i = 0; i < withAcc.length; i++) {
-    const v = withAcc[i];
-    const acc = v.accountant as string;
+  for (const n of narusheniya) {
+    const acc = n.accountant;
     const entry = byAcc.get(acc) ?? { items: [], total: 0 };
     entry.items.push({
-      code: v.chat_agr_no?.trim() || "-",
-      reason: (v.violation_type ?? "").trim() || "-",
-      fine: fines[i],
+      code: n.chat_agr_no?.trim() || "-",
+      reason: n.types.join(", ") || "-",
+      fine: n.fine,
     });
-    entry.total += fines[i];
+    entry.total += n.fine;
     byAcc.set(acc, entry);
   }
   if (byAcc.size === 0 && !hasRoster) return "";

@@ -146,10 +146,17 @@ export const SANCTION_RULES: SanctionRule[] = [
 export const SANCTION_CAP_PCT = 30;
 
 // --- Rule-based fine amounts (драм) — from the «Условия» sheet --------------
+//
+// The unit of a «нарушение» is a CHAT, not a single problem line: «2 и более
+// за неделю — 1 000 др. за КАЖДЫЙ чат». So several problems logged against the
+// same chat (by the same bookkeeper, in the same week) are ONE нарушение — its
+// severity is the worst of them, and it is fined once. That single rule is used
+// everywhere (fines AND the counts shown in the reports), so the money and the
+// «N нарушений» always agree with the «Условия» sheet.
 
-/** Среднее: 2+ per accountant per week → 1 000 др за КАЖДЫЙ чат. */
+/** Стандартный сервис: 2+ чата с нарушениями за неделю → 1 000 др за КАЖДЫЙ чат. */
 export const MEDIUM_FINE = 1_000;
-/** Критичный сервис / чаты: 2 000 др за каждый случай. */
+/** Критичный сервис / чаты: 2 000 др за каждый чат. */
 export const CRITICAL_FINE = 2_000;
 /** Грубые: 1-е за год — предупреждение, 2-е — 10 000, 3-е и далее — 30 000. */
 export const GROSS_FINES = [0, 10_000, 30_000] as const;
@@ -161,71 +168,201 @@ export interface FineViolation {
   severity: string | null;
   /** Manual sanction — when set (> 0) it overrides the computed amount. */
   sanction: number | null;
+  /** Chat / contract code (B-4066 …) — the primary key for «за каждый чат». */
+  chat_agr_no?: string | null;
+  /** Client / chat name — fallback chat identity when there is no code. */
+  client?: string | null;
+  /** Problem description — merged into the нарушение's reason text. */
+  violation_type?: string | null;
 }
 
-const sevOf = (v: FineViolation) => (v.severity ?? "среднее").toLowerCase();
+/** Severity bucket that drives the «Условия» pricing. */
+export type ViolationClass = "standard" | "critical" | "gross";
+const CLASS_RANK: Record<ViolationClass, number> = {
+  standard: 0,
+  critical: 1,
+  gross: 2,
+};
+const CLASS_LABEL: Record<ViolationClass, string> = {
+  standard: "Среднее",
+  critical: "Критичное",
+  gross: "Грубое",
+};
+
+/** Классификация тяжести: грубое > критичное > (всё остальное) стандартное. */
+export function violationClassOf(
+  severity: string | null | undefined
+): ViolationClass {
+  const s = (severity ?? "").toLowerCase();
+  if (s.includes("груб")) return "gross";
+  if (s.includes("критич")) return "critical";
+  return "standard";
+}
 
 /**
- * Gross («Грубое») escalation per accountant across `violations`, in date
- * order: 1-е за год → предупреждение (0), 2-е → 10 000, 3-е+ → 30 000.
- * `grossPrior` = this-year counts BEFORE the window, so escalation carries
- * over. Returns a map input-index → fine for the gross rows only.
+ * Chat identity used to collapse problems into one нарушение. Rows with neither
+ * a code nor a client name can't be merged, so each stays its own нарушение.
  */
-function grossFinesByIndex(
-  violations: FineViolation[],
-  grossPrior: Record<string, number>
-): Map<number, number> {
-  const grossSeen = new Map<string, number>();
-  const grossOrder = violations
-    .map((v, i) => ({ v, i }))
-    .filter(({ v }) => sevOf(v).includes("груб"))
-    .sort((a, b) => a.v.vdate.localeCompare(b.v.vdate) || a.i - b.i);
-  const byIndex = new Map<number, number>();
-  for (const { v, i } of grossOrder) {
-    const acc = v.accountant ?? "";
-    const nth = (grossPrior[acc] ?? 0) + (grossSeen.get(acc) ?? 0) + 1;
-    grossSeen.set(acc, (grossSeen.get(acc) ?? 0) + 1);
-    byIndex.set(i, GROSS_FINES[Math.min(nth, GROSS_FINES.length) - 1]);
-  }
-  return byIndex;
+function chatKeyOf(v: FineViolation, idx: number): string {
+  const code = (v.chat_agr_no ?? "").trim().toLowerCase();
+  if (code) return `c:${code}`;
+  const client = (v.client ?? "").trim().toLowerCase();
+  if (client) return `n:${client}`;
+  return `#${idx}`;
+}
+
+/** One нарушение = one chat, one bookkeeper, one week (worst severity, fined once). */
+export interface Narushenie {
+  accountant: string;
+  chat_agr_no: string | null;
+  client: string | null;
+  /** Earliest problem date in the group. */
+  vdate: string;
+  /** ISO Monday of `vdate`. */
+  week: string;
+  /** Worst severity bucket among the group's problems. */
+  klass: ViolationClass;
+  /** Canonical Russian severity label (Среднее / Критичное / Грубое). */
+  severity: string;
+  /** Distinct problem descriptions, in first-seen order. */
+  types: string[];
+  /** Fine (драм) per «Условия». */
+  fine: number;
+  /** Input rows in this нарушение, representative (earliest) first. */
+  rowIndexes: number[];
+  /** Priced by a manual sanction rather than the rules. */
+  manual: boolean;
 }
 
 /**
- * Compute the fine (драм) for every violation per the «Условия» rules:
- *   • Среднее   — 1 за неделю → предупреждение (0 др); 2 и более за неделю
- *                 (per accountant) → 1 000 др за каждый чат
- *   • Критичное — 2 000 др за каждый случай
+ * Collapse raw violation rows into нарушения and price each per «Условия»:
+ *   • Стандартное (Среднее) — 1 чат за неделю → предупреждение (0 др); 2 и более
+ *     чатов за неделю (на бухгалтера) → 1 000 др за каждый чат
+ *   • Критичное — 2 000 др за каждый чат
  *   • Грубое    — 1-е за год → предупреждение; 2-е → 10 000; 3-е+ → 30 000
- *                 (per accountant; `grossPrior` = this-year count BEFORE the
- *                 window covered by `violations`, so escalation carries over)
- * A manually-entered sanction (> 0) always wins over the computed amount.
- * Returns amounts aligned with the input order.
+ *     (`grossPrior` = this-year нарушения count BEFORE the window, so the
+ *     escalation carries over)
+ * Several problems in the SAME chat (same bookkeeper, same week) are ONE
+ * нарушение — worst severity, fined once. A manual sanction (> 0) prices its
+ * own row explicitly and is never merged away.
+ */
+export function groupNarusheniya(
+  violations: FineViolation[],
+  options: { grossPrior?: Record<string, number> } = {}
+): Narushenie[] {
+  const { grossPrior = {} } = options;
+
+  interface Acc {
+    accountant: string;
+    chat_agr_no: string | null;
+    client: string | null;
+    vdate: string;
+    klass: ViolationClass;
+    types: string[];
+    rowIndexes: number[];
+    rep: number;
+    manualSanction: number | null;
+  }
+  const groups = new Map<string, Acc>();
+  const order: string[] = []; // stable, first-seen output order
+
+  violations.forEach((v, i) => {
+    const accountant = v.accountant ?? "";
+    const week = mondayOf(v.vdate);
+    const manual = typeof v.sanction === "number" && v.sanction > 0;
+    // Manually-priced rows never merge (their amount must survive verbatim).
+    const key = manual ? `manual#${i}` : `${accountant}|${week}|${chatKeyOf(v, i)}`;
+    const klass = violationClassOf(v.severity);
+    const type = (v.violation_type ?? "").trim();
+    const g = groups.get(key);
+    if (!g) {
+      groups.set(key, {
+        accountant,
+        chat_agr_no: v.chat_agr_no ?? null,
+        client: v.client ?? null,
+        vdate: v.vdate,
+        klass,
+        types: type ? [type] : [],
+        rowIndexes: [i],
+        rep: i,
+        manualSanction: manual ? (v.sanction as number) : null,
+      });
+      order.push(key);
+    } else {
+      g.rowIndexes.push(i);
+      if (CLASS_RANK[klass] > CLASS_RANK[g.klass]) g.klass = klass;
+      if (type && !g.types.includes(type)) g.types.push(type);
+      if (v.vdate < g.vdate || (v.vdate === g.vdate && i < g.rep)) {
+        g.vdate = v.vdate;
+        g.rep = i;
+      }
+      if (!g.chat_agr_no && v.chat_agr_no) g.chat_agr_no = v.chat_agr_no;
+      if (!g.client && v.client) g.client = v.client;
+    }
+  });
+
+  const list = order.map((k) => groups.get(k)!);
+
+  // Standard weekly threshold: 2+ standard нарушения (chats) per bookkeeper per
+  // week → 1 000 др each; a single one is only a warning.
+  const stdPerAccWeek = new Map<string, number>();
+  for (const g of list) {
+    if (g.manualSanction != null || g.klass !== "standard") continue;
+    const k = `${g.accountant}|${g.vdate.length ? mondayOf(g.vdate) : ""}`;
+    stdPerAccWeek.set(k, (stdPerAccWeek.get(k) ?? 0) + 1);
+  }
+
+  // Gross per-year escalation per bookkeeper, counted in date order.
+  const grossSeen: Record<string, number> = {};
+  const grossFineOf = new Map<Acc, number>();
+  const grossGroups = list
+    .map((g, i) => ({ g, i }))
+    .filter(({ g }) => g.manualSanction == null && g.klass === "gross")
+    .sort((a, b) => a.g.vdate.localeCompare(b.g.vdate) || a.i - b.i);
+  for (const { g } of grossGroups) {
+    const nth = (grossPrior[g.accountant] ?? 0) + (grossSeen[g.accountant] ?? 0) + 1;
+    grossSeen[g.accountant] = (grossSeen[g.accountant] ?? 0) + 1;
+    grossFineOf.set(g, GROSS_FINES[Math.min(nth, GROSS_FINES.length) - 1]);
+  }
+
+  return list.map((g) => {
+    let fine: number;
+    if (g.manualSanction != null) fine = g.manualSanction;
+    else if (g.klass === "gross") fine = grossFineOf.get(g) ?? 0;
+    else if (g.klass === "critical") fine = CRITICAL_FINE;
+    else {
+      const k = `${g.accountant}|${mondayOf(g.vdate)}`;
+      fine = (stdPerAccWeek.get(k) ?? 0) >= 2 ? MEDIUM_FINE : 0;
+    }
+    return {
+      accountant: g.accountant,
+      chat_agr_no: g.chat_agr_no,
+      client: g.client,
+      vdate: g.vdate,
+      week: mondayOf(g.vdate),
+      klass: g.klass,
+      severity: CLASS_LABEL[g.klass],
+      types: g.types,
+      fine,
+      rowIndexes: [g.rep, ...g.rowIndexes.filter((x) => x !== g.rep)],
+      manual: g.manualSanction != null,
+    };
+  });
+}
+
+/**
+ * Per-row fines aligned with the input order. Each нарушение's amount lands on
+ * its representative row (the earliest problem in that chat/week); the other
+ * rows of the same нарушение get 0, so a chat with several problems is charged
+ * ONCE. See groupNarusheniya for the «Условия» rules.
  */
 export function computeViolationFines(
   violations: FineViolation[],
   options: { grossPrior?: Record<string, number> } = {}
 ): number[] {
-  const { grossPrior = {} } = options;
-
-  // Среднее count per (accountant, week) — the "2 и более за неделю" rule.
-  const mediumPerAccWeek = new Map<string, number>();
-  const accWeekKey = (v: FineViolation) =>
-    `${v.accountant ?? ""}|${mondayOf(v.vdate)}`;
-  for (const v of violations) {
-    const sev = sevOf(v);
-    if (!sev.includes("критич") && !sev.includes("груб")) {
-      const key = accWeekKey(v);
-      mediumPerAccWeek.set(key, (mediumPerAccWeek.get(key) ?? 0) + 1);
-    }
+  const out = new Array<number>(violations.length).fill(0);
+  for (const n of groupNarusheniya(violations, options)) {
+    out[n.rowIndexes[0]] = n.fine;
   }
-
-  const grossFineByIndex = grossFinesByIndex(violations, grossPrior);
-
-  return violations.map((v, i) => {
-    if (typeof v.sanction === "number" && v.sanction > 0) return v.sanction;
-    const sev = sevOf(v);
-    if (sev.includes("груб")) return grossFineByIndex.get(i) ?? 0;
-    if (sev.includes("критич")) return CRITICAL_FINE;
-    return (mediumPerAccWeek.get(accWeekKey(v)) ?? 0) >= 2 ? MEDIUM_FINE : 0;
-  });
+  return out;
 }
