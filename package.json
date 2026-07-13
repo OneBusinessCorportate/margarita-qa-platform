@@ -9,6 +9,7 @@
     "lint": "next lint",
     "seed": "tsx scripts/seed.ts",
     "import": "tsx scripts/import-xlsx.ts",
+    "sync:sheet": "tsx scripts/sync-sheet.ts",
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
