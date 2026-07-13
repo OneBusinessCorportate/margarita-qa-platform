@@ -9,6 +9,7 @@ services:
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
+      # ⬇ same values also needed by the daily sheet-sync cron below.
       - key: NODE_VERSION
         value: "22"
       - key: AUTH_SECRET
@@ -35,3 +36,27 @@ services:
       #   sync: false
       # - key: TELEGRAM_CHAT_ID
       #   sync: false
+
+  # --- Daily live sync of the master Google Sheet (clients + debts) ---------
+  # Reads the sheet live via export?format=xlsx and updates mqa_chats/mqa_debts.
+  # Runs once a day; the site does not need to be awake for it to run.
+  - type: cron
+    name: margarita-sheet-sync
+    runtime: node
+    region: frankfurt
+    plan: starter
+    # 04:00 UTC = 08:00 Yerevan — data is fresh before the workday.
+    schedule: "0 4 * * *"
+    # --include=dev so tsx + xlsx (devDependencies) are available at runtime.
+    buildCommand: npm install --include=dev
+    startCommand: npm run sync:sheet
+    envVars:
+      # Must be set on THIS cron service in the Render dashboard too
+      # (each service has its own env). Same values as the web service.
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Optional: override the source sheet (else the built-in default is used).
+      - key: SOURCE_SHEET_URL
+        sync: false
