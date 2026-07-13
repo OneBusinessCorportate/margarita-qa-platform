@@ -108,11 +108,17 @@ async function main() {
   // Existing chats: agr_no (match target), hvhh (debt join key) and chat_name
   // (carried back into the batched upsert so its NOT NULL constraint is met
   // without ever changing the value).
-  let existing: { agr_no: string; hvhh: string | null; chat_name: string }[] = [];
+  let existing: {
+    agr_no: string;
+    hvhh: string | null;
+    chat_name: string;
+    accountant: string | null;
+    accountant_pinned: boolean | null;
+  }[] = [];
   if (sb) {
     const { data, error } = await sb
       .from(TABLES.chats)
-      .select("agr_no, hvhh, chat_name")
+      .select("agr_no, hvhh, chat_name, accountant, accountant_pinned")
       .limit(20000);
     if (error) throw error;
     existing = (data ?? []) as typeof existing;
@@ -172,6 +178,13 @@ async function main() {
   // satisfies the NOT NULL constraint without ever changing it.
   const nameOf = new Map(existing.map((c) => [c.agr_no, c.chat_name]));
 
+  // Chats whose accountant Margarita pinned in the app (п.1): keep the assigned
+  // person, don't overwrite it from «Основные данные». Maps agr_no → pinned
+  // accountant so the batched upsert carries the current value back verbatim.
+  const pinnedAccOf = new Map(
+    existing.filter((c) => c.accountant_pinned).map((c) => [c.agr_no, c.accountant])
+  );
+
   // Debt total per client, looked up by its ՀՎՀՀ.
   const asOfStamp = new Date().toISOString();
   const totalsFor = (c: MasterClient): DebtTotals | undefined =>
@@ -199,7 +212,10 @@ async function main() {
       name_agr: c.name_agr,
       name_tax: c.name_tax,
       status: c.status,
-      accountant: c.accountant,
+      // Pinned chats keep their in-app accountant (п.1); others follow the sheet.
+      // The pin flag itself isn't resent — upsert only touches the columns here,
+      // so accountant_pinned stays true in the DB.
+      accountant: pinnedAccOf.has(c.agr_no) ? pinnedAccOf.get(c.agr_no)! : c.accountant,
       tax_activation_date: c.tax_activation_date,
       created_date: c.created_date,
       debts: debtsCellValue(totals),

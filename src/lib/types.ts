@@ -20,6 +20,9 @@ export interface Chat {
   chat_name: string;
   chat_link: string | null;
   accountant: string | null;
+  /** Ручное закрепление бухгалтера (п.1): когда true, синк таблицы не
+   * перезаписывает accountant значением из «Основные данные». */
+  accountant_pinned?: boolean;
   manager: string | null;
   debts: string | null; // amount or "нет долга" / "--"
   /** «Долги» follow-up status derived from the OneBusiness debts system

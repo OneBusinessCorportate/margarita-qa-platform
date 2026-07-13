@@ -33,6 +33,7 @@ import {
   latestActivityKey,
   matchesChatQuery,
   resolveChatTokens,
+  splitContractQuery,
   splitQueryTokens,
   waitingLabel,
   type SortBy,
@@ -578,6 +579,35 @@ export default function ScoringPanel({
     }
   }
 
+  // Create a chat by its contract № (п.3) — for chats present in «КК
+  // Сопровождения» / «Налоговый кабинет» but missing from «Основные данные», so
+  // the add-box no longer dead-ends at «Ничего не найдено». Keeps the pasted
+  // label as the chat name and pulls the chat into this day's list.
+  async function createByNumber(query: string) {
+    const { agr_no, name } = splitContractQuery(query);
+    if (!agr_no) return;
+    setAddBusy(true);
+    setAddError(null);
+    try {
+      const res = await fetch("/api/chats/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agr_no, name, date }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Не удалось создать чат");
+      }
+      setAddOpen(false);
+      setAddQuery("");
+      router.refresh();
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setAddBusy(false);
+    }
+  }
+
   // How many of the day's active chats QA has hidden (drives the "Скрытые (N)"
   // toggle). Only meaningful in the day view.
   const hiddenCount = useMemo(() => {
@@ -1058,8 +1088,18 @@ export default function ScoringPanel({
                         </button>
                       </div>
                     ) : (
-                      <div className="px-3 py-2 text-sm text-gray-500">
-                        Ничего не найдено (или чат уже в списке за {date}).
+                      <div className="px-3 py-2 text-sm text-gray-600 flex flex-wrap items-center gap-2">
+                        <span>Ничего не найдено (или чат уже в списке за {date}).</span>
+                        <button
+                          className="btn-primary !py-1 !px-2 text-xs"
+                          disabled={addBusy}
+                          onClick={() => createByNumber(addQuery.trim())}
+                          title="Создать чат по № договора (для чатов из «КК Сопровождения» / «Налоговый кабинет», которых нет в основной таблице)"
+                        >
+                          {addBusy
+                            ? "Создаю…"
+                            : `➕ Создать чат «${splitContractQuery(addQuery.trim()).agr_no}» и добавить`}
+                        </button>
                       </div>
                     )
                   ) : (
@@ -1243,6 +1283,7 @@ function emptyMonthly(): Record<string, MonthlyStatus> {
 function ChatScoreRow({
   chat,
   accountants,
+  managers = [],
   date,
   scope,
   existing,
@@ -1267,6 +1308,7 @@ function ChatScoreRow({
 }: {
   chat: Chat;
   accountants: Accountant[];
+  managers?: string[];
   date: string;
   scope: Scope;
   existing: Evaluation | null;
@@ -1313,6 +1355,29 @@ function ChatScoreRow({
   const [accountant, setAccountant] = useState(
     existing?.accountant ?? (isWeekend ? weekendDefault : chat.accountant ?? "")
   );
+  // Ответственный менеджер (п.6) — редактируемый прямо в карточке чата.
+  const rowRouter = useRouter();
+  const [managerVal, setManagerVal] = useState(chat.manager ?? "");
+  const [mgrEditing, setMgrEditing] = useState(false);
+  const [mgrSaving, setMgrSaving] = useState(false);
+  async function saveManager(next: string) {
+    const value = next.trim();
+    setMgrSaving(true);
+    try {
+      const res = await fetch("/api/chats/manager", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agr_no: chat.agr_no, manager: value || null }),
+      });
+      if (res.ok) {
+        setManagerVal(value);
+        setMgrEditing(false);
+        rowRouter.refresh();
+      }
+    } finally {
+      setMgrSaving(false);
+    }
+  }
   const [deletingEval, setDeletingEval] = useState(false);
   const [criteria, setCriteria] = useState<CriteriaScores>(() => {
     if (existing?.scores.criteria) return existing.scores.criteria;
@@ -1888,12 +1953,48 @@ function ChatScoreRow({
               onChange={setAccountant}
             />
           </div>
-          {/* Ответственный менеджер по клиенту — из реальных данных чата (п.6). */}
+          {/* Ответственный менеджер по клиенту (п.6) — редактируемый: данных по
+              менеджерам нет в основной таблице, поэтому их вносит команда прямо
+              здесь. Сохраняется в mqa_chats.manager. */}
           <div className="text-[11px] text-gray-500 mt-1">
-            Менеджер:{" "}
-            <span className={chat.manager ? "text-gray-700 font-medium" : "text-gray-400"}>
-              {chat.manager || "не указан"}
-            </span>
+            {!mgrEditing ? (
+              <span className="inline-flex items-center gap-1">
+                Менеджер:{" "}
+                <span className={managerVal ? "text-gray-700 font-medium" : "text-gray-400"}>
+                  {managerVal || "не указан"}
+                </span>
+                <button
+                  className="text-blue-600 hover:underline"
+                  onClick={() => setMgrEditing(true)}
+                  title="Назначить / сменить ответственного менеджера"
+                >
+                  {managerVal ? "изменить" : "указать"}
+                </button>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1">
+                <span className="text-gray-500">Менеджер:</span>
+                <input
+                  className="input text-[11px] !py-0.5 w-32"
+                  list="mgr-people"
+                  placeholder="— менеджер —"
+                  defaultValue={managerVal}
+                  disabled={mgrSaving}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveManager((e.target as HTMLInputElement).value);
+                    if (e.key === "Escape") setMgrEditing(false);
+                  }}
+                  onBlur={(e) => saveManager(e.target.value)}
+                />
+                <datalist id="mgr-people">
+                  {managers.map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+                {mgrSaving && <span className="text-gray-400">…</span>}
+              </span>
+            )}
           </div>
           {/* Ручная оценка за выбранный день (п.8): маркер + форма правки. */}
           <div className="mt-1">
@@ -2495,6 +2596,7 @@ function ChatGroup({
       <ChatScoreRow
         chat={chat}
         accountants={accountants}
+        managers={managers}
         date={date}
         scope={scope}
         existing={accountantEval}

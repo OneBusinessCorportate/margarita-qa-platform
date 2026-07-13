@@ -151,6 +151,24 @@ export function matchesChatQuery(chat: Chat, query: string): boolean {
 }
 
 /**
+ * Split a pasted "add missing chat" query into a contract № + display name
+ * (п.3). Margarita pastes the whole label from «КК Сопровождения» / «Налоговый
+ * кабинет», e.g. `B-4061 «ՎԻԿՏՈՐ ԾԱՏՐՅԱՆ ԳԵՈՐԳԻԻ» АД, RU` — we take the leading
+ * contract number as agr_no (PK) and keep the full text as the chat name. Bare
+ * numbers («180») and Cyrillic/Latin prefixes («B-4061», «В-4370», «N-180») all
+ * work. When no number-like prefix is found, the whole query is used as agr_no.
+ */
+export function splitContractQuery(query: string): { agr_no: string; name: string } {
+  const s = query.trim();
+  const m = s.match(/^([A-Za-zА-Яа-яԱ-Ֆա-ֆ]{0,3}[-\s]?\d{1,6})\b/);
+  if (m) {
+    const agr = m[1].replace(/\s+/g, "-").replace(/-+/g, "-");
+    return { agr_no: agr, name: s };
+  }
+  return { agr_no: s, name: s };
+}
+
+/**
  * Split a pasted blob into individual search tokens — one per line, comma or
  * semicolon. Lets Margarita paste several chats at once (her feedback listed 5
  * Telegram links) and add them all in one go. Single spaces are NOT split, so a

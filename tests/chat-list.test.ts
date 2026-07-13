@@ -16,6 +16,7 @@ import {
   latestActivityKey,
   matchesChatQuery,
   resolveChatTokens,
+  splitContractQuery,
   splitQueryTokens,
   telegramChatId,
   waitingLabel,
@@ -351,4 +352,23 @@ test("hasNewMessageAfterEval: later message re-opens a scored chat", () => {
   // Missing data → false (no false positives).
   assert.equal(hasNewMessageAfterEval(null, "2026-06-19T12:00:00Z"), false);
   assert.equal(hasNewMessageAfterEval("2026-06-19T15:00:00Z", null), false);
+});
+
+test("splitContractQuery: pulls the contract № out of a pasted label", () => {
+  // Latin B-prefix with a full Armenian/Russian label kept as the name.
+  assert.deepEqual(
+    splitContractQuery("B-4061 «ՎԻԿՏՈՐ ԾԱՏՐՅԱՆ ԳԵՈՐԳԻԻ» АД, RU"),
+    { agr_no: "B-4061", name: "B-4061 «ՎԻԿՏՈՐ ԾԱՏՐՅԱՆ ԳԵՈՐԳԻԻ» АД, RU" }
+  );
+  // Bare number.
+  assert.deepEqual(splitContractQuery("180"), { agr_no: "180", name: "180" });
+  // Cyrillic В-prefix (real key for chat 4370).
+  assert.deepEqual(splitContractQuery("В-4370 ИП Марзалюк"), {
+    agr_no: "В-4370",
+    name: "В-4370 ИП Марзалюк",
+  });
+  // Space instead of dash is normalised to a dash.
+  assert.equal(splitContractQuery("B 4859 Терракор").agr_no, "B-4859");
+  // No number-like prefix → whole query is the key.
+  assert.deepEqual(splitContractQuery("Ромашка"), { agr_no: "Ромашка", name: "Ромашка" });
 });

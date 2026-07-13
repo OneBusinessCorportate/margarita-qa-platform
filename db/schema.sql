@@ -31,6 +31,9 @@ create table if not exists mqa_chats (
   chat_name           text not null,
   chat_link           text,
   accountant          text references mqa_accountants(name),
+  -- Ручное закрепление бухгалтера (п.1): sync-sheet не перезаписывает accountant,
+  -- когда true. См. db/migrations/20260713_mqa_accountant_pin.sql.
+  accountant_pinned   boolean not null default false,
   manager             text,
   debts               text,
   created_date        date,

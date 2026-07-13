@@ -484,7 +484,11 @@ export async function deleteChat(agrNo: string): Promise<void> {
   s.evaluations.push(...evals);
 }
 
-/** Update the chat's assigned accountant in mqa_chats. */
+/**
+ * Update the chat's assigned accountant in mqa_chats. A manual reassignment
+ * PINS the accountant (accountant_pinned = true) so the daily «Основные данные»
+ * sync won't silently revert it (п.1 — «чаты новых бухгалтеров откатываются»).
+ */
 export async function updateChatAccountant(
   agrNo: string,
   accountant: string | null
@@ -493,13 +497,84 @@ export async function updateChatAccountant(
   if (sb) {
     const { error } = await sb
       .from(TABLES.chats)
-      .update({ accountant })
+      .update({ accountant, accountant_pinned: true })
       .eq("agr_no", agrNo);
     if (error) throw error;
     return;
   }
   const chat = store().chats.find((c) => c.agr_no === agrNo);
-  if (chat) chat.accountant = accountant;
+  if (chat) {
+    chat.accountant = accountant;
+    chat.accountant_pinned = true;
+  }
+}
+
+/** Update the chat's responsible manager in mqa_chats (п.6). */
+export async function updateChatManager(
+  agrNo: string,
+  manager: string | null
+): Promise<void> {
+  const value = manager && manager.trim() ? manager.trim() : null;
+  const sb = getServiceClient();
+  if (sb) {
+    const { error } = await sb
+      .from(TABLES.chats)
+      .update({ manager: value })
+      .eq("agr_no", agrNo);
+    if (error) throw error;
+    return;
+  }
+  const chat = store().chats.find((c) => c.agr_no === agrNo);
+  if (chat) chat.manager = value;
+}
+
+/**
+ * Create — or reuse — a chat by its contract № (п.3). Lets Маргарита add ANY
+ * chat that's missing from the platform (present in «КК Сопровождения» /
+ * «Налоговый кабинет» but not «Основные данные») straight from the add-box,
+ * without a Telegram link. Idempotent on agr_no.
+ */
+export async function createChatByNumber(
+  agrNo: string,
+  chatName?: string | null,
+  link?: string | null
+): Promise<Chat> {
+  const agr = agrNo.trim();
+  if (!agr) throw new Error("Укажите № договора");
+  const existing = await getChat(agr);
+  if (existing) return existing;
+
+  const row: Chat = {
+    agr_no: agr,
+    hvhh: null,
+    name_agr: null,
+    name_tax: null,
+    status: "Active",
+    tax_activation_date: null,
+    chat_name: (chatName && chatName.trim()) || agr,
+    chat_link: (link && link.trim()) || null,
+    accountant: null,
+    manager: null,
+    debts: null,
+    created_date: new Date().toISOString().slice(0, 10),
+    last_activity_date: null,
+    last_activity_at: null,
+    last_sender_role: null,
+    unanswered: null,
+  };
+
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.chats)
+      .insert(row)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as Chat;
+  }
+  store().chats.push(row);
+  return row;
 }
 
 // --- Manager evaluations (Регистрация — еженедельно) -----------------------
