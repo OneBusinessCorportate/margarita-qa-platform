@@ -10,7 +10,6 @@ const LINKS = [
   { href: "/tasks", label: "Задачи" },
   { href: "/violations", label: "Нарушения" },
   { href: "/appeals", label: "Апелляции" },
-  { href: "/audit", label: "Аудит сотрудников" },
   { href: "/handbook", label: "Регламент" },
   { href: "/dashboard", label: "Отчёт" },
   { href: "/work-report", label: "Отчёт по работе" },

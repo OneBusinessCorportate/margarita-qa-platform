@@ -19,8 +19,13 @@ export interface ValidEmployee {
   aliases: string[];
   /** Действующий сотрудник. */
   active: boolean;
-  /** Грейд из листа «KPI и результаты» (Май 2026); null — нет данных. */
-  role: string | null;
+  /**
+   * Должность. Отдельных грейдов бухгалтеров у нас НЕТ — все действующие
+   * сотрудники из этого списка это просто «Бухгалтер». Единственный
+   * «Главный бухгалтер» — Эмилия (см. HEAD_ACCOUNTANT); её нет в этом
+   * списке, потому что она не входит в линейный учёт нарушений/KPI.
+   */
+  role: "Бухгалтер";
 }
 
 // ВАЖНО: `short` должен совпадать с mqa_accountants.name — это FK для чатов.
@@ -30,7 +35,7 @@ export const VALID_EMPLOYEES: ValidEmployee[] = [
     short: "Գայանե",
     aliases: ["Գայանե", "Гаяне", "Gayane", "Gayane Abgaryan"],
     active: true,
-    role: "Ведущий бухгалтер",
+    role: "Бухгалтер",
   },
   {
     canonical: "Օլյա Հակոբյան",
@@ -44,7 +49,7 @@ export const VALID_EMPLOYEES: ValidEmployee[] = [
     short: "Ստելլա",
     aliases: ["Ստելլա", "Стелла", "Stella", "Stella Patatanyan"],
     active: true,
-    role: "Младший бухгалтер",
+    role: "Бухгалтер",
   },
   {
     canonical: "Նաիրա Զալինյան",
@@ -66,7 +71,7 @@ export const VALID_EMPLOYEES: ValidEmployee[] = [
     short: "Թագուհի",
     aliases: ["Թագուհի", "Тагуи", "Тагуги", "Taguhi", "Taguhi Ghahramanyan"],
     active: true,
-    role: "Младший бухгалтер",
+    role: "Бухгалтер",
   },
   {
     canonical: "Ավագ Հայրապետյան",
@@ -80,7 +85,7 @@ export const VALID_EMPLOYEES: ValidEmployee[] = [
     short: "Նաիրա Մ․",
     aliases: ["Նաիրա Մ․", "Նաիրա Մ.", "Նաիրա Մ", "Наира М.", "Наира М", "Naira M.", "Naira Mkhitaryan"],
     active: true,
-    role: "Ведущий бухгалтер",
+    role: "Бухгалтер",
   },
   {
     canonical: "Հասմիկ Բադալյան",
@@ -125,8 +130,7 @@ export const VALID_EMPLOYEES: ValidEmployee[] = [
     short: "Արթուր",
     aliases: ["Արթուր", "Артур", "Artur", "Arthur", "Artur Barseghyan"],
     active: true,
-    // В листе «KPI и результаты» строки нет — грейд не выдумываем.
-    role: null,
+    role: "Бухгалтер",
   },
   {
     // Новый бухгалтер (добавлен по отзыву Маргариты, июль 2026).
@@ -134,7 +138,7 @@ export const VALID_EMPLOYEES: ValidEmployee[] = [
     short: "Մարիաննա",
     aliases: ["Մարիաննա", "Марианна", "Marianna", "Marianne"],
     active: true,
-    role: null,
+    role: "Бухгалтер",
   },
   {
     // Новый бухгалтер (добавлен по отзыву Маргариты, июль 2026).
@@ -142,9 +146,25 @@ export const VALID_EMPLOYEES: ValidEmployee[] = [
     short: "Ալիսա",
     aliases: ["Ալիսա", "Алиса", "Alisa", "Alice"],
     active: true,
-    role: null,
+    role: "Бухгалтер",
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Главный бухгалтер. Эмилия — ЕДИНСТВЕННЫЙ главный бухгалтер / Head Accountant.
+// Все остальные действующие сотрудники (VALID_EMPLOYEES) — просто «Бухгалтер».
+// Никаких промежуточных грейдов (ведущий / младший …) у нас нет.
+//
+// Эмилия — руководитель, а не линейный бухгалтер, поэтому её нет в
+// VALID_EMPLOYEES и она не участвует в учёте нарушений/штрафов/KPI по 16
+// бухгалтерам (её имя перечислено в KNOWN_INVALID_NAMES для этого учёта).
+// ---------------------------------------------------------------------------
+export const HEAD_ACCOUNTANT = {
+  canonical: "Эмилия",
+  aliases: ["Էմիլյա", "Эмилия", "Эмиля", "Emiliya", "Emilya", "Emilia"],
+} as const;
+
+const headIndex = new Set(HEAD_ACCOUNTANT.aliases.map((a) => a.toLowerCase()));
 
 // Имена, которые ВСТРЕЧАЮТСЯ в источниках, но заведомо не действующие
 // сотрудники (уволены / другие отделы / служебные значения). Их нарушения и
@@ -158,7 +178,7 @@ export const KNOWN_INVALID_NAMES: string[] = [
   "Շուշանիկ", "Шушаник",
   "Անահիտ", "Анаит", // KPI: «Увольнение»
   "Էրիկ", "Эрик", // KPI: «Увольнение»
-  "Էմիլյա", "Эмилия", // менеджер CSAT, не бухгалтер списка
+  "Էմիլյա", "Эмилия", // главный бухгалтер (HEAD_ACCOUNTANT), не в линейном учёте нарушений/KPI
   "Գայանե Դ․", "Գայանե Դ.", // другая Гаяне, не Абгарян
   "հանձնված", "Հանձնված", // «передан» — служебная пометка, не человек
   "Mane Lawer", "Gohar Registration", "Manager",
@@ -246,4 +266,24 @@ export function canonicalShortName(raw: string | null | undefined): string | nul
 export function findEmployee(raw: string | null | undefined): ValidEmployee | null {
   const r = resolveEmployee(raw);
   return r.status === "valid" ? r.employee : null;
+}
+
+/** true, если имя принадлежит главному бухгалтеру (Эмилия) — единственному. */
+export function isHeadAccountant(raw: string | null | undefined): boolean {
+  return headIndex.has(normalizeName(raw));
+}
+
+/**
+ * Должность для любого имени из источников:
+ *  - «Главный бухгалтер» — только Эмилия (единственная);
+ *  - «Бухгалтер»         — любой из 16 действующих сотрудников списка;
+ *  - null                — не наш сотрудник (уволен / другой отдел / служебное).
+ * Единый источник правды: во всём приложении должность берём отсюда, а не
+ * выдумываем грейды.
+ */
+export function employeePosition(
+  raw: string | null | undefined
+): "Главный бухгалтер" | "Бухгалтер" | null {
+  if (isHeadAccountant(raw)) return "Главный бухгалтер";
+  return isValidEmployee(raw) ? "Бухгалтер" : null;
 }
