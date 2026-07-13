@@ -11,7 +11,6 @@ import { addDays, type DaySummary } from "@/lib/report";
 import {
   accountantsToMessage,
   buildAccountantMessage,
-  buildDailyStaffViolationsMessage,
   buildFridayFinesMessage,
   buildMonthlyFinesMessage,
   buildReportMessage,
@@ -21,7 +20,7 @@ import {
   type TaxCabinetRow,
 } from "@/lib/templates";
 import { computeViolationFines } from "@/lib/violations";
-import { buildLiveViolationBreakdown, dailyViolationRows } from "@/lib/violation-report";
+import { dailyViolationRows } from "@/lib/violation-report";
 import type { Chat } from "@/lib/types";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
@@ -163,12 +162,15 @@ export default async function MessagesPage({
   // предупреждение/штраф по единому правилу (violations.ts): 1-е за день —
   // предупреждение (0 др), повторное — 1 000 др, ручная санкция перебивает.
   // Тот же источник и та же логика, что на дашборде — без ИИ и без Excel-выгрузок.
-  const dailyRows = await listViolations({
+  const dailyRowsAll = await listViolations({
     from: resolved.from,
     to: resolved.to,
     accountant: filters.accountant,
   });
-  const { violations: dailyViolations, fineById } = dailyViolationRows(dailyRows);
+  // Только ПОДТВЕРЖДЁННЫЕ Маргаритой нарушения попадают в ежедневный отчёт —
+  // авто-импортированные (confirmed === false) исключаем.
+  const dailyRows = dailyRowsAll.filter((v) => v.confirmed !== false);
+  const { violations: dailyViolations } = dailyViolationRows(dailyRows);
 
   // ── Ежедневный отчёт по нарушениям ПО КАЖДОМУ СОТРУДНИКУ + сверка налогового
   // кабинета ─────────────────────────────────────────────────────────────────
@@ -180,14 +182,6 @@ export default async function MessagesPage({
   // данные, ничего не выдумывается.
   const allChats = await listChats();
   const chatByCode = new Map<string, Chat>(allChats.map((c) => [c.agr_no, c]));
-  const managerByChat: Record<string, string | null> = {};
-  for (const c of allChats) managerByChat[c.agr_no] = c.manager ?? null;
-
-  const staffBreakdown = buildLiveViolationBreakdown(dailyRows, rosterNames);
-  const dailyStaffMessage = buildDailyStaffViolationsMessage(staffBreakdown, {
-    date: resolved.to,
-    managerByChat,
-  });
 
   // Налоговый кабинет: чат считается «в кабинете», если у него есть налоговые
   // данные (name_tax / HVHH / дата активации). «В dashboard» — если чат есть в
@@ -254,7 +248,6 @@ export default async function MessagesPage({
     roster: rosterNames,
     requests,
     requestDays,
-    fineById,
   });
 
   // Weekly fines block (Mon → the reported day) — appended to the Armenian
@@ -383,26 +376,6 @@ export default async function MessagesPage({
         </div>
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {reportMessage}
-        </pre>
-      </div>
-
-      {/* Ежедневный отчёт по нарушениям ПО КАЖДОМУ СОТРУДНИКУ — полная картина
-          за день: все сотрудники (включая «0 нарушений»), по каждому нарушению
-          клиент/чат, тип, штраф, комментарий, статус и менеджер. */}
-      <div className="card p-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">🧾 Нарушения по сотрудникам (за день)</div>
-          <div className="flex gap-2">
-            <CopyButton label="Копировать отчёт" className="btn-primary" text={dailyStaffMessage} />
-            <SendTelegramButton
-              text={dailyStaffMessage}
-              configured={botReady}
-              label="Отправить в Telegram"
-            />
-          </div>
-        </div>
-        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
-{dailyStaffMessage}
         </pre>
       </div>
 

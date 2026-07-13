@@ -54,18 +54,6 @@ export interface ReportMessageOptions {
   requests?: { accountant: string; count: number }[];
   /** Days in the window — divides `requests` totals into a per-day figure. */
   requestDays?: number;
-  /**
-   * Computed fine (драм) per violation id — the daily report uses
-   * computeViolationFines. Одно нарушение — это ОДИН чат за неделю (несколько
-   * проблем в том же чате считаются как одно, худшая тяжесть, штраф один раз):
-   * Среднее → 1-й чат за неделю предупреждение (0 др), 2-й и далее 1 000 др за
-   * каждый чат; Критичное → 2 000; Грубое → эскалация за год; ручная санкция
-   * перебивает. When provided, EVERY violation line shows its money: the amount,
-   * or «предупреждение» when the rules say 0 (a chat's 2nd+ problem shows 0 — it
-   * is the same нарушение, already priced). Without it the line falls back to the
-   * manually entered sanction only (legacy).
-   */
-  fineById?: Record<string, number>;
 }
 
 /** Period label for the header: a single day, or "DD.MM — DD.MM" for a range. */
@@ -115,11 +103,12 @@ function fmtDram(n: number): string {
 }
 
 /**
- * Daily accounting report message — matches the format the department sends:
+ * Daily accounting report message — matches the format the department sends,
+ * with each accountant's violations merged directly UNDER their request count:
  *
  *   Ежедневный отчет бухгалтерии
  *
- *   Дата: 15.05
+ *   Дата: 13.07
  *
  *   Общий уровень сервиса: 84% по отделу
  *
@@ -127,27 +116,28 @@ function fmtDram(n: number): string {
  *
  *   ⭐️ Имя: 100% оценка
  *
- *   Нарушения:
- *
- *   — Имя: Выговор
- *     ▸ B-4742 — причина — 1 000 др
- *
  *   Кол-во запросов за день:
  *
- *   Имя — 8
+ *   Գայանե — 3
+ *   Нарушения:
+ *   - B-1234 — поздний ответ — предупреждение / 0 др
+ *   - B-5678 — без ответа — 1 000 др
  *
- * People sections are limited to the canonical roster (options.roster). The
- * violations block lists every accountant who has a violation in the window
- * (including unassigned rows, shown as "-"), each with one bullet per
- * violation record: the chat code, the reason, and the fine (if any) —
- * no chat/client name.
+ *   Դավիթ — 10
+ *   Нарушения: нет
+ *
+ * Only accountants with requests OR violations are listed (roster order); the
+ * separate all-employees violations report is no longer sent. Money is the
+ * simple daily rule — 1st violation per accountant/day = предупреждение (0 др),
+ * every next = 1 000 др (hard cap 1 000; severity/AI never sets the amount).
+ * Violations passed in must already be Margarita's confirmed rows.
  */
 export function buildReportMessage(
   report: DailyReport,
   options: ReportMessageOptions = {}
 ): string {
   const { serviceQualityPct, perAccountant, filters } = report;
-  const { violations = [], sheetUrl, roster, requests, requestDays, fineById } = options;
+  const { violations = [], sheetUrl, roster, requests, requestDays } = options;
   const dateISO =
     options.date ??
     filters.to ??
@@ -184,80 +174,91 @@ export function buildReportMessage(
     }
   }
 
-  // ── Violations — per-person breakdown, one bullet per violation record ─────
-  // «— Имя: Действие · штраф N др» then «  ▸ код — причина — сумма» for every
-  // violation of that person (rows with no accountant are grouped under "-").
-  // No chat/client name — just the chat code and the money. With `fineById`
-  // the money comes from the «Условия» pricing rules for EVERY line (0 др →
-  // «предупреждение»); otherwise only a manually entered sanction shows.
-  if (violations.length) {
-    const byAcc = new Map<
-      string,
-      {
-        sevMap: Map<string, number>;
-        fine: number;
-        items: { code: string; reason: string; money: string }[];
-      }
-    >();
-    let totalFine = 0;
-    for (const v of violations) {
-      const acc = v.accountant?.trim() || "-";
-      const sev = v.severity ?? "среднее";
-      const entry =
-        byAcc.get(acc) ??
-        { sevMap: new Map<string, number>(), fine: 0, items: [] };
-      entry.sevMap.set(sev, (entry.sevMap.get(sev) ?? 0) + 1);
-      const code = v.chat_agr_no?.trim() || "-";
-      const reason = (v.violation_type ?? "").trim() || "-";
-      const computed = fineById?.[v.id];
-      const fine =
-        typeof computed === "number"
-          ? computed
-          : typeof v.sanction === "number" && v.sanction > 0
-            ? v.sanction
-            : null;
-      const money =
-        fine === null
-          ? ""
-          : fine > 0
-            ? ` — ${fmtDram(fine)} др`
-            : " — предупреждение";
-      if (fine !== null && fine > 0) {
-        entry.fine += fine;
-        totalFine += fine;
-      }
-      entry.items.push({ code, reason, money });
-      byAcc.set(acc, entry);
-    }
+  // ── Кол-во запросов за день + нарушения ПОД КАЖДЫМ бухгалтером ──────────────
+  // Единый блок: для каждого бухгалтера — число запросов за день, а сразу под
+  // ним его нарушения (или «Нарушения: нет»). Отдельный длинный отчёт по всем
+  // сотрудникам больше не нужен.
+  //
+  // Деньги — простое правило Маргариты, БЕЗ ИИ-тяжести и без ручных санкций:
+  //   • 1-е нарушение бухгалтера за ДЕНЬ → предупреждение / 0 др;
+  //   • 2-е и каждое следующее за тот же день → 1 000 др.
+  // Максимум — 1 000 др, суммы 2 000 и выше НЕ используются. Нарушения берём как
+  // есть от вызывающей стороны (только подтверждённые Маргаритой).
+  const DAILY_PENALTY = 1000; // потолок штрафа за одно нарушение
+  type ViolItem = { code: string; type: string; fine: number };
+  const violByAcc = new Map<string, ViolItem[]>();
+  const seenAccDay = new Map<string, number>();
+  let totalFine = 0;
+  // Стабильный порядок: по дню, затем по времени создания — так «первое» за день
+  // определяется детерминированно.
+  const sortedViol = [...violations].sort(
+    (a, b) =>
+      (a.vdate ?? "").localeCompare(b.vdate ?? "") ||
+      (a.created_at ?? "").localeCompare(b.created_at ?? "")
+  );
+  for (const v of sortedViol) {
+    const acc = v.accountant?.trim() || "-";
+    const day = (v.vdate ?? "").slice(0, 10);
+    const seenKey = `${acc}|${day}`;
+    const seen = seenAccDay.get(seenKey) ?? 0;
+    const fine = seen >= 1 ? DAILY_PENALTY : 0; // 1-е за день — предупреждение
+    seenAccDay.set(seenKey, seen + 1);
+    totalFine += fine;
+    const list = violByAcc.get(acc) ?? [];
+    list.push({
+      code: v.chat_agr_no?.trim() || "-",
+      type: (v.violation_type ?? "").trim() || "-",
+      fine,
+    });
+    violByAcc.set(acc, list);
+  }
+
+  // Per-day request figure per accountant.
+  const days = requestDays && requestDays > 1 ? requestDays : 1;
+  const reqByAcc = new Map<string, number>();
+  for (const r of requests ?? []) {
+    reqByAcc.set(r.accountant, Math.round(r.count / days));
+  }
+
+  // Кого показываем: бухгалтеры с запросами за день ИЛИ с нарушениями. С
+  // ростером — в порядке ростера, плюс нарушители вне ростера (напр. «-»).
+  const namesToShow: string[] = [];
+  const seenName = new Set<string>();
+  const addName = (name: string) => {
+    if (seenName.has(name)) return;
+    seenName.add(name);
+    namesToShow.push(name);
+  };
+  if (rosterSet) {
+    for (const n of roster!) if ((reqByAcc.get(n) ?? 0) > 0 || violByAcc.has(n)) addName(n);
+    for (const acc of violByAcc.keys()) if (!rosterSet.has(acc)) addName(acc);
+  } else {
+    for (const r of requests ?? []) if (r.count > 0) addName(r.accountant);
+    for (const acc of violByAcc.keys()) addName(acc);
+  }
+
+  if (namesToShow.length > 0) {
     lines.push("");
-    lines.push("Нарушения:");
-    for (const [acc, { sevMap, fine, items }] of byAcc) {
+    lines.push("Кол-во запросов за день:");
+    for (const name of namesToShow) {
+      const count = reqByAcc.get(name) ?? 0;
+      const viols = violByAcc.get(name) ?? [];
       lines.push("");
-      const fineSuffix = fine > 0 ? ` · штраф ${fmtDram(fine)} др` : "";
-      lines.push(`— ${acc}: ${worstViolationAction(sevMap)}${fineSuffix}`);
-      for (const item of items) {
-        lines.push(`  ▸ ${item.code} — ${item.reason}${item.money}`);
+      lines.push(`${name} — ${count}`);
+      if (viols.length === 0) {
+        lines.push("Нарушения: нет");
+      } else {
+        lines.push("Нарушения:");
+        for (const item of viols) {
+          const money =
+            item.fine > 0 ? `${fmtDram(item.fine)} др` : "предупреждение / 0 др";
+          lines.push(`- ${item.code} — ${item.type} — ${money}`);
+        }
       }
     }
     if (totalFine > 0) {
       lines.push("");
       lines.push(`Итого штрафов: ${fmtDram(totalFine)} др`);
-    }
-  }
-
-  // ── Client requests per day (roster only, roster order) ────────────────────
-  const reqRows = (requests ?? []).filter((r) => r.count > 0 && inRoster(r.accountant));
-  if (reqRows.length > 0) {
-    if (rosterSet) {
-      const order = new Map(roster!.map((n, i) => [n, i]));
-      reqRows.sort((a, b) => (order.get(a.accountant) ?? 99) - (order.get(b.accountant) ?? 99));
-    }
-    const days = requestDays && requestDays > 1 ? requestDays : 1;
-    lines.push("");
-    lines.push("Кол-во запросов за день:");
-    lines.push("");
-    for (const r of reqRows) {
-      lines.push(`${r.accountant} — ${Math.round(r.count / days)}`);
     }
   }
 

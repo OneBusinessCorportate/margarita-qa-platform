@@ -46,7 +46,7 @@ test("report message stars honour the roster filter", () => {
   assert.doesNotMatch(msg, new RegExp(`⭐️ ${droppedStar}:`));
 });
 
-test("report message shows requests per day in roster order", () => {
+test("report message shows requests per day in roster order with «Нарушения: нет»", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report, {
     requests: [
@@ -58,74 +58,67 @@ test("report message shows requests per day in roster order", () => {
     roster: ["Նաիրա", "Անի"],
   });
   assert.match(msg, /Кол-во запросов за день:/);
-  assert.match(msg, /Նաիրա — 10\nԱնի — 8/); // roster order, per-day figures
+  // Roster order, per-day figures, each with an inline «Нарушения: нет».
+  assert.match(msg, /Նաիրա — 10\nНарушения: нет/);
+  assert.match(msg, /Անի — 8\nНарушения: нет/);
   assert.doesNotMatch(msg, /- — 25/); // non-roster name is skipped
 });
 
-test("violation lines: per-accountant action header + one bullet per violation (code + fine, no name)", () => {
+test("violations are merged under each accountant with the daily 0/1000 rule", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report, {
+    requests: [
+      { accountant: "Լիլիթ", count: 3 },
+      { accountant: "Ավագ", count: 10 },
+    ],
+    requestDays: 1,
+    roster: ["Լիլիթ", "Ավագ"],
     violations: [
-      {
+      // Same accountant/day: 1st = предупреждение (0), 2nd = 1 000.
+      viol({
         id: "1", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: "B-1",
-        client: "Клиент А", severity: "Критичное", violation_type: "авто из оценки",
-        gross: null, sanction: 1000, note: null, created_at: "2026-06-15T10:00:00Z",
-      },
-      {
-        id: "2", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: "B-1",
-        client: "Клиент А", severity: "Среднее",
-        violation_type: "Незакрытый запрос клиента", gross: null,
-        sanction: null, note: null, created_at: "2026-06-15T11:00:00Z",
-      },
-      {
-        id: "3", vdate: "2026-06-15", accountant: "Ավագ", chat_agr_no: null,
-        client: null, severity: "Среднее",
-        violation_type: "Не отправлен запрос первичной документации", gross: null,
-        sanction: 2000, note: null, created_at: "2026-06-15T12:00:00Z",
-      },
-      {
-        id: "4", vdate: "2026-06-15", accountant: null, chat_agr_no: "B-2",
-        client: "Клиент Б", severity: "Среднее",
-        violation_type: "Нет расс. по первичной документации", gross: null,
-        sanction: null, note: null, created_at: "2026-06-15T13:00:00Z",
-      },
+        violation_type: "поздний ответ", created_at: "2026-06-15T10:00:00Z",
+      }),
+      viol({
+        id: "2", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: "B-5678",
+        violation_type: "без ответа", created_at: "2026-06-15T11:00:00Z",
+      }),
     ],
   });
-  assert.match(msg, /Нарушения:/);
-  assert.match(msg, /— Լիլիթ: Выговор/);
-  // Chat code + fine amount, no client/chat name.
-  assert.match(msg, /  ▸ B-1 — авто из оценки — 1 000 др/);
-  assert.match(msg, /  ▸ B-1 — Незакрытый запрос клиента(?!.*др)/);
-  assert.doesNotMatch(msg, /Клиент А/);
-  assert.doesNotMatch(msg, /Клиент Б/);
-  assert.match(msg, /— Ավագ: Предупреждение/);
-  assert.match(msg, /  ▸ - — Не отправлен запрос первичной документации — 2 000 др/);
-  // Unassigned violations are grouped under "-".
-  assert.match(msg, /— -: Предупреждение/);
-  assert.match(msg, /  ▸ B-2 — Нет расс\. по первичной документации(?!.*др)/);
+  // Лилит: count line, then her two violations merged directly under it.
+  assert.match(msg, /Լիլիթ — 3\nНарушения:\n- B-1 — поздний ответ — предупреждение \/ 0 др\n- B-5678 — без ответа — 1 000 др/);
+  // Аваг has requests but no violations → «Нарушения: нет».
+  assert.match(msg, /Ավագ — 10\nНарушения: нет/);
+  // No client/chat name leaks into the report.
+  assert.doesNotMatch(msg, /Клиент/);
+  assert.match(msg, /Итого штрафов: 1 000 др/);
 });
 
-test("daily report money comes from the Условия rules when fineById is passed", () => {
+test("daily fine never exceeds 1 000 — severity and manual sanction do not raise it", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report, {
+    requests: [{ accountant: "Լիլիթ", count: 5 }],
+    requestDays: 1,
+    roster: ["Լիլիթ"],
     violations: [
+      // Critical + a big manual sanction: still just предупреждение (1st/day).
       viol({
-        id: "a", accountant: "Լիլիթ", chat_agr_no: "B-1",
-        severity: "Критичное", violation_type: "Грубый ответ",
+        id: "a", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: "B-1",
+        severity: "Критичное", violation_type: "Грубый ответ", sanction: 5000,
+        created_at: "2026-06-15T10:00:00Z",
       }),
-      viol({ id: "b", accountant: "Լիլիթ", chat_agr_no: "B-2", violation_type: "Долгий ответ" }),
-      viol({ id: "c", accountant: "Դավիթ", chat_agr_no: "B-3", violation_type: "Долгий ответ" }),
+      // 2nd of the day → exactly 1 000, never 2 000.
+      viol({
+        id: "b", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: "B-2",
+        severity: "Критичное", violation_type: "Долгий ответ", sanction: 2000,
+        created_at: "2026-06-15T11:00:00Z",
+      }),
     ],
-    fineById: { a: 2000, b: 1000, c: 0 },
   });
-  // Per-person header carries the person's fine total.
-  assert.match(msg, /— Լիլիթ: Выговор · штраф 3 000 др/);
-  assert.match(msg, /  ▸ B-1 — Грубый ответ — 2 000 др/);
-  assert.match(msg, /  ▸ B-2 — Долгий ответ — 1 000 др/);
-  // A computed 0 → «предупреждение» on the line, no money on the person line.
-  assert.match(msg, /— Դավիթ: Предупреждение\n/);
-  assert.match(msg, /  ▸ B-3 — Долгий ответ — предупреждение/);
-  assert.match(msg, /Итого штрафов: 3 000 др/);
+  assert.match(msg, /- B-1 — Грубый ответ — предупреждение \/ 0 др/);
+  assert.match(msg, /- B-2 — Долгий ответ — 1 000 др/);
+  assert.doesNotMatch(msg, /2 000|5 000/); // caps at 1 000, no higher amounts
+  assert.match(msg, /Итого штрафов: 1 000 др/);
 });
 
 test("score message includes overall, band, monthly statuses and link", () => {
