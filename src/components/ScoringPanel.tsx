@@ -428,8 +428,14 @@ export default function ScoringPanel({
     // Chats Margarita pulled in by hand for this day (item 5 / "ручное
     // добавление в QA") — surfaced even if the feed never reported them active.
     for (const c of mergedChats) if (included.has(`${c.agr_no}|${date}`)) s.add(c.agr_no);
+    // Chats already RATED on the selected day: so a PAST-day evaluation can be
+    // found and re-opened for editing even when the chat had no new activity
+    // that day (item 8 — «изменить оценку чата за предыдущий день»). Without
+    // this, yesterday's rated-but-quiet chats vanished from the day view and
+    // her score couldn't be corrected.
+    for (const agr of evalForDate.keys()) s.add(agr);
     return s;
-  }, [chatActivity, mergedChats, lastActivityFor, taskActivity, date, repOf, included]);
+  }, [chatActivity, mergedChats, lastActivityFor, taskActivity, date, repOf, included, evalForDate]);
 
   // Precise activity time for a chat ON the selected day (from the per-day feed),
   // so the day view sorts by when the chat was actually active that day — not by
