@@ -349,3 +349,102 @@ describe("deriveStatus — additional edge cases", () => {
     assert.equal(deriveStatus("main_taxes", { done: 0, req: 5, call: 3, paid: 2 }), null);
   });
 });
+
+// ---------------------------------------------------------------------------
+// v8 acceptance corpus — scoped negation of the SENDING verb.
+// Reduce a single message to its final per-category status the same way the
+// runner does (count that message's signals, then deriveStatus).
+// ---------------------------------------------------------------------------
+function statusOf(category: string, text: string): string | null {
+  const counts = { done: 0, req: 0, call: 0, paid: 0, neg: 0 };
+  for (const s of detectAllSignals(text)) {
+    if (s.category === category) counts[s.type] += 1;
+  }
+  return deriveStatus(category, counts);
+}
+
+describe("v8 corpus — salary рассылка should resolve to «Получил»", () => {
+  const done = [
+    "Разослал рассылку по зарплате: в этом периоде зарплата не начислялась.",
+    "Уведомили клиента по зарплате за март.",
+    "Зарплатную ведомость получил, спасибо.",
+    "Отправила рассылку по зп.",
+    "Տեղեկացնում ենք, որ ընթացիկ ժամանակահատվածի համար աշխատավարձի հաշվարկ չի կատարվում։",
+    // mixed: an UNRELATED negation about documents must NOT suppress the send.
+    "Рассылку по зарплате отправила, документы ещё не получила.",
+  ];
+  for (const text of done) {
+    it(`«${text}» → Получил`, () => {
+      assert.ok(
+        detectAllSignals(text).some((s) => s.category === "salary" && s.type === "done"),
+        `expected salary/done for «${text}»`
+      );
+      assert.equal(statusOf("salary", text), "Получил", `expected «Получил» for «${text}»`);
+    });
+  }
+});
+
+describe("v8 corpus — salary must NOT resolve to «Получил»", () => {
+  const notDone: Array<[string, string | null]> = [
+    // negated SEND → not done (falls through to req/neg → «Запросил 1…»).
+    ["Рассылку по зарплате ещё не отправила.", "Запросил 1, не получил"],
+    ["Рассылка по зп не сделана.", "Запросил 1, не получил"],
+    ["Не разослал уведомление по зарплате.", "Запросил 1, не получил"],
+    // «сообщите …» imperative is a REQUEST, never a sent notification.
+    ["Сообщите, пожалуйста, зарплату за месяц.", "Запросил 1, не получил"],
+    ["Жду ведомость по зарплате от клиента.", "Запросил 1, не получил"],
+  ];
+  for (const [text, expected] of notDone) {
+    it(`«${text}» → not «Получил» (${expected})`, () => {
+      assert.ok(
+        !detectAllSignals(text).some((s) => s.category === "salary" && s.type === "done"),
+        `must NOT be salary/done for «${text}»`
+      );
+      const status = statusOf("salary", text);
+      assert.notEqual(status, "Получил", `must NOT be «Получил» for «${text}»`);
+      assert.equal(status, expected, `expected «${expected}» for «${text}»`);
+    });
+  }
+});
+
+describe("v8 — scoped negation preserves the legit «no salary this period» template", () => {
+  it("RU «зарплата не начисляется» stays done (calc negated, send not)", () => {
+    const text = "Разослали рассылку: зарплата в этом периоде не начисляется.";
+    assert.equal(statusOf("salary", text), "Получил");
+  });
+
+  it("HY «աշխատավարձի հաշվարկ չի կատարվում» stays done when the notification was sent", () => {
+    const text =
+      "Տեղեկացնում ենք, որ ընթացիկ ժամանակահատվածի համար աշխատավարձի հաշվարկ չի կատարվում։";
+    assert.equal(statusOf("salary", text), "Получил");
+  });
+
+  it("HY negated SEND «չենք տեղեկացրել» is NOT done", () => {
+    const text = "Աշխատավարձի մասին դեռ չենք տեղեկացրել։";
+    assert.ok(
+      !detectAllSignals(text).some((s) => s.category === "salary" && s.type === "done"),
+      "negated Armenian send must not be salary/done"
+    );
+    assert.notEqual(statusOf("salary", text), "Получил");
+  });
+});
+
+describe("v8 — scoped negation applied to main_taxes (unrelated neg must not suppress)", () => {
+  it("«налоги отправила, зарплату не получила» → taxes still «Отправил»", () => {
+    const text = "Налоги отправила, зарплату пока не получила.";
+    assert.ok(
+      detectAllSignals(text).some((s) => s.category === "main_taxes" && s.type === "done"),
+      "taxes send must survive an unrelated receive-negation"
+    );
+    assert.ok(
+      !detectAllSignals(text).some((s) => s.category === "main_taxes" && s.type === "neg"),
+      "taxes must not be neg here"
+    );
+    assert.equal(statusOf("main_taxes", text), "Отправил");
+  });
+
+  it("«налоги не отправлены» is still «Не отправил» (genuine send negation)", () => {
+    const text = "Налоги за месяц ещё не отправлены.";
+    assert.equal(statusOf("main_taxes", text), "Не отправил");
+  });
+});

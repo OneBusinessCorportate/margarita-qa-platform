@@ -82,10 +82,35 @@ const NOTIFY_RU =
 // Armenian notification stem: «Տեղեկացնում ենք …» (we inform), «հիշեցնում» (remind).
 const NOTIFY_HY = /(տեղեկացն|հիշեցն|տեղեկացր)/iu;
 
+// --- Scoped negation of the SENDING / notification verb (v8) -----------------
+// PARITY: mirrored 1:1 in db/migrations/20260714_mqa_detect_mailings_v8_scoped_send_negation.sql
+// (neg_send / neg_send_hy). Keep identical.
+//
+// NEG_SEND_RU: «рассылку не отправили», «рассылка не сделана», «не разослал»,
+// «не уведомил». Guards the salary NOTIFY-done rule and the main_taxes done
+// rule (taxes are *sent*, never received). It deliberately OMITS the
+// pure-receive verbs (получ/пришл/прислал/скинул/сброс/предостав/подпис) and the
+// salary-CALCULATION verb (начисл) so that:
+//   • «зарплата не начисляется» still counts the mailing as SENT (done), and
+//   • an UNRELATED «документы не получила» in a mixed message does NOT suppress
+//     a real salary send (scoped to the send verb — not a blunt whole-text «не»).
+const NEG_SEND_RU =
+  /(?<![а-яёА-ЯЁ])не\s+(?:[а-яёА-ЯЁ]+\s+){0,2}?(рассыл|разосл|разошл|уведом|сообщ|информир|напомн|отправ|выслал|переслал|направ|подал|подан|сдан|сдела|сделан|загруз|выгруз|отчита|задеклар|оформ|провед|провёл|провел|готов|выполн)/i;
+// NEG_SEND_HY: Armenian scoped negation of the sending/notification verb. Two
+// shapes: (1) prefix «չ»+send-verb (չուղարկ/չտեղեկաց…); (2) auxiliary
+// «չեմ/չենք/չի…» immediately (≤2 words) before a send verb. It OMITS կատար so
+// the «աշխատավարձի հաշվարկ չի կատարվում» template (no salary this period) is
+// STILL a sent mailing (done); it also omits ստաց/վճար/մար/փակ.
+const NEG_SEND_HY =
+  /չ(?:ուղարկ|ներկայաց|հանձն|տեղեկաց|հիշեց|առաք|ցր)|չ(?:ի|ե[մսնք]{1,2}|կա)\s+(?:[^\s]+\s+){0,2}?(?:ուղարկ|ներկայաց|հանձն|տեղեկաց|հիշեց|առաք|ցր)/u;
+
 const RULES: Rule[] = [
   // --- main_taxes (Russian) -------------------------------------------------
-  { category: "main_taxes", type: "done", all: [KW.taxes_ru, DONE_TAX_RU], none: [NEG_DONE_RU] },
-  { category: "main_taxes", type: "neg", all: [KW.taxes_ru, NEG_DONE_RU] },
+  // Taxes are *sent*, never received → the negation guard is scoped to the
+  // SEND verb (NEG_SEND_RU), so an unrelated receive-negation elsewhere in the
+  // message («налоги отправил, зарплату не получил») does NOT flip it to «neg».
+  { category: "main_taxes", type: "done", all: [KW.taxes_ru, DONE_TAX_RU], none: [NEG_SEND_RU] },
+  { category: "main_taxes", type: "neg", all: [KW.taxes_ru, NEG_SEND_RU] },
   // --- main_taxes (Armenian) ------------------------------------------------
   // հարկ=tax, ԱԱՀ=VAT, հայտ=declaration, ուղարկ=sent, ներկայաց=submitted
   {
@@ -98,10 +123,14 @@ const RULES: Rule[] = [
 
   // --- salary (Russian) -----------------------------------------------------
   { category: "salary", type: "done", all: [KW.salary_ru, DONE_RECV_RU], none: [NEG_DONE_RU] },
-  // Sending the salary рассылка (notification) = done → «Получил» (not negated).
-  { category: "salary", type: "done", all: [KW.salary_ru, NOTIFY_RU] },
+  // Sending the salary рассылка (notification) = done → «Получил». v8: guarded by
+  // NEG_SEND_RU so a negated SEND («рассылку не отправила», «не разослал») is NOT
+  // marked done, while «зарплата не начисляется» (calc negated) STILL is.
+  { category: "salary", type: "done", all: [KW.salary_ru, NOTIFY_RU], none: [NEG_SEND_RU] },
   { category: "salary", type: "req", all: [KW.salary_ru, REQ_RU] },
   { category: "salary", type: "neg", all: [KW.salary_ru, NEG_DONE_RU] },
+  // A negated SEND also surfaces as «neg» so «не разослал…» reads as not-done.
+  { category: "salary", type: "neg", all: [KW.salary_ru, NEG_SEND_RU] },
   // --- salary (Armenian) ----------------------------------------------------
   // աշխատավարձ=salary, հաշվետ=payroll, ստացական=receipt, ցուցակ=list
   {
@@ -111,8 +140,10 @@ const RULES: Rule[] = [
     none: [NEG_HY],
   },
   // «Տեղեկացնում ենք … աշխատավարձ …» — the salary рассылка was SENT (incl. the
-  // "no salary this period" template). Not suppressed by negation.
-  { category: "salary", type: "done", all: [KW.salary_hy, NOTIFY_HY] },
+  // "no salary this period" «չի կատարվում» template → STILL done). v8: guarded by
+  // NEG_SEND_HY, which suppresses only a negated SEND verb («չենք տեղեկացրել»),
+  // never the calc negation «չի կատարվում».
+  { category: "salary", type: "done", all: [KW.salary_hy, NOTIFY_HY], none: [NEG_SEND_HY] },
   {
     category: "salary",
     type: "req",
