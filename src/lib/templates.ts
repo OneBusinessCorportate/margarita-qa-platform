@@ -16,6 +16,7 @@ import type { AccountantScore, DailyReport } from "./report";
 import { MONTHLY_CATEGORIES, bandFor, failingMailings, type QualityBand } from "./scoring";
 import type { Chat, Evaluation, Violation } from "./types";
 import { groupNarusheniya } from "./violations";
+import type { ViolationReport } from "./violation-report";
 
 export function telegramConfigured(): boolean {
   return Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
@@ -559,6 +560,149 @@ export function buildWeeklyFinesBreakdown(
       lines.push("");
       lines.push(`— ${name}: без нарушений`);
     }
+  }
+
+  return lines.join("\n");
+}
+
+/** dd.mm.yyyy — full date for the standalone daily / reconciliation reports. */
+function fmtFullDay(iso: string | null): string {
+  if (!iso) return "—";
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return d && m ? `${d}.${m}.${y}` : iso;
+}
+
+export interface DailyStaffViolationsOptions {
+  /** ISO date отчётного дня (или последнего дня окна). */
+  date?: string;
+  /**
+   * Менеджер по коду чата (mqa_chats.manager). Нет записи / пусто → «не указан».
+   * Менеджеров НЕ выдумываем — показываем только то, что реально есть в данных.
+   */
+  managerByChat?: Record<string, string | null>;
+}
+
+/**
+ * Ежедневный отчёт по нарушениям ПО КАЖДОМУ СОТРУДНИКУ. В отличие от блока
+ * «Нарушения» в основном отчёте (buildReportMessage), здесь видна полная
+ * картина: перечислены ВСЕ сотрудники ростера, включая тех, у кого за день 0
+ * нарушений («Имя — 0 нарушений»). По каждому нарушению показываются клиент/чат,
+ * тип, штраф (или «предупреждение»), комментарий, статус подтверждения и
+ * менеджер (если он есть в данных чата, иначе «не указан»).
+ *
+ * Источник и суммы — те же, что на дашборде: `buildLiveViolationBreakdown`
+ * (живые mqa_violations, правило warning/penalty из violations.ts). Никакой
+ * новой логики расчёта здесь нет — только другой формат вывода.
+ */
+export function buildDailyStaffViolationsMessage(
+  report: ViolationReport,
+  options: DailyStaffViolationsOptions = {}
+): string {
+  const { managerByChat } = options;
+  const dateISO = options.date ?? new Date().toISOString().slice(0, 10);
+  const managerFor = (chatCode: string | null): string => {
+    const raw = chatCode ? managerByChat?.[chatCode] : null;
+    const m = (raw ?? "").trim();
+    return m || "не указан";
+  };
+
+  const lines: string[] = [];
+  lines.push("Ежедневный отчёт по нарушениям (по сотрудникам)");
+  lines.push("");
+  lines.push(`Дата: ${fmtFullDay(dateISO)}`);
+  lines.push("");
+  const s = report.summary;
+  lines.push(
+    `Всего нарушений: ${s.violations} · предупреждений: ${s.warnings} · ` +
+      `штрафов: ${s.penalties} · сумма: ${fmtDram(s.fineTotal)} др`
+  );
+
+  for (const g of report.perAccountant) {
+    lines.push("");
+    lines.push(`— ${g.employeeFull} — ${fmtViolationCount(g.count)}`);
+    for (const l of g.lines) {
+      const client = l.client?.trim();
+      const clientLabel = client || l.chatCode || "—";
+      const chatSuffix = l.chatCode && client ? ` (${l.chatCode})` : "";
+      lines.push(`  ▸ Клиент: ${clientLabel}${chatSuffix}`);
+      const critMark = l.critical || l.gross ? " ⚠ критично" : "";
+      lines.push(`    Нарушение: ${l.type ?? "—"}${critMark}`);
+      const money = l.amount > 0 ? `${fmtDram(l.amount)} др` : "предупреждение";
+      lines.push(`    Штраф: ${money}`);
+      if (l.note && l.note.trim()) lines.push(`    Комментарий: ${l.note.trim()}`);
+      const statusParts: string[] = [l.confirmed ? "подтверждено" : "не подтверждено"];
+      if (l.appealStatus === "appealed") statusParts.push("апелляция");
+      else if (l.appealStatus === "approved") statusParts.push("апелляция одобрена");
+      else if (l.appealStatus === "rejected") statusParts.push("апелляция отклонена");
+      lines.push(`    Статус: ${statusParts.join(" · ")}`);
+      lines.push(`    Менеджер: ${managerFor(l.chatCode)}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/** Одна строка сверки чата налогового кабинета с dashboard. */
+export interface TaxCabinetRow {
+  agr_no: string;
+  client: string | null; // клиент / компания
+  hvhh: string | null;
+  accountant: string | null; // ответственный бухгалтер
+  manager: string | null;
+  inTaxCabinet: boolean; // есть ли в налоговом кабинете
+  inDashboard: boolean; // есть ли в dashboard
+  /** Короткое описание расхождения; null — расхождения нет. */
+  discrepancy: string | null;
+}
+
+export interface TaxCabinetReconInput {
+  /** Всего чатов, у которых есть данные налогового кабинета. */
+  taxTotal: number;
+  /** Сколько из них присутствуют (активны) в dashboard. */
+  inDashboard: number;
+  /** Детальные строки для вывода (обычно только расхождения). */
+  rows: TaxCabinetRow[];
+  date?: string;
+}
+
+/**
+ * Сверка налогового кабинета с dashboard: сводка (сколько чатов в кабинете,
+ * сколько в dashboard, сколько расхождений) плюс детальный разбор по каждой
+ * строке-расхождению. По каждому чату видно: клиент/компания, HVHH, чат,
+ * ответственный бухгалтер, менеджер, есть ли он в налоговом кабинете, есть ли в
+ * dashboard и в чём расхождение. Данные реальные (mqa_chats + mqa_violations),
+ * ничего не выдумывается.
+ */
+export function buildTaxCabinetReconciliation(input: TaxCabinetReconInput): string {
+  const { taxTotal, inDashboard, rows } = input;
+  const dateISO = input.date ?? new Date().toISOString().slice(0, 10);
+  const discrepancies = rows.filter((r) => r.discrepancy);
+
+  const lines: string[] = [];
+  lines.push("Сверка налогового кабинета");
+  lines.push("");
+  lines.push(`Дата: ${fmtFullDay(dateISO)}`);
+  lines.push("");
+  lines.push(`Чатов в налоговом кабинете: ${taxTotal}`);
+  lines.push(`Из них в dashboard: ${inDashboard}`);
+  lines.push(`Расхождений: ${discrepancies.length}`);
+
+  if (rows.length === 0) {
+    lines.push("");
+    lines.push("Все чаты налогового кабинета есть в dashboard — расхождений нет ✅");
+    return lines.join("\n");
+  }
+
+  const yn = (b: boolean) => (b ? "да" : "нет");
+  for (const r of rows) {
+    lines.push("");
+    lines.push(`▸ ${r.client?.trim() || r.agr_no} — ${r.agr_no}`);
+    lines.push(`  HVHH: ${r.hvhh?.trim() || "не указан"}`);
+    lines.push(`  Бухгалтер: ${r.accountant?.trim() || "не указан"}`);
+    lines.push(`  Менеджер: ${r.manager?.trim() || "не указан"}`);
+    lines.push(`  В налоговом кабинете: ${yn(r.inTaxCabinet)}`);
+    lines.push(`  В dashboard: ${yn(r.inDashboard)}`);
+    lines.push(`  Расхождение: ${r.discrepancy ?? "нет"}`);
   }
 
   return lines.join("\n");
