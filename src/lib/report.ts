@@ -74,6 +74,22 @@ export interface CriticalChat {
 }
 
 /**
+ * A single hand-edited chat score in the window (п.8) — surfaced so a changed
+ * оценка за прошлый день is visible in the report/PDF, not only inside the
+ * scoring grid. Latest edit per (chat, day) wins.
+ */
+export interface ManualOverrideRow {
+  chat_agr_no: string;
+  chat_name: string | null;
+  accountant: string | null;
+  score_date: string; // YYYY-MM-DD
+  old_score: number | null;
+  new_score: number;
+  changed_by: string | null;
+  comment: string;
+}
+
+/**
  * One task row surfaced on the dashboard «Задачи» section (п.5) — carries the
  * date fields the aggregate counts hid: Due Date (Original / Postponed) and
  * Completed At, plus the responsible accountant/manager for QA context.
@@ -169,6 +185,8 @@ export interface DailyReport {
   };
   /** How many chats in the window carry a manual score override (п.8). */
   manualOverridesCount?: number;
+  /** The hand-edited scores in the window (п.8), newest edit first. May be empty. */
+  manualOverrides?: ManualOverrideRow[];
 }
 
 /** A saved Отчёт, stored in history so a past period can be re-opened as-was. */
@@ -454,6 +472,34 @@ export function buildReport(
     evals.filter((e) => overrideFor(e)).map((e) => e.chat_agr_no)
   ).size;
 
+  // The full list of hand-edited scores in the window (п.8) — so a changed
+  // оценка за прошлый день is visible in its own report/PDF section, not only
+  // when the chat happens to still be Критично. Latest edit per (chat, day),
+  // scoped by the report's date range + client/accountant filters.
+  const manualOverrides: ManualOverrideRow[] = [...overrideByKey.values()]
+    .filter((o) => inRange(o.score_date, from, to))
+    .filter((o) => matchesClient(o.chat_agr_no))
+    .filter(
+      (o) =>
+        !accountant ||
+        (chatById.get(o.chat_agr_no)?.accountant ?? null) === accountant
+    )
+    .map((o) => ({
+      chat_agr_no: o.chat_agr_no,
+      chat_name: chatById.get(o.chat_agr_no)?.chat_name ?? null,
+      accountant: chatById.get(o.chat_agr_no)?.accountant ?? null,
+      score_date: o.score_date.slice(0, 10),
+      old_score: o.old_score,
+      new_score: o.new_score,
+      changed_by: o.changed_by,
+      comment: o.comment,
+    }))
+    .sort(
+      (a, b) =>
+        b.score_date.localeCompare(a.score_date) ||
+        a.chat_agr_no.localeCompare(b.chat_agr_no)
+    );
+
   // Unanswered chats — current-state service backlog (client had the last word).
   // Independent of the date window: it is "who is waiting right now".
   const unansweredChats: UnansweredChat[] = scopedChats
@@ -673,5 +719,6 @@ export function buildReport(
       items: taskItems,
     },
     manualOverridesCount,
+    manualOverrides,
   };
 }

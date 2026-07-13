@@ -296,14 +296,54 @@ export default function ReportView({
         </div>
       )}
 
-      {/* Ручные правки оценок (п.8) — индикатор, что часть оценок изменена вручную. */}
-      {(report.manualOverridesCount ?? 0) > 0 && (
-        <div className="card p-3 border-amber-200 bg-amber-50">
-          <div className="text-sm text-amber-800">
-            ✎ Оценка изменена вручную по {report.manualOverridesCount}{" "}
-            {report.manualOverridesCount === 1 ? "чату" : "чатам"} за период — приоритет
-            над автоматической оценкой (см. критичные чаты / PDF).
+      {/* Ручные правки оценок (п.8) — полный список изменённых оценок за период,
+          включая правки за прошлые дни, чтобы они были видны и на дашборде. */}
+      {(report.manualOverrides?.length ?? 0) > 0 && (
+        <div className="card overflow-x-auto border-amber-200">
+          <div className="px-4 py-3 border-b border-amber-100 bg-amber-50">
+            <div className="text-sm font-semibold text-amber-800">
+              ✎ Ручные правки оценок за период ({report.manualOverrides!.length})
+            </div>
+            <div className="text-xs text-amber-700">
+              Оценка изменена вручную — приоритет над автоматической. Правки за
+              прошлые дни тоже здесь и попадают в PDF.
+            </div>
           </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                <th className="px-4 py-2 text-left font-medium">Дата</th>
+                <th className="px-3 py-2 text-left font-medium">Чат</th>
+                <th className="px-3 py-2 text-left font-medium">Бухгалтер</th>
+                <th className="px-3 py-2 text-center font-medium">Было → стало</th>
+                <th className="px-3 py-2 text-left font-medium">Комментарий</th>
+                <th className="px-3 py-2 text-left font-medium">Кто</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {report.manualOverrides!.map((o) => (
+                <tr key={`${o.chat_agr_no}|${o.score_date}`}>
+                  <td className="px-4 py-2 tabular-nums whitespace-nowrap">
+                    {o.score_date.split("-").reverse().join(".")}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap font-medium">
+                    {o.chat_agr_no}
+                    {o.chat_name ? (
+                      <span className="text-gray-400"> — {o.chat_name}</span>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">{o.accountant ?? "—"}</td>
+                  <td className="px-3 py-2 text-center tabular-nums whitespace-nowrap">
+                    {o.old_score ?? "—"} → <span className="font-semibold">{o.new_score}</span>
+                  </td>
+                  <td className="px-3 py-2 text-gray-700">{o.comment}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-gray-500">
+                    {o.changed_by ?? "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

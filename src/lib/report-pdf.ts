@@ -406,6 +406,25 @@ export function buildReportPdf(
       "Критичных чатов за период нет ✅"
     );
 
+    // Ручные правки оценок (п.8) — изменённые оценки за прошлые дни, чтобы они
+    // были видны в PDF, а не только внутри панели оценки.
+    const overrideRows = (report.manualOverrides ?? []).map((o) => {
+      const name = o.chat_name ? ` — ${o.chat_name}` : "";
+      const who = o.accountant ?? "—";
+      const by = o.changed_by ? ` (${o.changed_by})` : "";
+      const date = fmtDateOrUnset(o.score_date);
+      return (
+        `• ${o.chat_agr_no}${name} · ${who} · за ${date} · ` +
+        `${o.old_score ?? "—"}→${o.new_score}${by}` +
+        (o.comment ? ` · «${o.comment}»` : "")
+      );
+    });
+    section(
+      `Ручные правки оценок за период (${(report.manualOverrides ?? []).length})`,
+      overrideRows,
+      "Оценки за период вручную не менялись ✅"
+    );
+
     // Нарушения — with the reviewer's comment and the computed fine.
     const viols = options.violations ?? [];
     const fines = computeViolationFines(

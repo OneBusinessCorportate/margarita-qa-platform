@@ -65,6 +65,7 @@ export default function AccountantViolationBreakdown({
                     <th>Тип нарушения</th>
                     <th>Тяжесть</th>
                     <th>Статус</th>
+                    <th>Комментарий</th>
                     <th>Сумма</th>
                   </tr>
                 </thead>
@@ -128,6 +129,9 @@ export default function AccountantViolationBreakdown({
                             апелляция отклонена
                           </span>
                         )}
+                      </td>
+                      <td className="max-w-[22rem] whitespace-pre-wrap break-words text-gray-700">
+                        {l.note ? l.note : <span className="text-gray-400">—</span>}
                       </td>
                       <td className="tabular-nums whitespace-nowrap">
                         {l.amount > 0 ? (

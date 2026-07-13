@@ -62,6 +62,59 @@ test("client filter matches by agr_no", () => {
   assert.equal(r.totals.evaluatedChats, 1);
 });
 
+test("manual score override (п.8) is applied and surfaced in the report", () => {
+  const override = {
+    id: "o1",
+    chat_agr_no: "23",
+    client_name: null,
+    score_date: "2026-06-11",
+    old_score: 100,
+    new_score: 40,
+    changed_by: "info@onebusiness.am",
+    comment: "Пересмотрела за прошлый день",
+    created_at: "2026-06-12T09:00:00.000Z",
+  };
+  const r = buildReport(
+    seedChats,
+    seedEvaluations,
+    { from: "2026-06-11", to: "2026-06-11" },
+    seedTasks,
+    "2026-06-15",
+    [override]
+  );
+  // Listed for the report/PDF, exactly once, with the edit details.
+  assert.equal(r.manualOverrides?.length, 1);
+  assert.equal(r.manualOverrides![0].chat_agr_no, "23");
+  assert.equal(r.manualOverrides![0].new_score, 40);
+  assert.equal(r.manualOverrides![0].old_score, 100);
+  assert.equal(r.manualOverridesCount, 1);
+  // Chat 23 (was Отлично) now scores 40 → Критично, so it shows up as critical.
+  assert.ok(r.criticalChats.some((c) => c.chat_agr_no === "23"));
+});
+
+test("manual override outside the date window is not surfaced", () => {
+  const override = {
+    id: "o2",
+    chat_agr_no: "23",
+    client_name: null,
+    score_date: "2026-06-10", // one day before the window
+    old_score: 100,
+    new_score: 40,
+    changed_by: "info@onebusiness.am",
+    comment: "не в окне",
+    created_at: "2026-06-12T09:00:00.000Z",
+  };
+  const r = buildReport(
+    seedChats,
+    seedEvaluations,
+    { from: "2026-06-11", to: "2026-06-11" },
+    seedTasks,
+    "2026-06-15",
+    [override]
+  );
+  assert.equal(r.manualOverrides?.length ?? 0, 0);
+});
+
 test("per-accountant breakdown flags low scores", () => {
   const r = buildReport(seedChats, seedEvaluations, {}, seedTasks);
   const avag = r.perAccountant.find((a) => a.accountant === "Ավագ");

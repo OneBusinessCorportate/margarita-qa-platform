@@ -601,8 +601,12 @@ export default function ScoringPanel({
       // The imported `status` flag goes stale, which hid genuinely active chats.
       // In the day view a chat IS in the list because it was really active that
       // day, so the status flag must not filter it out there. Only the "all"
-      // scope honours the status flag.
-      if (activeOnly && scope === "all" && c.status !== "Active") return false;
+      // scope honours the status flag — AND only when there is no explicit
+      // search. An Inactive chat (п.3/п.7: B-4061/B-4206 и т.п.) must still be
+      // findable when Маргарита searches it by № / имени / ссылке, otherwise the
+      // add-box shows «Ничего не найдено» for a chat that DOES exist; it then
+      // surfaces with the 🚫 «Неактивный» badge so its status is unambiguous.
+      if (activeOnly && scope === "all" && c.status !== "Active" && !n) return false;
       if (hideStale && isStaleActivity(lastActivityFor(c), nowISO)) return false;
       if (accFilters.length && !(c.accountant && accFilters.includes(c.accountant)))
         return false;
