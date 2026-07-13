@@ -193,20 +193,21 @@ test("friday fines message lists weekly fines with month totals and clean list",
   );
   assert.match(msg, /^Пятничный отчет по штрафам/);
   assert.match(msg, /Неделя: 29\.06 — 03\.07/);
-  // Лилит: 3 средних за неделю → 1 000 др каждое (manual 1000 on one of them
-  // matches the rule), итого 3 000 — sorted above Аваг (2 000 manual).
+  // Лилит (все 03.07): manual 1 000 (id1) + среднее id2 (1-е за день →
+  // предупреждение 0) + среднее id3 (2-е за день → 1 000) = 2 000. Аваг —
+  // manual 2 000. При равном штрафе Лилит выше по числу нарушений (3 vs 1).
   const avag = msg.indexOf("— Ավագ:");
   const lilit = msg.indexOf("— Լիլիթ:");
   assert.ok(avag >= 0 && lilit >= 0 && lilit < avag, "sorted by weekly fine desc");
   assert.match(
     msg,
-    /— Լիլիթ: 3 000 др \+ Предупреждение \(3 средних\) \/итого за месяц 7 000 драм\//
+    /— Լիլիթ: 2 000 др \+ Предупреждение \(3 средних\) \/итого за месяц 7 000 драм\//
   );
   assert.match(
     msg,
     /— Ավագ: 2 000 др \+ Предупреждение \(1 среднее\) \/итого за месяц 20 000 драм\/ Не отправлен запрос первичной документации/
   );
-  assert.match(msg, /Итого за неделю: 4 нарушения, штрафы 5 000 драм/);
+  assert.match(msg, /Итого за неделю: 4 нарушения, штрафы 4 000 драм/);
   assert.match(msg, /Без нарушений: ✅ Գայանե, Հասմիկ/);
 });
 
@@ -215,7 +216,7 @@ test("friday fines: money computed from the Условия rules when sanctions 
     [
       // 2 средних за неделю → 1 000 др за каждый чат
       viol({ id: "1", accountant: "Նաիրա" }),
-      viol({ id: "2", accountant: "Նաիրա", vdate: "2026-07-01" }),
+      viol({ id: "2", accountant: "Նաիրա" }),
       // Критичное → 2 000 др
       viol({ id: "3", accountant: "Օլյա", severity: "Критичное" }),
       // 1 среднее за неделю → предупреждение, 0 др
@@ -223,11 +224,11 @@ test("friday fines: money computed from the Условия rules when sanctions 
     ],
     { weekFrom: "2026-06-29", weekTo: "2026-07-03" }
   );
-  assert.match(msg, /— Նաիրա: 2 000 др \+ Предупреждение \(2 средних\)/);
+  assert.match(msg, /— Նաիրա: 1 000 др \+ Предупреждение \(2 средних\)/);
   assert.match(msg, /— Օլյա: 2 000 др \+ Выговор \(1 критичное\)/);
   // Դավիթ: single medium → warning, no money prefix
   assert.match(msg, /— Դավիթ: Предупреждение \(1 среднее\)/);
-  assert.match(msg, /Итого за неделю: 4 нарушения, штрафы 4 000 драм/);
+  assert.match(msg, /Итого за неделю: 4 нарушения, штрафы 3 000 драм/);
 });
 
 test("friday fines message with a clean week", () => {
@@ -247,7 +248,7 @@ test("monthly fines message: per-person blocks with chat—problem—price and t
     [
       // Лилит: 2 средних in the same week → 1 000 др each
       viol({ id: "1", accountant: "Լիլիթ", chat_agr_no: "B-4742", violation_type: "Долгий ответ" }),
-      viol({ id: "2", accountant: "Լիլիթ", vdate: "2026-07-01", chat_agr_no: "B-5110", violation_type: "Грубый ответ" }),
+      viol({ id: "2", accountant: "Լիլիթ", chat_agr_no: "B-5110", violation_type: "Грубый ответ" }),
       // Аваг: критичное → 2 000 др
       viol({ id: "3", accountant: "Ավագ", severity: "Критичное", chat_agr_no: "B-1234", violation_type: "Ошибка в отправленном инвойсе" }),
       // Դավիթ: single среднее in its own week → предупреждение (0 др)
@@ -262,7 +263,7 @@ test("monthly fines message: per-person blocks with chat—problem—price and t
   assert.match(msg, /^Ежемесячный отчет по штрафам/);
   assert.match(msg, /Месяц: 01\.07 — 31\.07/);
   // One block per person: chat code — problem — money, then the person's total.
-  assert.match(msg, /— Լիլիթ:\n  ▸ B-4742 — Долгий ответ — 1 000 др\n  ▸ B-5110 — Грубый ответ — 1 000 др\n  Итого: 2 000 др/);
+  assert.match(msg, /— Լիլիթ:\n  ▸ B-4742 — Долгий ответ — предупреждение\n  ▸ B-5110 — Грубый ответ — 1 000 др\n  Итого: 1 000 др/);
   assert.match(msg, /— Ավագ:\n  ▸ B-1234 — Ошибка в отправленном инвойсе — 2 000 др\n  Итого: 2 000 др/);
   assert.match(msg, /— Դավիթ:\n  ▸ B-9999 — Игнорирование задач — предупреждение\n  Итого: 0 др/);
   // Biggest fine first: Лилит (2 000) before Դավիթ (0).
@@ -270,8 +271,8 @@ test("monthly fines message: per-person blocks with chat—problem—price and t
   const lilit = msg.indexOf("— Լիլիթ:");
   assert.ok(lilit >= 0 && davit >= 0 && lilit < davit, "sorted by monthly fine desc");
   // Grand totals + the final fine line.
-  assert.match(msg, /Сумма всех штрафов: 4 000 др/);
-  assert.match(msg, /Финальный штраф: 4 000 др/);
+  assert.match(msg, /Сумма всех штрафов: 3 000 др/);
+  assert.match(msg, /Финальный штраф: 3 000 др/);
   assert.match(msg, /Без нарушений: ✅ Գայանե/);
 });
 

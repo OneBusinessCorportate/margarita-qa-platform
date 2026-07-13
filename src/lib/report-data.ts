@@ -4,15 +4,18 @@
 // Used by the PDF download route and the Telegram send route.
 import "server-only";
 
-import { getDailyAnalytics, getReport, listAccountants } from "./repo";
+import { getDailyAnalytics, getReport, listAccountants, listViolations } from "./repo";
 import { mondayOf } from "./scoring";
 import type { DailyReport } from "./report";
+import type { Violation } from "./types";
 
 export interface AssembledPdfReport {
   report: DailyReport;
   /** The window the grid covers (may be wider than the requested day). */
   resolved: { from: string; to: string };
   roster: string[];
+  /** Violations ("Нарушения") logged inside the grid window, for the PDF list. */
+  violations: Violation[];
 }
 
 export async function assemblePdfReport(
@@ -33,10 +36,20 @@ export async function assemblePdfReport(
     }
   }
 
-  const accountants = await listAccountants();
+  const [accountants, violations] = await Promise.all([
+    listAccountants(),
+    // The «Нарушения за период» list in the PDF — the same window as the grid so
+    // "нарушения за сегодняшний день" (её жалоба) действительно попадают в отчёт.
+    listViolations({ from: gridFrom, to: resolved.to }),
+  ]);
   const roster = accountants
     .filter((a) => a.active && a.role === "accountant")
     .map((a) => a.name);
 
-  return { report: gridReport, resolved: { from: gridFrom, to: resolved.to }, roster };
+  return {
+    report: gridReport,
+    resolved: { from: gridFrom, to: resolved.to },
+    roster,
+    violations,
+  };
 }

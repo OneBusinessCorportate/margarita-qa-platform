@@ -14,11 +14,11 @@ export const maxDuration = 60;
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const { report, resolved, roster } = await assemblePdfReport(
+  const { report, resolved, roster, violations } = await assemblePdfReport(
     searchParams.get("from") ?? undefined,
     searchParams.get("to") ?? undefined
   );
-  const pdf = await buildReportPdf(report, { roster });
+  const pdf = await buildReportPdf(report, { roster, violations });
   const filename = `report-${resolved.from}_${resolved.to}.pdf`;
   return new Response(new Uint8Array(pdf), {
     headers: {

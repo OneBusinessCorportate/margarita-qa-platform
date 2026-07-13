@@ -12,10 +12,14 @@
 import path from "path";
 import PDFDocument from "pdfkit";
 import type { DailyReport, DaySummary } from "./report";
+import type { Violation } from "./types";
+import { computeViolationFines } from "./violations";
 
 export interface ReportPdfOptions {
   /** Canonical employee names — the grid's accountant rows, in this order. */
   roster?: string[];
+  /** Violations logged in the window — rendered as the «Нарушения» list. */
+  violations?: Violation[];
 }
 
 const FONT_DIR = path.join(process.cwd(), "fonts");
@@ -355,6 +359,86 @@ export function buildReportPdf(
       `% — средняя оценка · ⚠ — низкие оценки (Плохо/Критично) · N — оценено чатов · сформировано ${new Date().toISOString().slice(0, 10)}`,
       left,
       y + 8
+    );
+
+    // ── Detail sections (below the grid) ─────────────────────────────────────
+    // The grid alone hid "что именно пошло не так": critical chats, the
+    // violations log and the unanswered backlog. They are listed here so the PDF
+    // carries the full picture the department needs, not just the aggregate.
+    const contentW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    doc.y = y + 22;
+
+    const section = (title: string, rows: string[], emptyNote?: string) => {
+      // Keep the heading with at least one line of its content on the page.
+      if (doc.y + 40 > doc.page.height - doc.page.margins.bottom) doc.addPage();
+      doc.moveDown(0.6);
+      doc.font("Bold").fontSize(10).fillColor(COLORS.text).text(title, left, doc.y);
+      doc.moveDown(0.2);
+      doc.font("Regular").fontSize(8).fillColor(COLORS.text);
+      if (rows.length === 0) {
+        doc.fillColor(COLORS.muted).text(emptyNote ?? "— нет данных —", left, doc.y, { width: contentW });
+        return;
+      }
+      for (const r of rows) {
+        doc.text(r, left, doc.y, { width: contentW });
+      }
+    };
+
+    // Критичные чаты.
+    const critRows = report.criticalChats.map((c) => {
+      const name = c.chat_name ? ` — ${c.chat_name}` : "";
+      const who = c.accountant ?? "—";
+      const why = c.reasons.length ? ` · ${c.reasons.join("; ")}` : "";
+      return `• ${c.chat_agr_no}${name} · ${who} · ${c.score}%${why}`;
+    });
+    section(
+      `Критичные чаты за период (${report.criticalChats.length})`,
+      critRows,
+      "Критичных чатов за период нет ✅"
+    );
+
+    // Нарушения — with the reviewer's comment and the computed fine.
+    const viols = options.violations ?? [];
+    const fines = computeViolationFines(
+      viols.map((v) => ({
+        vdate: v.vdate,
+        accountant: v.accountant,
+        severity: v.severity,
+        sanction: v.sanction,
+        chat_agr_no: v.chat_agr_no,
+        client: v.client,
+        violation_type: v.violation_type,
+      }))
+    );
+    const totalFine = fines.reduce((s, n) => s + n, 0);
+    const violRows = viols.map((v, i) => {
+      const who = v.accountant ?? "—";
+      const target = v.client ?? v.chat_agr_no ?? "—";
+      const sev = v.severity ?? "—";
+      const type = v.violation_type ? ` · ${v.violation_type}` : "";
+      const money = fines[i] > 0 ? ` · ${fines[i].toLocaleString("ru-RU")} др` : " · предупреждение";
+      const note = v.note ? ` · «${v.note}»` : "";
+      return `• ${v.vdate} · ${who} · ${target} · ${sev}${type}${money}${note}`;
+    });
+    section(
+      `Нарушения за период (${viols.length}, штрафы ${totalFine.toLocaleString("ru-RU")} др)`,
+      violRows,
+      "Нарушений за период нет ✅"
+    );
+
+    // Без ответа — текущий бэклог (клиент написал последним).
+    const unansRows = report.unansweredChats
+      .slice(0, 40)
+      .map((c) => {
+        const name = c.chat_name ? ` — ${c.chat_name}` : "";
+        const who = c.accountant ?? "—";
+        const wait = c.waitingDays != null ? ` · ждёт ${c.waitingDays} дн` : "";
+        return `• ${c.chat_agr_no}${name} · ${who}${wait}`;
+      });
+    section(
+      `Без ответа сейчас (${report.unansweredChats.length})`,
+      unansRows,
+      "Все чаты отвечены ✅"
     );
 
     doc.end();

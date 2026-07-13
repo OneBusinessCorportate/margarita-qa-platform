@@ -57,10 +57,20 @@ export const GROSS_VIOLATION_TYPES = [
   "Другое (грубое)",
 ] as const;
 
-/** All violation-type suggestions for a given severity. */
+/**
+ * All violation-type suggestions to offer in the dropdown. Every reason must be
+ * reachable regardless of the chosen severity (Маргарита: «не отображаются все
+ * варианты причин»), so we always return the FULL vocabulary — service +
+ * gross — de-duplicated. Only the ORDER changes with severity: for «Грубое» the
+ * gross reasons come first, otherwise the service reasons come first.
+ */
 export function violationTypeOptions(severity?: string): readonly string[] {
-  if (severity === "Грубое") return GROSS_VIOLATION_TYPES;
-  return VIOLATION_TYPES;
+  const service = VIOLATION_TYPES;
+  const gross = GROSS_VIOLATION_TYPES;
+  const ordered =
+    severity === "Грубое" ? [...gross, ...service] : [...service, ...gross];
+  // De-duplicate while preserving order (e.g. a shared "Другое"-style entry).
+  return [...new Set(ordered)];
 }
 
 // --- Sanction reference tables (Условия / Памятка) --------------------------
@@ -79,8 +89,8 @@ export const SANCTION_RULES: SanctionRule[] = [
   {
     trigger: "Плохой сервис / чаты, неотправленные уведомления",
     steps: [
-      "1 за неделю — предупреждение",
-      "2 и более за неделю — 1 000 др. за каждый чат",
+      "1-е нарушение за день — предупреждение",
+      "2-е и последующие за тот же день — 1 000 др. за каждое",
     ],
     note: "Оценка Маргариты: коммуникация, отправка долгов, отчётов и уведомлений.",
   },
@@ -154,7 +164,8 @@ export const SANCTION_CAP_PCT = 30;
 // everywhere (fines AND the counts shown in the reports), so the money and the
 // «N нарушений» always agree with the «Условия» sheet.
 
-/** Стандартный сервис: 2+ чата с нарушениями за неделю → 1 000 др за КАЖДЫЙ чат. */
+/** Стандартный сервис: 1-е нарушение за день — предупреждение, каждое
+ *  последующее за тот же день — 1 000 др. */
 export const MEDIUM_FINE = 1_000;
 /** Критичный сервис / чаты: 2 000 др за каждый чат. */
 export const CRITICAL_FINE = 2_000;
@@ -236,13 +247,14 @@ export interface Narushenie {
 
 /**
  * Collapse raw violation rows into нарушения and price each per «Условия»:
- *   • Стандартное (Среднее) — 1 чат за неделю → предупреждение (0 др); 2 и более
- *     чатов за неделю (на бухгалтера) → 1 000 др за каждый чат
+ *   • Стандартное (Среднее) — эскалация ПО ДНЯМ: 1-е нарушение за день →
+ *     предупреждение (0 др); каждое последующее за ТОТ ЖЕ день (на бухгалтера)
+ *     → 1 000 др
  *   • Критичное — 2 000 др за каждый чат
  *   • Грубое    — 1-е за год → предупреждение; 2-е → 10 000; 3-е+ → 30 000
  *     (`grossPrior` = this-year нарушения count BEFORE the window, so the
  *     escalation carries over)
- * Several problems in the SAME chat (same bookkeeper, same week) are ONE
+ * Several problems in the SAME chat (same bookkeeper, same day) are ONE
  * нарушение — worst severity, fined once. A manual sanction (> 0) prices its
  * own row explicitly and is never merged away.
  */
@@ -268,10 +280,12 @@ export function groupNarusheniya(
 
   violations.forEach((v, i) => {
     const accountant = v.accountant ?? "";
-    const week = mondayOf(v.vdate);
+    const day = (v.vdate ?? "").slice(0, 10);
     const manual = typeof v.sanction === "number" && v.sanction > 0;
     // Manually-priced rows never merge (their amount must survive verbatim).
-    const key = manual ? `manual#${i}` : `${accountant}|${week}|${chatKeyOf(v, i)}`;
+    // Grouping is PER DAY (was per week): several problems in one chat on the
+    // same day are one нарушение; different days are different нарушения.
+    const key = manual ? `manual#${i}` : `${accountant}|${day}|${chatKeyOf(v, i)}`;
     const klass = violationClassOf(v.severity);
     const type = (v.violation_type ?? "").trim();
     const g = groups.get(key);
@@ -303,13 +317,18 @@ export function groupNarusheniya(
 
   const list = order.map((k) => groups.get(k)!);
 
-  // Standard weekly threshold: 2+ standard нарушения (chats) per bookkeeper per
-  // week → 1 000 др each; a single one is only a warning.
-  const stdPerAccWeek = new Map<string, number>();
+  // Standard DAILY escalation: the 1st standard нарушение per bookkeeper per DAY
+  // is only a warning (0 др); every subsequent нарушение that SAME day is
+  // 1 000 др. `list` is in first-seen order, so the first one we meet for an
+  // (accountant, day) pair is the warning.
+  const stdSeenPerAccDay = new Map<string, number>();
+  const stdFineOf = new Map<Acc, number>();
   for (const g of list) {
     if (g.manualSanction != null || g.klass !== "standard") continue;
-    const k = `${g.accountant}|${g.vdate.length ? mondayOf(g.vdate) : ""}`;
-    stdPerAccWeek.set(k, (stdPerAccWeek.get(k) ?? 0) + 1);
+    const k = `${g.accountant}|${g.vdate.slice(0, 10)}`;
+    const seen = stdSeenPerAccDay.get(k) ?? 0;
+    stdFineOf.set(g, seen >= 1 ? MEDIUM_FINE : 0);
+    stdSeenPerAccDay.set(k, seen + 1);
   }
 
   // Gross per-year escalation per bookkeeper, counted in date order.
@@ -330,10 +349,7 @@ export function groupNarusheniya(
     if (g.manualSanction != null) fine = g.manualSanction;
     else if (g.klass === "gross") fine = grossFineOf.get(g) ?? 0;
     else if (g.klass === "critical") fine = CRITICAL_FINE;
-    else {
-      const k = `${g.accountant}|${mondayOf(g.vdate)}`;
-      fine = (stdPerAccWeek.get(k) ?? 0) >= 2 ? MEDIUM_FINE : 0;
-    }
+    else fine = stdFineOf.get(g) ?? 0;
     return {
       accountant: g.accountant,
       chat_agr_no: g.chat_agr_no,
