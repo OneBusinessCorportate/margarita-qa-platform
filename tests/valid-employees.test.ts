@@ -7,9 +7,16 @@ import {
   canonicalShortName,
 } from "../src/lib/valid-employees";
 
-test("ровно 14 действующих сотрудников", () => {
-  assert.equal(VALID_EMPLOYEES.length, 14);
+test("16 действующих сотрудников (14 + новые Марианна, Алиса)", () => {
+  assert.equal(VALID_EMPLOYEES.length, 16);
   assert.ok(VALID_EMPLOYEES.every((e) => e.active));
+});
+
+test("новые бухгалтеры (Марианна / Алиса / Артур) распознаются", () => {
+  assert.equal(canonicalShortName("Марианна"), "Մարիաննա");
+  assert.equal(canonicalShortName("Marianna"), "Մարիաննա");
+  assert.equal(canonicalShortName("Алиса"), "Ալիսա");
+  assert.equal(canonicalShortName("Артур"), "Արթուր");
 });
 
 test("армянские короткие имена сопоставляются", () => {

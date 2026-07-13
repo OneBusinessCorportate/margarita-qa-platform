@@ -18,6 +18,23 @@ describe("detectAllSignals — Russian", () => {
     assert.ok(sigs.some((s) => s.category === "salary" && s.type === "req"));
   });
 
+  it("salary done: рассылка по зарплате sent → done (even if 'no salary')", () => {
+    const sigs = detectAllSignals(
+      "Разослал рассылку по зарплате: в этом периоде зарплата не начислялась."
+    );
+    assert.ok(sigs.some((s) => s.category === "salary" && s.type === "done"));
+    // done wins over the negation → «Получил».
+    const counts = { done: 1, req: 0, call: 0, paid: 0, neg: 1 };
+    assert.equal(deriveStatus("salary", counts), "Получил");
+  });
+
+  it("salary done (HY): «Տեղեկացնում ենք … աշխատավարձ … չի կատարվում» = sent", () => {
+    const sigs = detectAllSignals(
+      "Տեղեկացնում ենք, որ ընթացիկ ժամանակահատվածի համար աշխատավարձի հաշվարկ չի կատարվում։"
+    );
+    assert.ok(sigs.some((s) => s.category === "salary" && s.type === "done"));
+  });
+
   it("primary_docs done: received primary docs", () => {
     const sigs = detectAllSignals("Первичные документы получены от клиента.");
     assert.ok(sigs.some((s) => s.category === "primary_docs" && s.type === "done"));

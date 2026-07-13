@@ -5,9 +5,9 @@ import { isValidEmployee } from "../src/lib/valid-employees";
 
 const audit = buildEmployeeAudit();
 
-test("в аудите ровно 14 валидных сотрудников", () => {
-  assert.equal(audit.valid.length, 14);
-  assert.equal(audit.totals.validCount, 14);
+test("в аудите 16 валидных сотрудников (14 + новые Марианна, Алиса)", () => {
+  assert.equal(audit.valid.length, 16);
+  assert.equal(audit.totals.validCount, 16);
 });
 
 test("все нарушения только по валидным сотрудникам", () => {
@@ -62,8 +62,8 @@ test("Արթուр Բարսеղյан отсутствует в KPI и КК Со
   assert.ok(audit.missing.kk.includes("Արթուր Բարսեղյան"));
 });
 
-test("матрица источников покрывает все 14", () => {
-  assert.equal(audit.sourceMatrix.length, 14);
+test("матрица источников покрывает всех 16", () => {
+  assert.equal(audit.sourceMatrix.length, 16);
   assert.ok(audit.sourceMatrix.every((s) => s.inList));
 });
 

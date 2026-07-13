@@ -1651,7 +1651,12 @@ function ChatScoreRow({
               </span>
             )}
             {chat.status !== "Active" && (
-              <span className="text-xs text-gray-400 whitespace-nowrap">(неактивен)</span>
+              <span
+                className="inline-block rounded bg-gray-700 text-white font-semibold text-xs px-1.5 py-0.5 whitespace-nowrap"
+                title="Клиент неактивен (по «Основным данным»). Обязательные рассылки по нему не требуются — это НЕ случай «бухгалтер не отправил рассылку»."
+              >
+                🚫 Неактивный
+              </span>
             )}
           </div>
           {/* Full Telegram link, shown in full so QA can read it, select/copy it,

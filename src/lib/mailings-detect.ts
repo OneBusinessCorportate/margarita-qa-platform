@@ -73,6 +73,14 @@ const DONE_RECV_RU =
   /(получ|пришл|прислал|подпис|сдал|предоставил|скинул|сбросил|прислала|получила|пришла|передал|отправил|отправила|отправлен|отправлена|отправили|выслал|переслал|сдела|сделан|готов|выполн|оформ|провед|провёл|провел)/i;
 const REQ_RU =
   /(запрос|прошу|просьб|нужн|пришлит|отправьт|скиньт|передайт|пожалуйст|жду|ожида)/i;
+// «Рассылка отправлена» markers — the accountant SENT the periodic notification
+// (Маргарита: «после отправки рассылки статус должен стать Получил»). Sending
+// the mailing IS the completed action, even when the body says "нет зарплаты в
+// этом периоде" — so these are NOT suppressed by negation.
+const NOTIFY_RU =
+  /(рассыл|разосл|разошл|уведомл|уведомил|уведомля|сообщаем|сообщил|информир|напоминаем|напомнил)/i;
+// Armenian notification stem: «Տեղեկացնում ենք …» (we inform), «հիշեցնում» (remind).
+const NOTIFY_HY = /(տեղեկացն|հիշեցն|տեղեկացր)/iu;
 
 const RULES: Rule[] = [
   // --- main_taxes (Russian) -------------------------------------------------
@@ -90,6 +98,8 @@ const RULES: Rule[] = [
 
   // --- salary (Russian) -----------------------------------------------------
   { category: "salary", type: "done", all: [KW.salary_ru, DONE_RECV_RU], none: [NEG_DONE_RU] },
+  // Sending the salary рассылка (notification) = done → «Получил» (not negated).
+  { category: "salary", type: "done", all: [KW.salary_ru, NOTIFY_RU] },
   { category: "salary", type: "req", all: [KW.salary_ru, REQ_RU] },
   { category: "salary", type: "neg", all: [KW.salary_ru, NEG_DONE_RU] },
   // --- salary (Armenian) ----------------------------------------------------
@@ -100,6 +110,9 @@ const RULES: Rule[] = [
     all: [KW.salary_hy, /(ստաց|ուղարկ|տրամ|ստ\.)/iu],
     none: [NEG_HY],
   },
+  // «Տեղեկացնում ենք … աշխատավարձ …» — the salary рассылка was SENT (incl. the
+  // "no salary this period" template). Not suppressed by negation.
+  { category: "salary", type: "done", all: [KW.salary_hy, NOTIFY_HY] },
   {
     category: "salary",
     type: "req",
