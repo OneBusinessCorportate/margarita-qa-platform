@@ -195,12 +195,29 @@ create table if not exists mqa_report_snapshots (
   created_at timestamptz not null default now()
 );
 
+-- Manual per-day chat-score overrides + audit history (п.8). Append-only:
+-- latest row per (chat_agr_no, score_date) is the effective override.
+create table if not exists mqa_chat_score_overrides (
+  id           text primary key default gen_random_uuid()::text,
+  chat_agr_no  text not null references mqa_chats(agr_no) on delete cascade,
+  client_name  text,
+  score_date   date not null,
+  old_score    double precision,
+  new_score    double precision not null,
+  changed_by   text,
+  comment      text not null,
+  created_at   timestamptz not null default now()
+);
+create index if not exists mqa_chat_score_overrides_lookup_idx
+  on mqa_chat_score_overrides (chat_agr_no, score_date, created_at desc);
+
 -- Lock down to service-role access only.
 alter table mqa_accountants         enable row level security;
 alter table mqa_violations          enable row level security;
 alter table mqa_active_exclusions   enable row level security;
 alter table mqa_active_inclusions   enable row level security;
 alter table mqa_report_snapshots    enable row level security;
+alter table mqa_chat_score_overrides enable row level security;
 alter table mqa_chats               enable row level security;
 alter table mqa_criteria            enable row level security;
 alter table mqa_evaluations         enable row level security;

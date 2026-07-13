@@ -315,7 +315,7 @@ function fakeReport(over: Partial<DailyReport>): DailyReport {
     needsAttention: [],
     criticalChats: [],
     unansweredChats: [],
-    tasks: { total: 0, onTime: 0, late: 0, overdue: 0, perAccountant: [] },
+    tasks: { total: 0, onTime: 0, late: 0, overdue: 0, perAccountant: [], items: [] },
     ...over,
   };
 }
@@ -338,11 +338,11 @@ test("weekly report follows the Armenian Friday structure", () => {
     ],
     criticalChats: [
       {
-        chat_agr_no: "B-1", chat_name: null, accountant: "Ռոբերտ", score: 40,
+        chat_agr_no: "B-1", chat_name: null, accountant: "Ռոբերտ", manager: null, score: 40,
         reasons: ["Незакрытый запрос клиента"],
       },
       {
-        chat_agr_no: "B-2", chat_name: null, accountant: "Լիլիթ", score: 30,
+        chat_agr_no: "B-2", chat_name: null, accountant: "Լիלիթ", manager: null, score: 30,
         reasons: ["Незакрытый запрос клиента"],
       },
     ],

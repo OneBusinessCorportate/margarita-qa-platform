@@ -2,7 +2,7 @@
 // "Отчет" tab: a "Сервис Бухгалтерии" block (chat scores) and a "Задачи
 // Бухгалтерии" block (single tasks). Kept separate from data access so it is
 // trivially unit-testable.
-import type { Chat, Evaluation, Task } from "./types";
+import type { Chat, Evaluation, ScoreOverride, Task } from "./types";
 import {
   bandFor,
   daysBetween,
@@ -60,8 +60,34 @@ export interface CriticalChat {
   chat_agr_no: string;
   chat_name: string | null;
   accountant: string | null;
+  /** Ответственный менеджер (из mqa_chats.manager); null ⇒ показать «не указан». */
+  manager: string | null;
   score: number; // 0..100
   reasons: string[]; // short Russian reasons, most specific first
+  /** Set when this chat's score for the day was overridden manually (п.8). */
+  manualOverride?: {
+    new_score: number;
+    old_score: number | null;
+    changed_by: string | null;
+    comment: string;
+  } | null;
+}
+
+/**
+ * One task row surfaced on the dashboard «Задачи» section (п.5) — carries the
+ * date fields the aggregate counts hid: Due Date (Original / Postponed) and
+ * Completed At, plus the responsible accountant/manager for QA context.
+ */
+export interface TaskReportRow {
+  id: string;
+  chat_agr_no: string;
+  accountant: string | null;
+  manager: string | null;
+  description: string | null;
+  task_status: string | null;
+  due_date_original: string | null;
+  due_date_postponed: string | null;
+  completed_at: string | null;
 }
 
 /**
@@ -138,7 +164,11 @@ export interface DailyReport {
     late: number;
     overdue: number;
     perAccountant: AccountantTasks[];
+    /** Individual tasks in the window with their date fields (п.5). */
+    items: TaskReportRow[];
   };
+  /** How many chats in the window carry a manual score override (п.8). */
+  manualOverridesCount?: number;
 }
 
 /** A saved Отчёт, stored in history so a past period can be re-opened as-was. */
@@ -264,9 +294,22 @@ export function buildReport(
   filters: ReportFilters,
   tasks: Task[] = [],
   /** Reference day for the "is this chat still active?" check (default: today). */
-  asOf: string = new Date().toISOString().slice(0, 10)
+  asOf: string = new Date().toISOString().slice(0, 10),
+  /** Manual per-day score overrides (п.8) — latest per (chat, day) wins. */
+  overrides: ScoreOverride[] = []
 ): DailyReport {
   const { from, to, accountant, client } = filters;
+
+  // Latest manual score override per (chat, day) — priority over the computed
+  // evaluation total everywhere the score is aggregated or shown.
+  const overrideByKey = new Map<string, ScoreOverride>();
+  for (const o of overrides) {
+    const key = `${o.chat_agr_no}|${o.score_date.slice(0, 10)}`;
+    const cur = overrideByKey.get(key);
+    if (!cur || o.created_at > cur.created_at) overrideByKey.set(key, o);
+  }
+  const overrideFor = (e: Evaluation): ScoreOverride | undefined =>
+    overrideByKey.get(`${e.chat_agr_no}|${e.checking_date.slice(0, 10)}`);
 
   // Last REAL activity per chat: the chat's own activity date, else the latest
   // task touch. Used so "Активных чатов" counts chats that are genuinely live —
@@ -293,12 +336,19 @@ export function buildReport(
     );
   };
 
-  const evals = evaluations.filter((e) => {
-    if (!inRange(e.checking_date, from, to)) return false;
-    if (accountant && e.accountant !== accountant) return false;
-    if (!matchesClient(e.chat_agr_no)) return false;
-    return true;
-  });
+  const evals = evaluations
+    .filter((e) => {
+      if (!inRange(e.checking_date, from, to)) return false;
+      if (accountant && e.accountant !== accountant) return false;
+      if (!matchesClient(e.chat_agr_no)) return false;
+      return true;
+    })
+    // Apply manual overrides so every aggregate (Сервис %, распределение,
+    // critical band, per-accountant avg) reflects the hand-edited score.
+    .map((e) => {
+      const o = overrideFor(e);
+      return o ? { ...e, total_score: o.new_score, quality_band: bandFor(o.new_score) } : e;
+    });
 
   const scopedChats = chats.filter((c) => {
     if (accountant && c.accountant !== accountant) return false;
@@ -377,14 +427,32 @@ export function buildReport(
     if (!cur || e.total_score < cur.total_score) worstByChat.set(e.chat_agr_no, e);
   }
   const criticalChats: CriticalChat[] = [...worstByChat.values()]
-    .map((e) => ({
-      chat_agr_no: e.chat_agr_no,
-      chat_name: chatById.get(e.chat_agr_no)?.chat_name ?? null,
-      accountant: e.accountant,
-      score: e.total_score,
-      reasons: criticalReasons(e),
-    }))
+    .map((e) => {
+      const o = overrideFor(e);
+      return {
+        chat_agr_no: e.chat_agr_no,
+        chat_name: chatById.get(e.chat_agr_no)?.chat_name ?? null,
+        accountant: e.accountant,
+        manager: chatById.get(e.chat_agr_no)?.manager ?? null,
+        score: e.total_score,
+        reasons: criticalReasons(e),
+        manualOverride: o
+          ? {
+              new_score: o.new_score,
+              old_score: o.old_score,
+              changed_by: o.changed_by,
+              comment: o.comment,
+            }
+          : null,
+      };
+    })
     .sort((a, b) => a.score - b.score || a.chat_agr_no.localeCompare(b.chat_agr_no));
+
+  // Distinct chats in the window carrying a manual override (for the dashboard
+  // «изменено вручную» indicator).
+  const manualOverridesCount = new Set(
+    evals.filter((e) => overrideFor(e)).map((e) => e.chat_agr_no)
+  ).size;
 
   // Unanswered chats — current-state service backlog (client had the last word).
   // Independent of the date window: it is "who is waiting right now".
@@ -439,6 +507,26 @@ export function buildReport(
   const tasksPerAccountant: AccountantTasks[] = [...taskByAcc.entries()]
     .map(([accountant, a]) => ({ accountant, ...a }))
     .sort((x, y) => y.total - x.total);
+
+  // Individual task rows for the dashboard «Задачи» detail (п.5). Newest by
+  // effective due date first so the closest deadlines lead.
+  const taskItems: TaskReportRow[] = scopedTasks
+    .map((t) => ({
+      id: t.id,
+      chat_agr_no: t.chat_agr_no,
+      accountant: t.accountant,
+      manager: chatById.get(t.chat_agr_no)?.manager ?? null,
+      description: t.description,
+      task_status: t.task_status,
+      due_date_original: t.due_date_original,
+      due_date_postponed: t.due_date_postponed,
+      completed_at: t.completed_at,
+    }))
+    .sort((a, b) => {
+      const ka = (a.due_date_postponed || a.due_date_original || "9999-99-99").slice(0, 10);
+      const kb = (b.due_date_postponed || b.due_date_original || "9999-99-99").slice(0, 10);
+      return ka.localeCompare(kb) || a.chat_agr_no.localeCompare(b.chat_agr_no);
+    });
 
   // "Требует внимания" — the coaching to-do list. Flag a person when their
   // average lands in a weak band (Плохо/Критично), they have a critical chat,
@@ -582,6 +670,8 @@ export function buildReport(
       late: tLate,
       overdue: tOverdue,
       perAccountant: tasksPerAccountant,
+      items: taskItems,
     },
+    manualOverridesCount,
   };
 }

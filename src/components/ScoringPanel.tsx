@@ -45,6 +45,7 @@ import type {
   ChatMailing,
   Evaluation,
   MonthlyStatus,
+  ScoreOverride,
 } from "@/lib/types";
 import BandChip from "./BandChip";
 import CopyButton from "./CopyButton";
@@ -53,6 +54,17 @@ import TaskModal from "./TaskModal";
 
 /** A stored mailing status for one category: value + where it came from. */
 type MailingCell = { status: string; source: ChatMailing["source"] };
+
+// The "рассылка выполнена" status the detector emits per рассылка-category.
+// When a message-confirmed рассылка is detected AFTER a row was already saved
+// with a weaker status, we auto-lift the saved cell to this value so QA never
+// has to change «Получил» by hand (Маргарита, п.1). «Долги» is intentionally
+// excluded — that column is driven by the OneBusiness debt feed, not рассылки.
+const MAILING_DONE_STATUS: Record<string, string> = {
+  main_taxes: "Отправил",
+  salary: "Получил",
+  primary_docs: "Получил",
+};
 
 /** Everything carried forward from the most recent check before the chosen date. */
 interface PrevCheck {
@@ -100,6 +112,7 @@ export default function ScoringPanel({
   initialExclusions = [],
   initialInclusions = [],
   detectedMailings = [],
+  initialScoreOverrides = [],
 }: {
   chats: Chat[];
   accountants: Accountant[];
@@ -111,9 +124,14 @@ export default function ScoringPanel({
   initialExclusions?: ActiveExclusion[];
   initialInclusions?: ActiveInclusion[];
   detectedMailings?: ChatMailing[];
+  initialScoreOverrides?: ScoreOverride[];
 }) {
   const router = useRouter();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(initialEvaluations);
+  // Manual per-day score overrides (п.8), newest first; local so a new edit
+  // shows immediately without a full reload.
+  const [scoreOverrides, setScoreOverrides] =
+    useState<ScoreOverride[]>(initialScoreOverrides);
   const [date, setDate] = useState(latestActivityDate ?? today());
   // Default to the day view: Margarita works through one day's chats in time
   // order, bottom-to-top. "All active chats" stays a click away.
@@ -280,6 +298,25 @@ export default function ScoringPanel({
     }
     return m;
   }, [detectedMailings, date, repOf]);
+
+  // Latest manual score override per (chat, selected date) — п.8. Keyed by the
+  // chat's agr_no; the Row shows the «изменено вручную» marker + edit control.
+  const overrideByChatDate = useMemo(() => {
+    const m = new Map<string, ScoreOverride>();
+    for (const o of scoreOverrides) {
+      if (o.score_date.slice(0, 10) !== date) continue;
+      const cur = m.get(o.chat_agr_no);
+      if (!cur || o.created_at > cur.created_at) m.set(o.chat_agr_no, o);
+    }
+    return m;
+  }, [scoreOverrides, date]);
+
+  // Record a just-saved override locally so the marker appears immediately.
+  function onScoreOverrideSaved(o: ScoreOverride) {
+    setScoreOverrides((prev) => [o, ...prev]);
+    // Refresh server components (dashboard/report read the override) in the bg.
+    router.refresh();
+  }
 
   // The most recent check BEFORE the selected date — carried forward so
   // Margarita only changes what actually changed. Keyed by the representative
@@ -1133,6 +1170,8 @@ export default function ScoringPanel({
                 onRemoveManual={() => setChatIncluded(chat.agr_no, false)}
                 duplicateAgrs={mergedAgrs.get(chat.agr_no) ?? []}
                 mailingRows={mailingsByChat.get(chat.agr_no) ?? {}}
+                scoreOverride={overrideByChatDate.get(chat.agr_no) ?? null}
+                onScoreOverrideSaved={onScoreOverrideSaved}
                 hideControl={
                   scope === "day"
                     ? {
@@ -1172,6 +1211,7 @@ export default function ScoringPanel({
           chatAgrNo={violationFor.agr_no}
           client={violationFor.chat_name}
           accountant={violationFor.accountant ?? null}
+          manager={violationFor.manager ?? null}
           chatLink={violationFor.chat_link ?? null}
           defaultDate={date}
           onClose={() => setViolationFor(null)}
@@ -1218,6 +1258,8 @@ function ChatScoreRow({
   hideControl = null,
   addToReviewControl = null,
   mailingRows = {},
+  scoreOverride = null,
+  onScoreOverrideSaved,
 }: {
   chat: Chat;
   accountants: Accountant[];
@@ -1240,6 +1282,8 @@ function ChatScoreRow({
   hideControl?: HideControl;
   addToReviewControl?: AddToReviewControl;
   mailingRows?: Record<string, MailingCell>;
+  scoreOverride?: ScoreOverride | null;
+  onScoreOverrideSaved?: (o: ScoreOverride) => void;
 }) {
   const prevStatuses = prev?.monthly ?? {};
   // Split the stored mailing rows into "value per category" (drives prefill and
@@ -1280,7 +1324,22 @@ function ChatScoreRow({
   });
   const [monthly, setMonthly] = useState<Record<string, MonthlyStatus>>(() => {
     const base = emptyMonthly();
-    if (existing?.scores.monthly) return { ...base, ...existing.scores.monthly };
+    if (existing?.scores.monthly) {
+      const merged = { ...base, ...existing.scores.monthly };
+      // п.1: если факт рассылки подтверждён сообщением (detected «Получил/
+      // Отправил/Нет долга») ПОСЛЕ того, как оценка была сохранена с более
+      // слабым статусом, автоматически поднимаем ячейку — не требуя ручной
+      // правки. Ручные (manual) строки QA не трогаем: это её явное решение.
+      for (const c of MONTHLY_CATEGORIES) {
+        const done = MAILING_DONE_STATUS[c.id];
+        if (!done || manualMailing.has(c.id)) continue;
+        const det = canonicalMonthlyStatus(c, detectedStatuses[c.id] ?? null);
+        if (det === done && merged[c.id]?.status !== done) {
+          merged[c.id] = { status: done, prev: merged[c.id]?.prev ?? PREV_STATUS_DEFAULT };
+        }
+      }
+      return merged;
+    }
     // Auto-fill every status so Margarita only edits exceptions. Order: carried
     // value from the last check → facts (debt feed / client status / deadline
     // date) → the AI model (learned from her labels in Supabase). Every value is
@@ -1325,6 +1384,12 @@ function ChatScoreRow({
   });
   const [comment, setComment] = useState(existing?.comment ?? prev?.comment ?? "");
   const [override, setOverride] = useState("");
+  // Manual score override for the SELECTED day (п.8) — open form + fields.
+  const [ovOpen, setOvOpen] = useState(false);
+  const [ovScore, setOvScore] = useState("");
+  const [ovComment, setOvComment] = useState("");
+  const [ovSaving, setOvSaving] = useState(false);
+  const [ovError, setOvError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
@@ -1597,6 +1662,50 @@ function ChatScoreRow({
     }
   }
 
+  // Save a manual score override for the SELECTED day (п.8). Records the old
+  // (currently-saved) score, requires a comment, and keeps full history.
+  async function saveScoreOverride() {
+    const score = Number(ovScore);
+    if (!Number.isFinite(score) || score < 0 || score > 100) {
+      setOvError("Оценка 0..100");
+      return;
+    }
+    if (!ovComment.trim()) {
+      setOvError("Комментарий обязателен");
+      return;
+    }
+    setOvSaving(true);
+    setOvError(null);
+    try {
+      const res = await fetch("/api/score-overrides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_agr_no: chat.agr_no,
+          score_date: date,
+          new_score: score,
+          old_score: scoreOverride?.new_score ?? existing?.total_score ?? null,
+          client_name: chat.chat_name || null,
+          comment: ovComment.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setOvError(d.error || "Не удалось сохранить");
+        return;
+      }
+      const saved: ScoreOverride = await res.json();
+      onScoreOverrideSaved?.(saved);
+      setOvOpen(false);
+      setOvScore("");
+      setOvComment("");
+    } catch {
+      setOvError("Сетевая ошибка");
+    } finally {
+      setOvSaving(false);
+    }
+  }
+
   // Shared cell classes: a thick top border opens each chat group; the AI row
   // has no bottom border so the two lines read as one chat.
   const aiCell = "ai-cell bg-indigo-50/60 text-gray-600 align-middle";
@@ -1656,12 +1765,23 @@ function ChatScoreRow({
                 нет ссылки
               </span>
             )}
-            {chat.status !== "Active" && (
+            {/* п.7: три явных состояния чата. «Неактивный» (источник истины —
+                статус из «Основных данных»); «Статус неизвестен / Needs review»
+                когда статус не определён — НЕ считаем такой чат активным. */}
+            {chat.status === "Inactive" && (
               <span
                 className="inline-block rounded bg-gray-700 text-white font-semibold text-xs px-1.5 py-0.5 whitespace-nowrap"
-                title="Клиент неактивен (по «Основным данным»). Обязательные рассылки по нему не требуются — это НЕ случай «бухгалтер не отправил рассылку»."
+                title="Неактивный чат (по «Основным данным»). Обязательные рассылки по нему не требуются — это НЕ случай «бухгалтер не отправил рассылку»."
               >
-                🚫 Неактивный
+                🚫 Неактивный чат
+              </span>
+            )}
+            {chat.status !== "Active" && chat.status !== "Inactive" && (
+              <span
+                className="inline-block rounded bg-yellow-400 text-yellow-900 font-semibold text-xs px-1.5 py-0.5 whitespace-nowrap"
+                title="Статус чата не определён в «Основных данных» — отправлено в Needs review. Не считается активным и не создаёт нарушения по рассылке."
+              >
+                ❓ Статус неизвестен · Needs review
               </span>
             )}
           </div>
@@ -1763,6 +1883,78 @@ function ChatScoreRow({
               placeholder="— бухгалтер —"
               onChange={setAccountant}
             />
+          </div>
+          {/* Ответственный менеджер по клиенту — из реальных данных чата (п.6). */}
+          <div className="text-[11px] text-gray-500 mt-1">
+            Менеджер:{" "}
+            <span className={chat.manager ? "text-gray-700 font-medium" : "text-gray-400"}>
+              {chat.manager || "не указан"}
+            </span>
+          </div>
+          {/* Ручная оценка за выбранный день (п.8): маркер + форма правки. */}
+          <div className="mt-1">
+            {scoreOverride && (
+              <div
+                className="text-[11px] rounded bg-amber-100 text-amber-800 px-1.5 py-0.5"
+                title={`Изменил: ${scoreOverride.changed_by ?? "—"} · ${scoreOverride.created_at.slice(0, 10)}`}
+              >
+                ✎ оценка изменена вручную:{" "}
+                <b className="tabular-nums">{scoreOverride.new_score}</b>
+                {scoreOverride.old_score != null ? ` (было ${scoreOverride.old_score})` : ""}
+                {scoreOverride.comment ? ` — «${scoreOverride.comment}»` : ""}
+              </div>
+            )}
+            {!ovOpen ? (
+              <button
+                className="text-[11px] text-blue-600 hover:underline mt-0.5"
+                onClick={() => {
+                  setOvScore(String(scoreOverride?.new_score ?? existing?.total_score ?? ""));
+                  setOvOpen(true);
+                }}
+                title="Изменить оценку этого чата за выбранный день (с сохранением истории)"
+              >
+                {scoreOverride ? "изменить оценку ещё раз" : "изменить оценку за день"}
+              </button>
+            ) : (
+              <div className="mt-1 space-y-1 rounded border border-amber-200 bg-amber-50 p-1.5">
+                <div className="flex items-center gap-1">
+                  <input
+                    className="input w-16 text-xs tabular-nums"
+                    inputMode="numeric"
+                    placeholder="0-100"
+                    value={ovScore}
+                    onChange={(e) => setOvScore(e.target.value)}
+                  />
+                  <span className="text-[11px] text-gray-500">оценка за {date}</span>
+                </div>
+                <input
+                  className="input w-full text-xs"
+                  placeholder="комментарий (обязательно)"
+                  value={ovComment}
+                  onChange={(e) => setOvComment(e.target.value)}
+                />
+                {ovError && <div className="text-[11px] text-red-600">{ovError}</div>}
+                <div className="flex gap-1">
+                  <button
+                    className="btn-primary text-[11px] px-2 py-0.5"
+                    onClick={saveScoreOverride}
+                    disabled={ovSaving}
+                  >
+                    {ovSaving ? "…" : "Сохранить"}
+                  </button>
+                  <button
+                    className="btn-secondary text-[11px] px-2 py-0.5"
+                    onClick={() => {
+                      setOvOpen(false);
+                      setOvError(null);
+                    }}
+                    disabled={ovSaving}
+                  >
+                    Отмена
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           {prefilledFromPrev && !savedId && (
             <div
@@ -2259,6 +2451,8 @@ function ChatGroup({
   hideControl = null,
   addToReviewControl = null,
   mailingRows = {},
+  scoreOverride = null,
+  onScoreOverrideSaved,
 }: {
   chat: Chat;
   accountants: Accountant[];
@@ -2285,6 +2479,8 @@ function ChatGroup({
   hideControl?: HideControl;
   addToReviewControl?: AddToReviewControl;
   mailingRows?: Record<string, MailingCell>;
+  scoreOverride?: ScoreOverride | null;
+  onScoreOverrideSaved?: (o: ScoreOverride) => void;
 }) {
   const [showManager, setShowManager] = useState(Boolean(managerEval));
   const [showLawyer, setShowLawyer] = useState(Boolean(lawyerEval));
@@ -2314,6 +2510,8 @@ function ChatGroup({
         hideControl={hideControl}
         addToReviewControl={addToReviewControl}
         mailingRows={mailingRows}
+        scoreOverride={scoreOverride}
+        onScoreOverrideSaved={onScoreOverrideSaved}
       />
       {showManager && (
         <RoleQaRow

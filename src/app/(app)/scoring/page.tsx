@@ -7,6 +7,7 @@ import {
   listChatMailings,
   listChats,
   listEvaluations,
+  listScoreOverrides,
   listTasks,
 } from "@/lib/repo";
 import { trainAiModel } from "@/lib/ai";
@@ -53,6 +54,7 @@ export default async function ScoringPage() {
     chatActivity,
     detectedMailingsCurrent,
     detectedMailingsPrev,
+    scoreOverrides,
   ] = await Promise.all([
     listChats(),
     listAccountants(),
@@ -63,6 +65,7 @@ export default async function ScoringPage() {
     listChatActivity(activityFrom),
     listChatMailings(currentPeriod),
     listChatMailings(previousPeriod),
+    listScoreOverrides(),
   ]);
 
   const detectedMailings = [...detectedMailingsCurrent, ...detectedMailingsPrev];
@@ -111,6 +114,7 @@ export default async function ScoringPage() {
         initialInclusions={inclusions}
         chatActivity={chatActivity}
         detectedMailings={detectedMailings}
+        initialScoreOverrides={scoreOverrides}
         taskActivity={tasks.map((t) => ({
           chat_agr_no: t.chat_agr_no,
           date: (t.checking_date ?? t.due_date_original ?? "").slice(0, 10),

@@ -15,6 +15,13 @@ function fmtDay(iso: string): string {
   return d && m ? `${d}.${m}` : iso;
 }
 
+/** DD.MM.YYYY, or «не указано» when the date is empty (п.5). */
+function fmtDateOrUnset(iso: string | null | undefined): string {
+  if (!iso) return "не указано";
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return d && m && y ? `${d}.${m}.${y}` : iso;
+}
+
 interface TrendInfo {
   delta: number;
   arrow: "up" | "down" | "flat";
@@ -250,6 +257,55 @@ export default function ReportView({
           </table>
         </div>
       </div>
+
+      {/* Задачи — детали: по каждой задаче показываем даты и менеджера (п.5/п.6). */}
+      {(report.tasks.items ?? []).length > 0 && (
+        <div className="card overflow-x-auto">
+          <div className="px-4 py-3 border-b border-gray-100">
+            <div className="text-sm font-semibold text-gray-700">Задачи — детали</div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              Due Date (Original / Postponed) и Completed At по каждой задаче
+            </div>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                <th className="px-3 py-2 text-left font-medium">Чат</th>
+                <th className="px-3 py-2 text-left font-medium">Бухгалтер</th>
+                <th className="px-3 py-2 text-left font-medium">Менеджер</th>
+                <th className="px-3 py-2 text-left font-medium">Статус</th>
+                <th className="px-3 py-2 text-left font-medium">Due Date (Original)</th>
+                <th className="px-3 py-2 text-left font-medium">Due Date (Postponed)</th>
+                <th className="px-3 py-2 text-left font-medium">Completed At</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {(report.tasks.items ?? []).map((t) => (
+                <tr key={t.id} className="hover:bg-gray-50/50">
+                  <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">{t.chat_agr_no}</td>
+                  <td className="px-3 py-2 text-gray-700">{t.accountant || "—"}</td>
+                  <td className="px-3 py-2 text-gray-700">{t.manager || "не указан"}</td>
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{t.task_status || "—"}</td>
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{fmtDateOrUnset(t.due_date_original)}</td>
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{fmtDateOrUnset(t.due_date_postponed)}</td>
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{fmtDateOrUnset(t.completed_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Ручные правки оценок (п.8) — индикатор, что часть оценок изменена вручную. */}
+      {(report.manualOverridesCount ?? 0) > 0 && (
+        <div className="card p-3 border-amber-200 bg-amber-50">
+          <div className="text-sm text-amber-800">
+            ✎ Оценка изменена вручную по {report.manualOverridesCount}{" "}
+            {report.manualOverridesCount === 1 ? "чату" : "чатам"} за период — приоритет
+            над автоматической оценкой (см. критичные чаты / PDF).
+          </div>
+        </div>
+      )}
 
       {/* Managers / Lawyers — shown only when there's data */}
       {[

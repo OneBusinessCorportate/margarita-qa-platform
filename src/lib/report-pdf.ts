@@ -79,6 +79,11 @@ function fmtDayFull(iso: string): string {
   return d && m ? `${d}.${m}.${y}` : iso;
 }
 
+/** Date as DD.MM.YYYY, or «не указано» when empty (п.5). */
+function fmtDateOrUnset(iso: string | null | undefined): string {
+  return iso ? fmtDayFull(iso) : "не указано";
+}
+
 function rangeDates(from: string, to: string): string[] {
   const result: string[] = [];
   const end = new Date(to + "T00:00:00Z");
@@ -384,12 +389,16 @@ export function buildReportPdf(
       }
     };
 
-    // Критичные чаты.
+    // Критичные чаты — with the responsible manager and a manual-override note.
     const critRows = report.criticalChats.map((c) => {
       const name = c.chat_name ? ` — ${c.chat_name}` : "";
       const who = c.accountant ?? "—";
+      const mgr = ` · Менеджер: ${c.manager || "не указан"}`;
       const why = c.reasons.length ? ` · ${c.reasons.join("; ")}` : "";
-      return `• ${c.chat_agr_no}${name} · ${who} · ${c.score}%${why}`;
+      const manual = c.manualOverride
+        ? ` · ✎ оценка изменена вручную (${c.manualOverride.old_score ?? "—"}→${c.manualOverride.new_score}): «${c.manualOverride.comment}»`
+        : "";
+      return `• ${c.chat_agr_no}${name} · ${who}${mgr} · ${c.score}%${why}${manual}`;
     });
     section(
       `Критичные чаты за период (${report.criticalChats.length})`,
@@ -439,6 +448,26 @@ export function buildReportPdf(
       `Без ответа сейчас (${report.unansweredChats.length})`,
       unansRows,
       "Все чаты отвечены ✅"
+    );
+
+    // Задачи — per-task detail with the date fields the grid counts hid (п.5):
+    // Due Date (Original), Due Date (Postponed), Completed At + менеджер (п.6).
+    const taskRows = (report.tasks.items ?? []).map((t) => {
+      const who = t.accountant ?? "—";
+      const mgr = `Менеджер: ${t.manager || "не указан"}`;
+      const desc = t.description ? ` · ${t.description}` : "";
+      const status = t.task_status ? ` · ${t.task_status}` : "";
+      return (
+        `• ${t.chat_agr_no} · ${who} · ${mgr}${status}${desc}\n` +
+        `    Due Date (Original): ${fmtDateOrUnset(t.due_date_original)}` +
+        ` · Due Date (Postponed): ${fmtDateOrUnset(t.due_date_postponed)}` +
+        ` · Completed At: ${fmtDateOrUnset(t.completed_at)}`
+      );
+    });
+    section(
+      `Задачи за период (${report.tasks.total} · в срок ${report.tasks.onTime} · опозд. ${report.tasks.late} · просроч. ${report.tasks.overdue})`,
+      taskRows,
+      "Задач за период нет"
     );
 
     doc.end();

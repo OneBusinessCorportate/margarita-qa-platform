@@ -21,6 +21,7 @@ export default function ViolationModal({
   chatAgrNo,
   client,
   accountant,
+  manager = null,
   chatLink = null,
   defaultDate,
   onClose,
@@ -29,6 +30,8 @@ export default function ViolationModal({
   chatAgrNo: string | null;
   client: string | null;
   accountant: string | null;
+  /** Ответственный менеджер по клиенту (из mqa_chats.manager); п.6. */
+  manager?: string | null;
   chatLink?: string | null;
   defaultDate?: string;
   onClose: () => void;
@@ -133,6 +136,11 @@ export default function ViolationModal({
               Открыть в Telegram ↗
             </a>
           )}
+        </div>
+
+        {/* Менеджер по клиенту — только чтение, из реальных данных чата (п.6). */}
+        <div className="text-xs text-gray-500">
+          Менеджер: <span className="text-gray-700">{manager || "не указан"}</span>
         </div>
 
         {done ? (

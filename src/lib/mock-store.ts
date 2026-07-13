@@ -7,6 +7,7 @@ import type {
   Chat,
   Evaluation,
   ManagerEvaluation,
+  ScoreOverride,
   Task,
   Violation,
 } from "./types";
@@ -34,6 +35,7 @@ interface Store {
   activeExclusions: ActiveExclusion[];
   activeInclusions: ActiveInclusion[];
   reportSnapshots: ReportSnapshot[];
+  scoreOverrides: ScoreOverride[];
 }
 
 // Use a global to survive module reloads in Next dev (HMR).
@@ -52,6 +54,7 @@ export function store(): Store {
       activeExclusions: [],
       activeInclusions: [],
       reportSnapshots: [],
+      scoreOverrides: [],
     };
   }
   return g.__qaStore;

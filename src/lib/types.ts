@@ -242,6 +242,36 @@ export interface ActiveInclusion {
 }
 
 /**
+ * A manual chat-score override for a single day (Маргарита, п.8). Append-only:
+ * each edit is a new row and the LATEST row per (chat_agr_no, score_date) is the
+ * effective manual score. Older rows form the audit history (кто/когда/старая/
+ * новая/комментарий). A manual override takes priority over the auto-computed
+ * evaluation total for that (chat, day) in the dashboard, reports and PDF.
+ */
+export interface ScoreOverride {
+  id: string;
+  chat_agr_no: string;
+  client_name: string | null;
+  score_date: string; // ISO date
+  old_score: number | null;
+  new_score: number; // 0..100
+  changed_by: string | null;
+  comment: string;
+  created_at: string;
+}
+
+export interface NewScoreOverrideInput {
+  chat_agr_no: string;
+  score_date: string;
+  new_score: number;
+  /** Required justification for the manual edit. */
+  comment: string;
+  old_score?: number | null;
+  client_name?: string | null;
+  changed_by?: string | null;
+}
+
+/**
  * One detected or manually-confirmed mailing event per (chat, period, category).
  * Auto-detected rows (source='telegram') are overwritten on each scan;
  * manual rows (source='manual') are locked and never overwritten.

@@ -37,8 +37,10 @@ import type {
   ManagerEvaluation,
   NewEvaluationInput,
   NewManagerEvaluationInput,
+  NewScoreOverrideInput,
   NewTaskInput,
   NewViolationInput,
+  ScoreOverride,
   Task,
   TaskPatch,
   Violation,
@@ -924,20 +926,88 @@ export async function importCriticalChatsAsViolations(
   return { created, skipped };
 }
 
+// --- Manual score overrides (п.8) ------------------------------------------
+
+/**
+ * All manual score overrides, newest first. Append-only history: the latest row
+ * per (chat_agr_no, score_date) is the effective override; older rows are the
+ * audit trail (кто изменил, когда, старая → новая оценка, комментарий).
+ */
+export async function listScoreOverrides(chat?: string): Promise<ScoreOverride[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    let q = sb
+      .from(TABLES.chatScoreOverrides)
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (chat) q = q.eq("chat_agr_no", chat);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return (data ?? []).map((r: any) => ({
+      ...r,
+      old_score: r.old_score == null ? null : Number(r.old_score),
+      new_score: Number(r.new_score),
+    })) as ScoreOverride[];
+  }
+  const rows = store().scoreOverrides.filter((o) => !chat || o.chat_agr_no === chat);
+  return [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+export async function createScoreOverride(
+  input: NewScoreOverrideInput
+): Promise<ScoreOverride> {
+  const row: ScoreOverride = {
+    id: randomUUID(),
+    chat_agr_no: input.chat_agr_no,
+    client_name: input.client_name ?? null,
+    score_date: input.score_date.slice(0, 10),
+    old_score: input.old_score ?? null,
+    new_score: input.new_score,
+    changed_by: input.changed_by ?? null,
+    comment: input.comment,
+    created_at: new Date().toISOString(),
+  };
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.chatScoreOverrides)
+      .insert({
+        chat_agr_no: row.chat_agr_no,
+        client_name: row.client_name,
+        score_date: row.score_date,
+        old_score: row.old_score,
+        new_score: row.new_score,
+        changed_by: row.changed_by,
+        comment: row.comment,
+      })
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return {
+      ...data,
+      old_score: data.old_score == null ? null : Number(data.old_score),
+      new_score: Number(data.new_score),
+    } as ScoreOverride;
+  }
+  store().scoreOverrides.push(row);
+  return row;
+}
+
 // --- Report ----------------------------------------------------------------
 
 export async function getReport(filters: ReportFilters): Promise<DailyReport> {
-  const [chats, evaluations, tasks] = await Promise.all([
+  const [chats, evaluations, tasks, overrides] = await Promise.all([
     listChats(),
     listEvaluations(filters), // server-side date/accountant/client filter
     listTasks(),
+    listScoreOverrides(),
   ]);
   // Judge liveness as of the end of the reported range (or today for an open range).
   const asOf = filters.to ?? new Date().toISOString().slice(0, 10);
   // The accounting report only counts accountant-role evaluations — manager and
   // lawyer per-chat scores live in the same table but are reported separately.
   const accountantEvals = evaluations.filter((e) => e.role === "accountant");
-  const report = buildReport(chats, accountantEvals, filters, tasks, asOf);
+  const report = buildReport(chats, accountantEvals, filters, tasks, asOf, overrides);
   // Item 3: surface manager / lawyer chat-quality scores so those roles land in
   // QA instead of disappearing. They're already window-filtered by listEvaluations.
   report.managerScores = perPersonScores(evaluations.filter((e) => e.role === "manager"));
@@ -965,12 +1035,13 @@ export async function getDailyAnalytics(
   filters: ReportFilters = {}
 ): Promise<DailyAnalytics> {
   const today = new Date().toISOString().slice(0, 10);
-  const [chats, evaluations, tasks] = await Promise.all([
+  const [chats, evaluations, tasks, overrides] = await Promise.all([
     listChats(),
     // Pull the accountant/client slice across ALL dates so we can both resolve
     // the default window and aggregate the comparison period from one fetch.
     listEvaluations({ accountant: filters.accountant, client: filters.client }),
     listTasks(),
+    listScoreOverrides(),
   ]);
   const accountantEvals = evaluations.filter((e) => e.role === "accountant");
   const evalDates = [
@@ -990,7 +1061,7 @@ export async function getDailyAnalytics(
   }
 
   const curFilters: ReportFilters = { ...filters, from, to };
-  const report = buildReport(chats, accountantEvals, curFilters, tasks, to ?? today);
+  const report = buildReport(chats, accountantEvals, curFilters, tasks, to ?? today, overrides);
 
   const pw = precedingWindow(from!, to!, evalDates);
   let previous: DailyReport | null = null;
@@ -1000,11 +1071,26 @@ export async function getDailyAnalytics(
       accountantEvals,
       { ...filters, from: pw.from, to: pw.to },
       tasks,
-      pw.to
+      pw.to,
+      overrides
     );
     // Only a baseline if it actually has evaluations to compare against.
     if (prevReport.totals.evaluatedChats > 0) previous = prevReport;
   }
+
+  // Item 3 / п.6: surface manager & lawyer per-chat scores on the dashboard too
+  // (getReport does this; the live dashboard path did not). Window-scope them to
+  // the resolved [from, to] so they match the accountant grid.
+  const inWindow = (e: Evaluation): boolean => {
+    const d = e.checking_date.slice(0, 10);
+    return (!from || d >= from) && (!to || d <= to);
+  };
+  report.managerScores = perPersonScores(
+    evaluations.filter((e) => e.role === "manager" && inWindow(e))
+  );
+  report.lawyerScores = perPersonScores(
+    evaluations.filter((e) => e.role === "lawyer" && inWindow(e))
+  );
 
   return { report, previous, resolved: { from: from!, to: to! } };
 }
