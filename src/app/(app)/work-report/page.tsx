@@ -17,11 +17,14 @@ export default async function WorkReportPage({
     listAccountants(),
   ]);
 
+  const drams = (n: number) => `${n.toLocaleString("ru-RU")} др.`;
   const stats = [
     { label: "Чатов проверено", value: report.chatsChecked },
     { label: "Оценок", value: report.evaluations },
-    { label: "Проблем создано", value: report.issuesCreated },
     { label: "Нарушений", value: report.violations },
+    { label: "Предупреждений", value: report.warnings },
+    { label: "Штрафов", value: report.penalties },
+    { label: "Сумма штрафов", value: drams(report.fineTotal) },
     { label: "Апелляций", value: report.appeals.total },
     { label: "Ожидают решения", value: report.appeals.pending, alert: report.appeals.pending > 0 },
     { label: "Апелляций одобрено", value: report.appeals.approved },
@@ -87,8 +90,10 @@ export default async function WorkReportPage({
                 <tr>
                   <th>Бухгалтер</th>
                   <th>Чатов проверено</th>
-                  <th>Проблем</th>
                   <th>Нарушений</th>
+                  <th>Предупр.</th>
+                  <th>Штрафов</th>
+                  <th>Сумма</th>
                   <th>Апелляций</th>
                   <th>Одобрено</th>
                   <th>Отклонено</th>
@@ -100,8 +105,10 @@ export default async function WorkReportPage({
                   <tr key={r.name}>
                     <td className="font-medium">{r.name}</td>
                     <td>{r.chatsChecked}</td>
-                    <td>{r.issues}</td>
                     <td>{r.violations}</td>
+                    <td>{r.warnings}</td>
+                    <td>{r.penalties}</td>
+                    <td className="tabular-nums">{drams(r.fineTotal)}</td>
                     <td>{r.appeals}</td>
                     <td>{r.approved}</td>
                     <td>{r.rejected}</td>
@@ -125,7 +132,9 @@ export default async function WorkReportPage({
                 <tr>
                   <th>Дата</th>
                   <th>Чатов проверено</th>
-                  <th>Проблем создано</th>
+                  <th>Нарушений</th>
+                  <th>Предупр.</th>
+                  <th>Штрафов</th>
                   <th>Апелляций</th>
                 </tr>
               </thead>
@@ -134,7 +143,9 @@ export default async function WorkReportPage({
                   <tr key={d.date}>
                     <td>{d.date}</td>
                     <td>{d.chatsChecked}</td>
-                    <td>{d.issues}</td>
+                    <td>{d.violations}</td>
+                    <td>{d.warnings}</td>
+                    <td>{d.penalties}</td>
                     <td>{d.appeals}</td>
                   </tr>
                 ))}

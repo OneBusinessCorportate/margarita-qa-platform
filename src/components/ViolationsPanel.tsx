@@ -11,6 +11,13 @@ const TG_WINDOW = "telegram_chat";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+const APPEAL_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "— нет апелляции —" },
+  { value: "appealed", label: "Апелляция подана" },
+  { value: "approved", label: "Апелляция одобрена" },
+  { value: "rejected", label: "Апелляция отклонена" },
+];
+
 interface Draft {
   vdate: string;
   accountant: string;
@@ -20,6 +27,7 @@ interface Draft {
   violation_type: string;
   sanction: string;
   note: string;
+  appeal_status: string;
 }
 
 function blankDraft(): Draft {
@@ -28,12 +36,13 @@ function blankDraft(): Draft {
     accountant: "",
     chat_agr_no: "",
     client: "",
-    // Стандартный сервис по умолчанию (недельная эскалация «Условия»:
-    // предупреждение → 1 000 др). «Критичное»/«Грубое» — вручную.
+    // Стандартный сервис по умолчанию. Штраф по дневному правилу: 1-е за день —
+    // предупреждение (0 др), повторное — 1 000 др; ручная санкция перебивает.
     severity: "Среднее",
     violation_type: "",
     sanction: "",
     note: "",
+    appeal_status: "",
   };
 }
 
@@ -47,6 +56,7 @@ function violationToDraft(v: Violation): Draft {
     violation_type: v.violation_type ?? "",
     sanction: v.sanction != null ? String(v.sanction) : "",
     note: v.note ?? "",
+    appeal_status: v.appeal_status ?? "",
   };
 }
 
@@ -170,6 +180,7 @@ export default function ViolationsPanel({
           violation_type: draft.violation_type || null,
           sanction: draft.sanction || null,
           note: draft.note || null,
+          appeal_status: draft.appeal_status || null,
         }),
       });
       if (!res.ok) {
@@ -220,6 +231,7 @@ export default function ViolationsPanel({
           violation_type: editDraft.violation_type || null,
           sanction: editDraft.sanction === "" ? null : Number(editDraft.sanction),
           note: editDraft.note || null,
+          appeal_status: editDraft.appeal_status || null,
         }),
       });
       if (!res.ok) {
@@ -384,7 +396,7 @@ export default function ViolationsPanel({
                         onChange={(e) => setEditDraft({ ...editDraft, client: e.target.value })}
                       />
                     </td>
-                    <td>
+                    <td className="space-y-1">
                       <select
                         className="input"
                         value={editDraft.severity}
@@ -392,6 +404,16 @@ export default function ViolationsPanel({
                       >
                         {VIOLATION_SEVERITIES.map((s) => (
                           <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                      <select
+                        className="input w-full text-xs"
+                        value={editDraft.appeal_status}
+                        onChange={(e) => setEditDraft({ ...editDraft, appeal_status: e.target.value })}
+                        title="Статус апелляции по нарушению"
+                      >
+                        {APPEAL_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
                         ))}
                       </select>
                     </td>
@@ -475,6 +497,22 @@ export default function ViolationsPanel({
                     >
                       {v.severity ?? "—"}
                     </span>
+                    <div className="mt-0.5 space-x-1">
+                      {v.confirmed === false && (
+                        <span className="inline-block rounded bg-gray-200 text-gray-600 text-[11px] px-1 py-0.5" title="Авто-импорт — не подтверждено Маргаритой">
+                          не подтв.
+                        </span>
+                      )}
+                      {v.appeal_status === "appealed" && (
+                        <span className="inline-block rounded bg-blue-100 text-blue-700 text-[11px] px-1 py-0.5">апелляция</span>
+                      )}
+                      {v.appeal_status === "approved" && (
+                        <span className="inline-block rounded bg-green-100 text-green-700 text-[11px] px-1 py-0.5">апел. одобрена</span>
+                      )}
+                      {v.appeal_status === "rejected" && (
+                        <span className="inline-block rounded bg-gray-100 text-gray-600 text-[11px] px-1 py-0.5">апел. отклонена</span>
+                      )}
+                    </div>
                   </td>
                   <td className="text-xs">{v.violation_type ?? "—"}</td>
                   <td className="tabular-nums">{v.sanction != null ? `${v.sanction} ֏` : "—"}</td>

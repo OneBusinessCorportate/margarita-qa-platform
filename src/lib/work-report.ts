@@ -8,6 +8,7 @@
 // unmatched spellings appear as their own row rather than guess a merge.
 
 import { normalizeName } from "./valid-employees";
+import { groupNarusheniya } from "./violations";
 
 export interface AppealLike {
   accountant_name?: string | null;
@@ -25,6 +26,12 @@ export interface EvaluationLike {
 export interface ViolationLike {
   accountant?: string | null;
   vdate: string;
+  severity?: string | null;
+  sanction?: number | null;
+  gross?: string | null;
+  chat_agr_no?: string | null;
+  client?: string | null;
+  violation_type?: string | null;
 }
 
 export interface IssueLike {
@@ -43,7 +50,10 @@ export interface WorkReportRow {
   name: string;
   chatsChecked: number;
   issues: number;
-  violations: number;
+  violations: number; // нарушений (чатов), одинаково с дашбордом
+  warnings: number; // предупреждений (0 др)
+  penalties: number; // штрафов (> 0 др)
+  fineTotal: number; // сумма штрафов, др
   appeals: number;
   approved: number;
   rejected: number;
@@ -54,6 +64,9 @@ export interface WorkReportDay {
   date: string;
   chatsChecked: number;
   issues: number;
+  violations: number;
+  warnings: number;
+  penalties: number;
   appeals: number;
 }
 
@@ -61,7 +74,10 @@ export interface WorkReport {
   chatsChecked: number;
   evaluations: number;
   issuesCreated: number;
-  violations: number;
+  violations: number; // всего нарушений (чатов)
+  warnings: number; // всего предупреждений
+  penalties: number; // всего штрафов
+  fineTotal: number; // сумма штрафов, др
   appeals: AppealSummary;
   byAccountant: WorkReportRow[];
   byDate: WorkReportDay[];
@@ -107,6 +123,9 @@ export function buildWorkReport({
         chatsChecked: 0,
         issues: 0,
         violations: 0,
+        warnings: 0,
+        penalties: 0,
+        fineTotal: 0,
         appeals: 0,
         approved: 0,
         rejected: 0,
@@ -121,7 +140,36 @@ export function buildWorkReport({
     const r = rowFor(e.accountant);
     if (e.chat_agr_no) r._chats.add(e.chat_agr_no);
   }
-  for (const v of violations) rowFor(v.accountant).violations += 1;
+  // Нарушения → предупреждение/штраф по ЕДИНОМУ движку (violations.ts), как на
+  // дашборде: 1-е за день — предупреждение (0 др), повторное — 1 000 др, ручная
+  // санкция перебивает. Так counts здесь и на дашборде всегда совпадают.
+  const narusheniya = groupNarusheniya(
+    violations.map((v) => ({
+      vdate: (v.vdate || "").slice(0, 10),
+      accountant: v.accountant ?? "",
+      severity: v.gross ? "Грубое" : v.severity ?? null,
+      sanction: v.sanction ?? null,
+      chat_agr_no: v.chat_agr_no ?? null,
+      client: v.client ?? null,
+      violation_type: v.gross || v.violation_type || null,
+    }))
+  );
+  let totWarnings = 0;
+  let totPenalties = 0;
+  let totFine = 0;
+  for (const n of narusheniya) {
+    const r = rowFor(n.accountant);
+    r.violations += 1;
+    r.fineTotal += n.fine;
+    if (n.kind === "penalty") {
+      r.penalties += 1;
+      totPenalties += 1;
+    } else {
+      r.warnings += 1;
+      totWarnings += 1;
+    }
+    totFine += n.fine;
+  }
   for (const i of issues) rowFor(i.accountant_name).issues += 1;
   for (const a of appeals) {
     const r = rowFor(a.accountant_name);
@@ -143,12 +191,29 @@ export function buildWorkReport({
   const days = new Map<string, WorkReportDay & { _chats: Set<string> }>();
   const dayFor = (d: string) => {
     if (!days.has(d))
-      days.set(d, { date: d, chatsChecked: 0, issues: 0, appeals: 0, _chats: new Set() });
+      days.set(d, {
+        date: d,
+        chatsChecked: 0,
+        issues: 0,
+        violations: 0,
+        warnings: 0,
+        penalties: 0,
+        appeals: 0,
+        _chats: new Set(),
+      });
     return days.get(d)!;
   };
   for (const e of evaluations) {
     const d = day(e.checking_date);
     if (d && e.chat_agr_no) dayFor(d)._chats.add(e.chat_agr_no);
+  }
+  for (const n of narusheniya) {
+    const d = day(n.vdate);
+    if (!d) continue;
+    const dd = dayFor(d);
+    dd.violations += 1;
+    if (n.kind === "penalty") dd.penalties += 1;
+    else dd.warnings += 1;
   }
   for (const i of issues) {
     const d = day(i.detected_at);
@@ -166,7 +231,10 @@ export function buildWorkReport({
     chatsChecked: chatSet.size,
     evaluations: evaluations.length,
     issuesCreated: issues.length,
-    violations: violations.length,
+    violations: narusheniya.length, // нарушений (чатов), совпадает с дашбордом
+    warnings: totWarnings,
+    penalties: totPenalties,
+    fineTotal: totFine,
     appeals: summarizeAppeals(appeals),
     byAccountant,
     byDate,
