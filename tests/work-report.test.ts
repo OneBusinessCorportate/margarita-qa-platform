@@ -47,18 +47,33 @@ test("byDate buckets by calendar day, newest first", () => {
   assert.equal(jul1.issues, 1);
 });
 
-test("byAccountant aggregates volume and appeal outcomes", () => {
+test("byAccountant aggregates volume; unknown full name stays its own row", () => {
   const r = buildWorkReport({ evaluations, violations, issues, appeals });
-  const olyaEval = r.byAccountant.find((x) => x.name === "Olya");
-  assert.ok(olyaEval, "evaluation row for Olya exists");
-  assert.equal(olyaEval!.chatsChecked, 2); // B-1, B-2
+  // "Olya" resolves to a valid employee → its canonical row carries the volume.
+  const olyaEval = r.byAccountant.find((x) => x.chatsChecked === 2);
+  assert.ok(olyaEval, "canonical Olya row exists");
   assert.equal(olyaEval!.violations, 1);
 
-  // kk full name doesn't normalize-match the short name → own row
+  // "Olya Accounting" is NOT a known alias → stays its own row (issues+appeals).
   const olyaAppeals = r.byAccountant.find((x) => x.name === "Olya Accounting");
-  assert.ok(olyaAppeals, "appeal row for Olya Accounting exists");
+  assert.ok(olyaAppeals, "unmatched full-name row exists");
   assert.equal(olyaAppeals!.appeals, 2);
   assert.equal(olyaAppeals!.approved, 1);
   assert.equal(olyaAppeals!.pending, 1);
   assert.equal(olyaAppeals!.issues, 2);
+});
+
+test("real Latin full name merges into the canonical accountant row", () => {
+  // Evaluations use the short Armenian/short name; issues/appeals use the Latin
+  // full name. They are the SAME person and must collapse to ONE row.
+  const r = buildWorkReport({
+    evaluations: [{ chat_agr_no: "B-1", accountant: "Olya", checking_date: "2026-07-01" }],
+    issues: [{ accountant_name: "Olya Hakobyan", detected_at: "2026-07-01T10:00:00Z" }],
+    violations: [],
+    appeals: [],
+  });
+  const rows = r.byAccountant.filter((x) => x.chatsChecked > 0 || x.issues > 0);
+  assert.equal(rows.length, 1, "Olya + Olya Hakobyan merged into one row");
+  assert.equal(rows[0].chatsChecked, 1);
+  assert.equal(rows[0].issues, 1);
 });

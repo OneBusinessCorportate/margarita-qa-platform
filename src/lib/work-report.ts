@@ -7,7 +7,7 @@
 // full names. We key the per-accountant breakdown by a normalized name and let
 // unmatched spellings appear as their own row rather than guess a merge.
 
-import { normalizeName } from "./valid-employees";
+import { normalizeName, findEmployee } from "./valid-employees";
 import { groupNarusheniya } from "./violations";
 
 export interface AppealLike {
@@ -116,10 +116,15 @@ export function buildWorkReport({
     WorkReportRow & { _chats: Set<string> }
   >();
   const rowFor = (name: string | null | undefined) => {
-    const key = normalizeName(name) || "—";
+    // Merge aliases (short Armenian from evaluations/violations vs Latin full
+    // names from issues/appeals) into ONE row per person: key by the canonical
+    // short name when the name resolves to a valid employee, else by the
+    // normalized raw name. Display the canonical full name for valid employees.
+    const emp = findEmployee(name);
+    const key = emp ? emp.short : normalizeName(name) || "—";
     if (!rows.has(key)) {
       rows.set(key, {
-        name: (name || "").trim() || "— Не назначено —",
+        name: emp ? emp.canonical : (name || "").trim() || "— Не назначено —",
         chatsChecked: 0,
         issues: 0,
         violations: 0,
@@ -181,6 +186,11 @@ export function buildWorkReport({
 
   const byAccountant: WorkReportRow[] = [...rows.values()]
     .map(({ _chats, ...r }) => ({ ...r, chatsChecked: _chats.size }))
+    // Drop empty rows (no activity at all) — they were the confusing duplicate
+    // "0 0 0" lines from names that carried nothing after the alias merge.
+    .filter(
+      (r) => r.chatsChecked + r.issues + r.violations + r.appeals > 0
+    )
     .sort(
       (a, b) =>
         b.chatsChecked + b.issues + b.violations + b.appeals -
