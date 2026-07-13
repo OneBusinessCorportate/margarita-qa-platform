@@ -858,6 +858,10 @@ export async function createViolation(
     gross: input.gross ?? null,
     sanction: input.sanction ?? null,
     note: input.note ?? null,
+    // Margarita's manual entries are confirmed by her by default. Auto-imported
+    // rows pass confirmed:false so they never masquerade as confirmed penalties.
+    confirmed: input.confirmed ?? true,
+    appeal_status: input.appeal_status ?? null,
     created_at: new Date().toISOString(),
   };
   const sb = getServiceClient();
@@ -907,8 +911,12 @@ export async function importCriticalChatsAsViolations(
       severity: "Критичное",
       violation_type: c.reasons[0] ?? "Критичный чат",
       // Mark the source so auto-imported rows are obvious in the journal.
-      note: ["авто из оценки", extraReasons].filter(Boolean).join("; "),
+      note: ["авто из оценки — требует подтверждения", extraReasons].filter(Boolean).join("; "),
       sanction: null,
+      // Auto-imported from the (rule/AI-derived) critical band — NOT yet
+      // Margarita-confirmed. Excluded from confirmed penalty counts until she
+      // reviews it. No auto fine (severity is a flag only now).
+      confirmed: false,
     });
     alreadyLogged.add(c.chat_agr_no);
     created += 1;

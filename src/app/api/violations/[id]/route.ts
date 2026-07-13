@@ -28,6 +28,9 @@ export async function PATCH(
     patch.sanction =
       body.sanction === null || body.sanction === "" ? null : Number(body.sanction);
   if (body.note !== undefined) patch.note = body.note || null;
+  if (body.confirmed !== undefined) patch.confirmed = Boolean(body.confirmed);
+  if (body.appeal_status !== undefined)
+    patch.appeal_status = body.appeal_status || null;
 
   const { data, error } = await sb
     .from(TABLES.violations)

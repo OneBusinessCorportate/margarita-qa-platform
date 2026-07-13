@@ -34,26 +34,28 @@ test("mediums of DIFFERENT accountants don't sum", () => {
   assert.deepEqual(fines, [0, 0]);
 });
 
-test("critical violation → 2 000 др each, no daily threshold", () => {
-  assert.deepEqual(computeViolationFines([v({ severity: "Критичное" })]), [2000]);
+test("тяжесть НЕ выставляет авто-сумму: 1 критичное за день = предупреждение (0), НЕ 2 000", () => {
+  // Правило Маргариты: 1-е за день — предупреждение, даже если критичное.
+  assert.deepEqual(computeViolationFines([v({ severity: "Критичное" })]), [0]);
 });
 
-test("gross escalation per year: 1st warning, 2nd 10 000, 3rd+ 30 000", () => {
+test("грубое подчиняется тому же дневному правилу (нет спец-эскалации 10 000/30 000)", () => {
+  // Разные дни → каждое 1-е за свой день → предупреждение.
   const fines = computeViolationFines([
     v({ severity: "Грубое", vdate: "2026-03-01" }),
     v({ severity: "Грубое", vdate: "2026-05-01" }),
     v({ severity: "Грубое", vdate: "2026-07-01" }),
-    v({ severity: "Грубое", vdate: "2026-08-01" }),
   ]);
-  assert.deepEqual(fines, [0, 10000, 30000, 30000]);
+  assert.deepEqual(fines, [0, 0, 0]);
+  // 2 критичных за ОДИН день → 1-е предупреждение (0), 2-е штраф 1 000.
+  assert.deepEqual(
+    computeViolationFines([v({ severity: "Критичное" }), v({ severity: "Критичное" })]),
+    [0, 1000]
+  );
 });
 
-test("grossPrior carries this-year history into the escalation", () => {
-  const fines = computeViolationFines(
-    [v({ severity: "Грубое" })],
-    { grossPrior: { Ա: 1 } }
-  );
-  assert.deepEqual(fines, [10000]); // it's the 2nd gross this year
+test("ручная санкция — подтверждённый штраф Маргариты, перебивает эскалацию", () => {
+  assert.deepEqual(computeViolationFines([v({ severity: "Критичное", sanction: 2000 })]), [2000]);
 });
 
 test("manual sanction always overrides the computed amount", () => {
@@ -90,16 +92,18 @@ test("2 РАЗНЫХ чата за один день → 1-е предупреж
   assert.deepEqual(fines, [0, 1000]);
 });
 
-test("один чат со средним И критичным за один день = одно нарушение, худшая тяжесть → 2 000 один раз", () => {
+test("один чат со средним И критичным за один день = одно нарушение (флаг «Критичное»), 1-е за день → предупреждение", () => {
   const rows = [
     v({ chat_agr_no: "B-1" }),
     v({ chat_agr_no: "B-1", severity: "Критичное" }),
   ];
-  // Не 1 000 + 2 000: чат — одно нарушение, критичное → 2 000, начислено один раз.
-  assert.deepEqual(computeViolationFines(rows), [2000, 0]);
+  // Один чат = одно нарушение; тяжесть — худшая (флаг), сумма по дневному правилу
+  // (это 1-е нарушение за день → предупреждение, 0 др).
+  assert.deepEqual(computeViolationFines(rows), [0, 0]);
   const [n] = groupNarusheniya(rows);
   assert.equal(n.severity, "Критичное");
-  assert.equal(n.fine, 2000);
+  assert.equal(n.fine, 0);
+  assert.equal(n.kind, "warning");
 });
 
 test("groupNarusheniya собирает описания проблем чата в один список", () => {

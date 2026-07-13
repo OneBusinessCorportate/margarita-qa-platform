@@ -41,6 +41,8 @@ export async function POST(req: Request) {
         ? null
         : Number(body.sanction),
     note: body.note ?? null,
+    confirmed: body.confirmed === undefined ? true : Boolean(body.confirmed),
+    appeal_status: body.appeal_status ?? null,
   };
   try {
     const created = await createViolation(input);

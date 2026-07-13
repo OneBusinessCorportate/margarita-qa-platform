@@ -237,8 +237,10 @@ export interface Narushenie {
   severity: string;
   /** Distinct problem descriptions, in first-seen order. */
   types: string[];
-  /** Fine (драм) per «Условия». */
+  /** Fine (драм). 0 = warning; > 0 = penalty. */
   fine: number;
+  /** Предупреждение (0 др) или штраф (> 0). Единая терминология по всему коду. */
+  kind: "warning" | "penalty";
   /** Input rows in this нарушение, representative (earliest) first. */
   rowIndexes: number[];
   /** Priced by a manual sanction rather than the rules. */
@@ -246,24 +248,25 @@ export interface Narushenie {
 }
 
 /**
- * Collapse raw violation rows into нарушения and price each per «Условия»:
- *   • Стандартное (Среднее) — эскалация ПО ДНЯМ: 1-е нарушение за день →
- *     предупреждение (0 др); каждое последующее за ТОТ ЖЕ день (на бухгалтера)
- *     → 1 000 др
- *   • Критичное — 2 000 др за каждый чат
- *   • Грубое    — 1-е за год → предупреждение; 2-е → 10 000; 3-е+ → 30 000
- *     (`grossPrior` = this-year нарушения count BEFORE the window, so the
- *     escalation carries over)
+ * Collapse raw violation rows into нарушения and price each (единое правило
+ * Маргариты, ПО ДНЯМ, для ЛЮБОЙ тяжести):
+ *   • 1-е нарушение бухгалтера за день → предупреждение (0 др), НЕ штраф;
+ *   • каждое последующее за тот же день → штраф 1 000 др.
+ * Тяжесть (Среднее/Критичное/Грубое) — только флаг для отображения, она НЕ
+ * выставляет автоматических сумм. Ручная санкция (> 0) — подтверждённый штраф
+ * Маргариты, перебивает эскалацию.
  * Several problems in the SAME chat (same bookkeeper, same day) are ONE
- * нарушение — worst severity, fined once. A manual sanction (> 0) prices its
- * own row explicitly and is never merged away.
+ * нарушение — worst-severity flag, fined once. A manual sanction (> 0) prices
+ * its own row explicitly and is never merged away.
+ *
+ * `options.grossPrior` больше не используется (историческая эскалация грубых
+ * убрана) — параметр сохранён только для обратной совместимости вызовов.
  */
 export function groupNarusheniya(
   violations: FineViolation[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   options: { grossPrior?: Record<string, number> } = {}
 ): Narushenie[] {
-  const { grossPrior = {} } = options;
-
   interface Acc {
     accountant: string;
     chat_agr_no: string | null;
@@ -317,39 +320,27 @@ export function groupNarusheniya(
 
   const list = order.map((k) => groups.get(k)!);
 
-  // Standard DAILY escalation: the 1st standard нарушение per bookkeeper per DAY
-  // is only a warning (0 др); every subsequent нарушение that SAME day is
-  // 1 000 др. `list` is in first-seen order, so the first one we meet for an
-  // (accountant, day) pair is the warning.
-  const stdSeenPerAccDay = new Map<string, number>();
-  const stdFineOf = new Map<Acc, number>();
+  // DAILY escalation, UNIFORM across all severities (правило Маргариты):
+  //   • 1-е нарушение бухгалтера за ДЕНЬ → предупреждение (0 др), НЕ штраф;
+  //   • каждое следующее за ТОТ ЖЕ день → штраф 1 000 др.
+  // Тяжесть (Среднее/Критичное/Грубое) — только ФЛАГ для отображения; она больше
+  // НЕ выставляет автоматом 2 000 / 10 000 / 30 000. Если Маргарита проставила
+  // ручную санкцию (> 0) — это её подтверждённый штраф, он перебивает эскалацию.
+  // Так критичный чат, отмеченный как «1 предупреждение», больше не превращается
+  // в ложные 2 000 др. `list` — в порядке появления, поэтому первая встреченная
+  // группа за (бухгалтер, день) и есть предупреждение.
+  const seenPerAccDay = new Map<string, number>();
+  const autoFineOf = new Map<Acc, number>();
   for (const g of list) {
-    if (g.manualSanction != null || g.klass !== "standard") continue;
+    if (g.manualSanction != null) continue;
     const k = `${g.accountant}|${g.vdate.slice(0, 10)}`;
-    const seen = stdSeenPerAccDay.get(k) ?? 0;
-    stdFineOf.set(g, seen >= 1 ? MEDIUM_FINE : 0);
-    stdSeenPerAccDay.set(k, seen + 1);
-  }
-
-  // Gross per-year escalation per bookkeeper, counted in date order.
-  const grossSeen: Record<string, number> = {};
-  const grossFineOf = new Map<Acc, number>();
-  const grossGroups = list
-    .map((g, i) => ({ g, i }))
-    .filter(({ g }) => g.manualSanction == null && g.klass === "gross")
-    .sort((a, b) => a.g.vdate.localeCompare(b.g.vdate) || a.i - b.i);
-  for (const { g } of grossGroups) {
-    const nth = (grossPrior[g.accountant] ?? 0) + (grossSeen[g.accountant] ?? 0) + 1;
-    grossSeen[g.accountant] = (grossSeen[g.accountant] ?? 0) + 1;
-    grossFineOf.set(g, GROSS_FINES[Math.min(nth, GROSS_FINES.length) - 1]);
+    const seen = seenPerAccDay.get(k) ?? 0;
+    autoFineOf.set(g, seen >= 1 ? MEDIUM_FINE : 0);
+    seenPerAccDay.set(k, seen + 1);
   }
 
   return list.map((g) => {
-    let fine: number;
-    if (g.manualSanction != null) fine = g.manualSanction;
-    else if (g.klass === "gross") fine = grossFineOf.get(g) ?? 0;
-    else if (g.klass === "critical") fine = CRITICAL_FINE;
-    else fine = stdFineOf.get(g) ?? 0;
+    const fine = g.manualSanction != null ? g.manualSanction : autoFineOf.get(g) ?? 0;
     return {
       accountant: g.accountant,
       chat_agr_no: g.chat_agr_no,
@@ -360,6 +351,7 @@ export function groupNarusheniya(
       severity: CLASS_LABEL[g.klass],
       types: g.types,
       fine,
+      kind: fine > 0 ? "penalty" : "warning",
       rowIndexes: [g.rep, ...g.rowIndexes.filter((x) => x !== g.rep)],
       manual: g.manualSanction != null,
     };

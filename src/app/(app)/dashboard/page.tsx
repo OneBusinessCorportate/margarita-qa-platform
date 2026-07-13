@@ -4,14 +4,17 @@ import {
   getReportSnapshot,
   listAccountants,
   listReportSnapshots,
+  listViolations,
 } from "@/lib/repo";
+import { getWorkReport } from "@/lib/appeals-data";
 import { reportSnapshotLabel } from "@/lib/report";
+import { buildLiveViolationBreakdown } from "@/lib/violation-report";
 import DashboardFilters from "@/components/DashboardFilters";
 import ReportView from "@/components/ReportView";
 import SaveReportButton from "@/components/SaveReportButton";
 import ExportPdfButton from "@/components/ExportPdfButton";
 import AccountantViolationBreakdown from "@/components/AccountantViolationBreakdown";
-import { buildEmployeeAudit } from "@/lib/employee-audit";
+import MargaritaSummary from "@/components/MargaritaSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -56,17 +59,44 @@ export default async function DashboardPage({
   const previousReport = analytics?.previous ?? null;
   const periodLabel = snapshot ? snapshot.label : reportSnapshotLabel(filters);
 
-  // Разбивка нарушений по бухгалтерам (код чата · тип · сумма) — из
-  // исправленного аудита. Если задан фильтр по бухгалтеру — показываем только
-  // его. Это добавочный блок; остальной отчёт не меняется.
-  const audit = buildEmployeeAudit();
-  const perAccountant = filters.accountant
-    ? audit.perAccountant.filter(
-        (g) =>
-          g.employee === filters.accountant ||
-          g.employeeFull === filters.accountant
-      )
-    : audit.perAccountant;
+  // Окно отчёта: явно выбранная дата побеждает; иначе — последний день с данными
+  // (getDailyAnalytics.resolved). Оно же используется для нарушений/сводки, так
+  // что «сегодня» показывает только сегодня, без смешивания прошлых дней.
+  const win = snapshot
+    ? { from: snapshot.filters.from, to: snapshot.filters.to }
+    : analytics!.resolved;
+
+  // Разбивка нарушений по бухгалтерам — ЖИВЫЕ данные (mqa_violations) за окно
+  // отчёта. Только подтверждённые Маргаритой нарушения; правило warning/penalty
+  // — единое (violations.ts). Никаких статических Excel-выгрузок и ИИ.
+  const roster = accountants
+    .filter((a) => a.active && a.role === "accountant")
+    .map((a) => a.name);
+  const liveViolations = snapshot
+    ? []
+    : await listViolations({
+        from: win.from,
+        to: win.to,
+        accountant: filters.accountant,
+      });
+  const breakdown = buildLiveViolationBreakdown(liveViolations, roster);
+  const perAccountant = breakdown.perAccountant;
+
+  // Апелляции за окно (для сводки). Живут во внешних таблицах — если недоступны,
+  // не роняем страницу, показываем нули.
+  let appealSummary = { total: 0, pending: 0, approved: 0, rejected: 0 };
+  if (!snapshot) {
+    try {
+      const wr = await getWorkReport({
+        from: win.from,
+        to: win.to,
+        accountant: filters.accountant,
+      });
+      appealSummary = wr.appeals;
+    } catch {
+      /* внешние таблицы апелляций недоступны — оставляем нули */
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -113,13 +143,23 @@ export default async function DashboardPage({
         <p className="text-sm">Период: {periodLabel}</p>
       </div>
 
+      {/* Сводка Маргариты за период (только её подтверждённые данные). */}
+      <MargaritaSummary
+        data={{
+          periodLabel,
+          chatsChecked: report.totals.evaluatedChats,
+          violations: breakdown.summary,
+          appeals: appealSummary,
+        }}
+      />
+
       <ReportView report={report} previousReport={previousReport} />
 
-      {/* Нарушения по бухгалтерам: код чата · тип · сумма (исправленный аудит). */}
+      {/* Нарушения по бухгалтерам — ЖИВЫЕ данные за выбранный период. */}
       <AccountantViolationBreakdown
         perAccountant={perAccountant}
-        dateFrom={audit.meta.dateFrom}
-        dateTo={audit.meta.dateTo}
+        dateFrom={win.from ?? null}
+        dateTo={win.to ?? null}
       />
 
       {/* История отчётов — saved snapshots, newest first. */}

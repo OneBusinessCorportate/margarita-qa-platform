@@ -225,10 +225,10 @@ test("friday fines: money computed from the Условия rules when sanctions 
     { weekFrom: "2026-06-29", weekTo: "2026-07-03" }
   );
   assert.match(msg, /— Նաիրա: 1 000 др \+ Предупреждение \(2 средних\)/);
-  assert.match(msg, /— Օլյա: 2 000 др \+ Выговор \(1 критичное\)/);
+  assert.match(msg, /— Օլյա: Выговор \(1 критичное\)/);
   // Դավիթ: single medium → warning, no money prefix
   assert.match(msg, /— Դավիթ: Предупреждение \(1 среднее\)/);
-  assert.match(msg, /Итого за неделю: 4 нарушения, штрафы 3 000 драм/);
+  assert.match(msg, /Итого за неделю: 4 нарушения, штрафы 1 000 драм/);
 });
 
 test("friday fines message with a clean week", () => {
@@ -264,15 +264,15 @@ test("monthly fines message: per-person blocks with chat—problem—price and t
   assert.match(msg, /Месяц: 01\.07 — 31\.07/);
   // One block per person: chat code — problem — money, then the person's total.
   assert.match(msg, /— Լիլիթ:\n  ▸ B-4742 — Долгий ответ — предупреждение\n  ▸ B-5110 — Грубый ответ — 1 000 др\n  Итого: 1 000 др/);
-  assert.match(msg, /— Ավագ:\n  ▸ B-1234 — Ошибка в отправленном инвойсе — 2 000 др\n  Итого: 2 000 др/);
+  assert.match(msg, /— Ավագ:\n  ▸ B-1234 — Ошибка в отправленном инвойсе — предупреждение\n  Итого: 0 др/);
   assert.match(msg, /— Դավիթ:\n  ▸ B-9999 — Игнорирование задач — предупреждение\n  Итого: 0 др/);
   // Biggest fine first: Лилит (2 000) before Դավիթ (0).
   const davit = msg.indexOf("— Դավիթ:");
   const lilit = msg.indexOf("— Լիլիթ:");
   assert.ok(lilit >= 0 && davit >= 0 && lilit < davit, "sorted by monthly fine desc");
   // Grand totals + the final fine line.
-  assert.match(msg, /Сумма всех штрафов: 3 000 др/);
-  assert.match(msg, /Финальный штраф: 3 000 др/);
+  assert.match(msg, /Сумма всех штрафов: 1 000 др/);
+  assert.match(msg, /Финальный штраф: 1 000 др/);
   assert.match(msg, /Без нарушений: ✅ Գայանե/);
 });
 
@@ -390,9 +390,9 @@ test("weekly fines breakdown: 2 проблемы в одном чате = ОДН
   );
   assert.match(msg, /^Нарушения за неделю \(06\.07 — 08\.07\):/);
   assert.match(msg, /— Դավիթ:/);
-  assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — 2 000 др/);
-  assert.match(msg, /▸ B-4282 — Нет расс\. по первичной документации — 2 000 др/);
-  assert.match(msg, /Итого: 4 000 др/);
+  assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — предупреждение/);
+  assert.match(msg, /▸ B-4282 — Нет расс\. по первичной документации — 1 000 др/);
+  assert.match(msg, /Итого: 1 000 др/);
 });
 
 test("weekly fines breakdown: пусто, если нарушений нет", () => {
@@ -416,8 +416,8 @@ test("weekly fines breakdown: с ростером показывает ВСЕХ 
   );
   // Один чат с двумя проблемами — ОДНО нарушение (худшая тяжесть — критичное → 2 000).
   assert.match(msg, /— Դավիթ:/);
-  assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — 2 000 др/);
-  assert.match(msg, /Итого: 2 000 др/);
+  assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — предупреждение/);
+  assert.match(msg, /Итого: 0 др/);
   // Остальные сотрудники ростера — строкой «без нарушений».
   assert.match(msg, /— Օլյա: без нарушений/);
   assert.match(msg, /— Ավագ: без нарушений/);

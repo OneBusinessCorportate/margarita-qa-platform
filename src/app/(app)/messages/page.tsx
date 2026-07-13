@@ -17,7 +17,7 @@ import {
   telegramConfigured,
 } from "@/lib/templates";
 import { computeViolationFines } from "@/lib/violations";
-import { auditDailyViolations } from "@/lib/employee-audit";
+import { dailyViolationRows } from "@/lib/violation-report";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
 import PrintComparisonButton from "@/components/PrintComparisonButton";
@@ -153,16 +153,17 @@ export default async function MessagesPage({
       }
     });
 
-  // Нарушения для ежедневного отчёта берём из ИСПРАВЛЕННЫХ данных (лист
-  // «Нарушения», только 14 валидных сотрудников), строго за день отчёта
-  // [resolved.from..resolved.to]. Код чата и сумма (правила «Условия»:
-  // Среднее → 1 000, Критичное → 2 000, Грубое → эскалация) уже посчитаны в
-  // аудите. Это заменяет прежний источник из БД, где данные были некорректны.
-  const { violations: dailyViolations, fineById } = auditDailyViolations(
-    resolved.from,
-    resolved.to,
-    filters.accountant
-  );
+  // Нарушения для ежедневного отчёта — ЖИВЫЕ данные (mqa_violations), строго за
+  // день отчёта [resolved.from..resolved.to]. Один блок = одно нарушение,
+  // предупреждение/штраф по единому правилу (violations.ts): 1-е за день —
+  // предупреждение (0 др), повторное — 1 000 др, ручная санкция перебивает.
+  // Тот же источник и та же логика, что на дашборде — без ИИ и без Excel-выгрузок.
+  const dailyRows = await listViolations({
+    from: resolved.from,
+    to: resolved.to,
+    accountant: filters.accountant,
+  });
+  const { violations: dailyViolations, fineById } = dailyViolationRows(dailyRows);
 
   // Ежедневный отчёт — СТРОГО за один день: «Нарушения» и «Кол-во запросов за
   // день» показывают только текущий день (dailyViolations = auditDailyViolations

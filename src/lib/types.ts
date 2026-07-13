@@ -147,6 +147,10 @@ export interface Violation {
   gross: string | null;
   sanction: number | null;
   note: string | null;
+  /** Подтверждено Маргаритой (по умолчанию true — она сама вносит нарушения). */
+  confirmed?: boolean;
+  /** Статус апелляции по нарушению: null | 'appealed' | 'approved' | 'rejected'. */
+  appeal_status?: string | null;
   created_at: string;
 }
 
@@ -160,6 +164,8 @@ export interface NewViolationInput {
   gross?: string | null;
   sanction?: number | null;
   note?: string | null;
+  confirmed?: boolean;
+  appeal_status?: string | null;
 }
 
 /**
