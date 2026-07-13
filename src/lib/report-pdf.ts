@@ -411,7 +411,14 @@ export function buildReportPdf(
     const overrideRows = (report.manualOverrides ?? []).map((o) => {
       const name = o.chat_name ? ` — ${o.chat_name}` : "";
       const who = o.accountant ?? "—";
-      const by = o.changed_by ? ` (${o.changed_by})` : "";
+      const editedAt = o.edited_at
+        ? o.edited_at.slice(0, 16).replace("T", " ")
+        : "";
+      const by = o.changed_by
+        ? ` (${o.changed_by}${editedAt ? `, ${editedAt}` : ""})`
+        : editedAt
+          ? ` (${editedAt})`
+          : "";
       const date = fmtDateOrUnset(o.score_date);
       return (
         `• ${o.chat_agr_no}${name} · ${who} · за ${date} · ` +

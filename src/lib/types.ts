@@ -216,6 +216,8 @@ export interface NewTaskInput {
 /** Patch for an existing task (status update / QA confirmation). */
 export interface TaskPatch {
   task_status?: TaskStatus | null;
+  due_date_original?: string | null;
+  due_date_postponed?: string | null;
   completed_at?: string | null;
   result?: string | null;
   recurring?: boolean | null;

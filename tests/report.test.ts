@@ -87,6 +87,8 @@ test("manual score override (п.8) is applied and surfaced in the report", () =>
   assert.equal(r.manualOverrides![0].chat_agr_no, "23");
   assert.equal(r.manualOverrides![0].new_score, 40);
   assert.equal(r.manualOverrides![0].old_score, 100);
+  // п.8: «кто и когда» — the edit timestamp is carried through to the report/PDF.
+  assert.equal(r.manualOverrides![0].edited_at, "2026-06-12T09:00:00.000Z");
   assert.equal(r.manualOverridesCount, 1);
   // Chat 23 (was Отлично) now scores 40 → Критично, so it shows up as critical.
   assert.ok(r.criticalChats.some((c) => c.chat_agr_no === "23"));

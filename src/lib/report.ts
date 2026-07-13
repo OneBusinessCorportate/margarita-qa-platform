@@ -87,6 +87,8 @@ export interface ManualOverrideRow {
   new_score: number;
   changed_by: string | null;
   comment: string;
+  /** ISO timestamp of when the edit was made (п.8: «кто и когда»). */
+  edited_at: string;
 }
 
 /**
@@ -493,6 +495,7 @@ export function buildReport(
       new_score: o.new_score,
       changed_by: o.changed_by,
       comment: o.comment,
+      edited_at: o.created_at,
     }))
     .sort(
       (a, b) =>

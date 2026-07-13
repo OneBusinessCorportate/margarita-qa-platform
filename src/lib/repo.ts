@@ -733,6 +733,10 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
 export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {
   const fields: Record<string, unknown> = {};
   if (patch.task_status !== undefined) fields.task_status = patch.task_status;
+  if (patch.due_date_original !== undefined)
+    fields.due_date_original = patch.due_date_original || null;
+  if (patch.due_date_postponed !== undefined)
+    fields.due_date_postponed = patch.due_date_postponed || null;
   if (patch.completed_at !== undefined) fields.completed_at = patch.completed_at;
   if (patch.result !== undefined) fields.result = patch.result;
   if (patch.recurring !== undefined) fields.recurring = patch.recurring;

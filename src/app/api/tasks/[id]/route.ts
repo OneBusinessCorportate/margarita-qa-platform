@@ -22,6 +22,8 @@ export async function PATCH(
   const session = await getSession().catch(() => null);
   const patch: TaskPatch = {
     task_status: body.task_status,
+    due_date_original: body.due_date_original,
+    due_date_postponed: body.due_date_postponed,
     completed_at: body.completed_at,
     result: body.result,
     recurring: typeof body.recurring === "boolean" ? body.recurring : undefined,

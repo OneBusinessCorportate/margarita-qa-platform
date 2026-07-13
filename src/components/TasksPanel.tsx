@@ -237,10 +237,27 @@ export default function TasksPanel({
                   </td>
                   <td className="text-xs text-gray-700">{t.description}</td>
                   <td className={`whitespace-nowrap text-xs ${due ? "text-red-600 font-semibold" : ""}`}>
-                    {t.due_date_original ?? "—"}
+                    <input
+                      type="date"
+                      className="input w-[130px]"
+                      value={t.due_date_original ?? ""}
+                      onChange={(e) =>
+                        patchTask(t.id, { due_date_original: e.target.value || null })
+                      }
+                    />
                     {due && <span className="block">⏰ срок подошёл</span>}
                   </td>
-                  <td className="whitespace-nowrap text-xs">{t.due_date_postponed ?? "—"}</td>
+                  <td className="whitespace-nowrap text-xs">
+                    <input
+                      type="date"
+                      className="input w-[130px]"
+                      value={t.due_date_postponed ?? ""}
+                      onChange={(e) =>
+                        patchTask(t.id, { due_date_postponed: e.target.value || null })
+                      }
+                      title="Перенос срока — исходный срок остаётся в колонке слева"
+                    />
+                  </td>
                   <td className="whitespace-nowrap text-xs">
                     {t.task_status?.startsWith("Completed") ? (
                       <input

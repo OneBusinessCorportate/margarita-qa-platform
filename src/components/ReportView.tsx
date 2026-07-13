@@ -317,7 +317,7 @@ export default function ReportView({
                 <th className="px-3 py-2 text-left font-medium">Бухгалтер</th>
                 <th className="px-3 py-2 text-center font-medium">Было → стало</th>
                 <th className="px-3 py-2 text-left font-medium">Комментарий</th>
-                <th className="px-3 py-2 text-left font-medium">Кто</th>
+                <th className="px-3 py-2 text-left font-medium">Кто и когда</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -339,6 +339,17 @@ export default function ReportView({
                   <td className="px-3 py-2 text-gray-700">{o.comment}</td>
                   <td className="px-3 py-2 whitespace-nowrap text-gray-500">
                     {o.changed_by ?? "—"}
+                    {o.edited_at ? (
+                      <span className="block text-xs text-gray-400 tabular-nums">
+                        {new Date(o.edited_at).toLocaleString("ru-RU", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    ) : null}
                   </td>
                 </tr>
               ))}
