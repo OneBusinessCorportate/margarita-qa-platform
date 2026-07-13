@@ -105,10 +105,15 @@ async function main() {
 
   const sb = canWrite ? createClient(url!, key!, { auth: { persistSession: false } }) : null;
 
-  // Existing chats: agr_no (match target) + hvhh (debt join key).
-  let existing: { agr_no: string; hvhh: string | null }[] = [];
+  // Existing chats: agr_no (match target), hvhh (debt join key) and chat_name
+  // (carried back into the batched upsert so its NOT NULL constraint is met
+  // without ever changing the value).
+  let existing: { agr_no: string; hvhh: string | null; chat_name: string }[] = [];
   if (sb) {
-    const { data, error } = await sb.from(TABLES.chats).select("agr_no, hvhh").limit(20000);
+    const { data, error } = await sb
+      .from(TABLES.chats)
+      .select("agr_no, hvhh, chat_name")
+      .limit(20000);
     if (error) throw error;
     existing = (data ?? []) as typeof existing;
   } else {
@@ -163,56 +168,59 @@ async function main() {
     if (error) throw error;
   }
 
-  // UPDATE existing chats: upsert with ONLY master-field keys, so chat_link /
-  // chat_name / manager are untouched (they aren't in the payload).
-  for (const part of chunk(matched, 500)) {
-    const { error } = await sb.from(TABLES.chats).upsert(part, { onConflict: "agr_no" });
-    if (error) throw error;
-  }
+  // Existing chat_name per agr_no — carried back verbatim so the batched upsert
+  // satisfies the NOT NULL constraint without ever changing it.
+  const nameOf = new Map(existing.map((c) => [c.agr_no, c.chat_name]));
 
-  // INSERT brand-new clients (opt-in): give them a chat_name (required) and no link.
-  let inserted = 0;
-  if (ADD_NEW && fresh.length) {
-    const rows = fresh.map((c) => ({ ...c, chat_name: c.agr_no, chat_link: null, manager: null }));
-    for (const part of chunk(rows, 500)) {
-      const { error } = await sb.from(TABLES.chats).upsert(part, { onConflict: "agr_no" });
-      if (error) throw error;
-    }
-    inserted = rows.length;
-  }
+  // Debt total per client, looked up by its ՀՎՀՀ.
+  const asOfStamp = new Date().toISOString();
+  const totalsFor = (c: MasterClient): DebtTotals | undefined =>
+    debtsByHvhh.get(normalizeHvhh(c.hvhh));
 
-  // --- write: debts (amount only; follow-up status left alone) -------------
-  const debtRows: any[] = [];
-  const chatUpdates: { agr_no: string; debts: string }[] = [];
-  let withOverdue = 0;
+  // Build the chat rows in ONE batched upsert (fast — a few calls, not ~1300
+  // round-trips). We DON'T send chat_link / manager, so they're left untouched;
+  // chat_name is sent unchanged (existing value, or the agr_no for a new row).
   const consider = ADD_NEW ? [...byAgr.values()] : matched;
-  // Look up each client's debt totals by its ՀՎՀՀ.
-  const hvhhOf = new Map(consider.map((c) => [c.agr_no, normalizeHvhh(c.hvhh)]));
-  for (const c of consider) {
-    const totals: DebtTotals | undefined = debtsByHvhh.get(hvhhOf.get(c.agr_no) ?? "");
+  const debtRows: any[] = [];
+  let withOverdue = 0;
+  const chatRows = consider.map((c) => {
+    const totals = totalsFor(c);
+    if (totals && totals.overdue > 0) withOverdue++;
     debtRows.push({
       agr_no: c.agr_no,
       overdue: totals?.overdue ?? 0,
       upcoming: totals?.upcoming ?? 0,
       total: totals?.total ?? 0,
-      as_of: new Date().toISOString(),
+      as_of: asOfStamp,
     });
-    if (totals && totals.overdue > 0) withOverdue++;
-    chatUpdates.push({ agr_no: c.agr_no, debts: debtsCellValue(totals) });
+    return {
+      agr_no: c.agr_no,
+      hvhh: c.hvhh,
+      name_agr: c.name_agr,
+      name_tax: c.name_tax,
+      status: c.status,
+      accountant: c.accountant,
+      tax_activation_date: c.tax_activation_date,
+      created_date: c.created_date,
+      debts: debtsCellValue(totals),
+      chat_name: nameOf.get(c.agr_no) ?? c.agr_no, // preserve existing / seed new
+    };
+  });
+
+  for (const part of chunk(chatRows, 500)) {
+    const { error } = await sb.from(TABLES.chats).upsert(part, { onConflict: "agr_no" });
+    if (error) throw error;
   }
   for (const part of chunk(debtRows, 500)) {
     const { error } = await sb.from(TABLES.debts).upsert(part, { onConflict: "agr_no" });
     if (error) throw error;
   }
-  for (const u of chatUpdates) {
-    const { error } = await sb.from(TABLES.chats).update({ debts: u.debts }).eq("agr_no", u.agr_no);
-    if (error) throw error;
-  }
 
+  const inserted = ADD_NEW ? fresh.length : 0;
   console.log(
     `\nDone. Clients updated: ${matched.length}` +
       (inserted ? `, inserted: ${inserted}` : "") +
-      `. Debts written for ${chatUpdates.length} chats (${withOverdue} with overdue).`
+      `. Debts written for ${chatRows.length} chats (${withOverdue} with overdue).`
   );
 }
 
