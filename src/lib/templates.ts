@@ -17,6 +17,7 @@ import { MONTHLY_CATEGORIES, bandFor, failingMailings, type QualityBand } from "
 import type { Chat, Evaluation, Violation } from "./types";
 import { groupNarusheniya } from "./violations";
 import type { ViolationReport } from "./violation-report";
+import type { MailingComplianceReport } from "./mailing-compliance";
 
 export function telegramConfigured(): boolean {
   return Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
@@ -137,7 +138,7 @@ export function buildReportMessage(
   options: ReportMessageOptions = {}
 ): string {
   const { serviceQualityPct, perAccountant, filters } = report;
-  const { violations = [], sheetUrl, roster, requests, requestDays } = options;
+  const { violations = [], sheetUrl, roster, requests } = options;
   const dateISO =
     options.date ??
     filters.to ??
@@ -184,40 +185,41 @@ export function buildReportMessage(
   //   • 2-е и каждое следующее за тот же день → 1 000 др.
   // Максимум — 1 000 др, суммы 2 000 и выше НЕ используются. Нарушения берём как
   // есть от вызывающей стороны (только подтверждённые Маргаритой).
-  const DAILY_PENALTY = 1000; // потолок штрафа за одно нарушение
+  // Штрафы считаем ЕДИНЫМ движком groupNarusheniya (violations.ts) — тем же, что
+  // PDF и дашборд. Так суммы в сообщении, PDF и на дашборде всегда совпадают
+  // (п.7). Один чат = одно нарушение (типы через запятую), 1-е за день —
+  // предупреждение (0), далее 1 000 др, ручная санкция перебивает.
   type ViolItem = { code: string; type: string; fine: number };
   const violByAcc = new Map<string, ViolItem[]>();
-  const seenAccDay = new Map<string, number>();
   let totalFine = 0;
-  // Стабильный порядок: по дню, затем по времени создания — так «первое» за день
-  // определяется детерминированно.
-  const sortedViol = [...violations].sort(
-    (a, b) =>
-      (a.vdate ?? "").localeCompare(b.vdate ?? "") ||
-      (a.created_at ?? "").localeCompare(b.created_at ?? "")
-  );
-  for (const v of sortedViol) {
-    const acc = v.accountant?.trim() || "-";
-    const day = (v.vdate ?? "").slice(0, 10);
-    const seenKey = `${acc}|${day}`;
-    const seen = seenAccDay.get(seenKey) ?? 0;
-    const fine = seen >= 1 ? DAILY_PENALTY : 0; // 1-е за день — предупреждение
-    seenAccDay.set(seenKey, seen + 1);
-    totalFine += fine;
+  for (const n of groupNarusheniya(
+    violations.map((v) => ({
+      vdate: v.vdate,
+      accountant: v.accountant,
+      severity: v.severity,
+      sanction: v.sanction,
+      chat_agr_no: v.chat_agr_no,
+      client: v.client,
+      violation_type: v.violation_type,
+    }))
+  )) {
+    const acc = n.accountant?.trim() || "-";
+    totalFine += n.fine;
     const list = violByAcc.get(acc) ?? [];
     list.push({
-      code: v.chat_agr_no?.trim() || "-",
-      type: (v.violation_type ?? "").trim() || "-",
-      fine,
+      code: n.chat_agr_no?.trim() || n.client?.trim() || "-",
+      type: n.types.join(", ") || "-",
+      fine: n.fine,
     });
     violByAcc.set(acc, list);
   }
 
-  // Per-day request figure per accountant.
-  const days = requestDays && requestDays > 1 ? requestDays : 1;
+  // Request figure per accountant = UNIQUE client chats in the reporting scope
+  // (see tallyRequestChats). No per-day division — the count is already the
+  // per-scope unique-chat figure, so it can never exceed the chat count.
   const reqByAcc = new Map<string, number>();
   for (const r of requests ?? []) {
-    reqByAcc.set(r.accountant, Math.round(r.count / days));
+    reqByAcc.set(r.accountant, r.count);
   }
 
   // Кого показываем: бухгалтеры с запросами за день ИЛИ с нарушениями. С
@@ -566,6 +568,116 @@ export function buildWeeklyFinesBreakdown(
   return lines.join("\n");
 }
 
+/**
+ * Недельная история нарушений по ДНЯМ (п.10) — для раздела «Сообщения», чтобы
+ * руководство видело нарушения за каждый день недели. Показываются только дни, в
+ * которых есть нарушения. По каждому чату — ОДНА строка (несколько нарушений по
+ * чату за день объединены через запятую): клиент/чат, бухгалтер, типы,
+ * предупреждение/штраф с суммой и комментарий. Границы дней — Ереван (даты уже
+ * приходят как Yerevan-ISO из вызывающей стороны). Суммы считаются тем же
+ * движком `groupNarusheniya`, что дашборд/PDF, поэтому недельный итог совпадает.
+ * Только подтверждённые ручные нарушения (confirmed !== false).
+ */
+export function buildWeeklyViolationHistory(
+  weekViolations: Violation[],
+  options: { weekFrom: string; weekTo: string }
+): string {
+  const { weekFrom, weekTo } = options;
+  const confirmed = weekViolations.filter((v) => v.confirmed !== false);
+  const fineInput = confirmed.map((v) => ({
+    vdate: v.vdate,
+    accountant: v.accountant,
+    severity: v.gross ? "Грубое" : v.severity,
+    sanction: v.sanction,
+    chat_agr_no: v.chat_agr_no,
+    client: v.client,
+    violation_type: v.violation_type,
+  }));
+  const narusheniya = groupNarusheniya(fineInput);
+
+  const byDay = new Map<string, typeof narusheniya>();
+  for (const n of narusheniya) {
+    const day = (n.vdate ?? "").slice(0, 10);
+    if (!day) continue;
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day)!.push(n);
+  }
+
+  const lines: string[] = [];
+  lines.push(`История нарушений за неделю (${fmtDay(weekFrom)} — ${fmtDay(weekTo)}):`);
+  if (byDay.size === 0) {
+    lines.push("");
+    lines.push("Нет нарушений за неделю");
+    return lines.join("\n");
+  }
+
+  let weekTotal = 0;
+  let weekCount = 0;
+  for (const day of [...byDay.keys()].sort()) {
+    const items = byDay.get(day)!;
+    lines.push("");
+    lines.push(`▸ ${fmtFullDay(day)}`);
+    for (const n of items) {
+      weekCount += 1;
+      weekTotal += n.fine;
+      const who = n.accountant?.trim() || "—";
+      const target = n.client?.trim() || n.chat_agr_no?.trim() || "—";
+      const code = n.chat_agr_no && n.client ? ` (${n.chat_agr_no})` : "";
+      const types = n.types.join(", ") || "—";
+      const money = n.fine > 0 ? `${fmtDram(n.fine)} др` : "предупреждение";
+      const note = confirmed[n.rowIndexes[0]]?.note?.trim();
+      const noteStr = note ? ` — «${note}»` : "";
+      lines.push(`  • ${target}${code} · ${who} · ${types} · ${money}${noteStr}`);
+    }
+  }
+  lines.push("");
+  lines.push(`Итого за неделю: ${weekCount} нарушений, штрафы ${fmtDram(weekTotal)} др`);
+  return lines.join("\n");
+}
+
+/**
+ * Telegram-ready mailing-compliance report (файл-2). Grouped by accountant, each
+ * category on its own line with «Статус — N» pairs. Zero-count statuses and
+ * empty accountants/categories are omitted; consistent names/capitalization; the
+ * period is shown at the top. Uses the SAME canonical report object as the
+ * dashboard/PDF (buildMailingCompliance), so the numbers always agree.
+ */
+export function buildMailingComplianceMessage(
+  report: MailingComplianceReport,
+  options: { periodLabel?: string } = {}
+): string {
+  const lines: string[] = [];
+  lines.push("Отчёт по рассылкам");
+  lines.push("");
+  lines.push(`Период: ${options.periodLabel ?? report.period}`);
+
+  const grand: Record<string, number> = {};
+  let shownAccountants = 0;
+  for (const acc of report.perAccountant) {
+    const catsWithData = acc.categories.filter((c) => c.statuses.length > 0);
+    if (catsWithData.length === 0) continue; // skip empty accountants
+    shownAccountants += 1;
+    lines.push("");
+    lines.push(acc.accountant);
+    for (const cat of catsWithData) {
+      lines.push(cat.label);
+      const pairs = cat.statuses
+        .filter((s) => s.count > 0)
+        .map((s) => {
+          grand[cat.label] = (grand[cat.label] ?? 0) + s.count;
+          return `${s.status} — ${s.count}`;
+        });
+      lines.push(pairs.join("  "));
+    }
+  }
+
+  if (shownAccountants === 0) {
+    lines.push("");
+    lines.push("Нет данных по рассылкам за период");
+  }
+  return lines.join("\n");
+}
+
 /** dd.mm.yyyy — full date for the standalone daily / reconciliation reports. */
 function fmtFullDay(iso: string | null): string {
   if (!iso) return "—";
@@ -617,6 +729,14 @@ export function buildDailyStaffViolationsMessage(
     `Всего нарушений: ${s.violations} · предупреждений: ${s.warnings} · ` +
       `штрафов: ${s.penalties} · сумма: ${fmtDram(s.fineTotal)} др`
   );
+
+  // Сотрудники без нарушений не выводятся (п.9). Если нарушений нет вовсе —
+  // один общий пустой статус на всю секцию, без строк по каждому сотруднику.
+  if (report.perAccountant.length === 0) {
+    lines.push("");
+    lines.push("Нет нарушений за выбранный период");
+    return lines.join("\n");
+  }
 
   for (const g of report.perAccountant) {
     lines.push("");
@@ -732,9 +852,6 @@ export function buildAccountantMessage(
     new Date().toISOString().slice(0, 10);
   const acc = report.perAccountant.find((a) => a.accountant === accountant);
   const crit = report.criticalChats.filter((c) => c.accountant === accountant);
-  const waiting = (report.unansweredChats ?? []).filter(
-    (c) => c.accountant === accountant
-  );
 
   const lines: string[] = [];
   lines.push(`👤 ${accountant}`);
@@ -763,23 +880,13 @@ export function buildAccountantMessage(
     lines.push("✅ Критичных чатов нет — спасибо за работу!");
   }
 
-  if (waiting.length) {
-    lines.push("");
-    lines.push(`⏳ Чаты без ответа (${waiting.length}):`);
-    for (const w of waiting.slice(0, 10)) {
-      const days =
-        w.waitingDays != null && w.waitingDays > 0 ? ` · ждёт ${w.waitingDays} дн` : "";
-      lines.push(`• ${chatLabel(w.chat_agr_no, w.chat_name)}${days}`);
-    }
-  }
-
   return lines.join("\n");
 }
 
 /**
- * Distinct accountants who have something worth sending (a critical chat, a low
- * average, or a chat still waiting on a reply) for the period — the people
- * Margarita should message, most urgent first.
+ * Distinct accountants who have something worth sending (a critical chat or a
+ * low average) for the period — the people Margarita should message, most
+ * urgent first.
  */
 export function accountantsToMessage(report: DailyReport): string[] {
   const score = new Map<string, number>();
@@ -788,7 +895,6 @@ export function accountantsToMessage(report: DailyReport): string[] {
     score.set(name, (score.get(name) ?? 0) + by);
   };
   for (const c of report.criticalChats) bump(c.accountant, 100);
-  for (const w of report.unansweredChats ?? []) bump(w.accountant, 10);
   for (const a of report.perAccountant) if (a.lowCount > 0) bump(a.accountant, a.lowCount);
   return [...score.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))

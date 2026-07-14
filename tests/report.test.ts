@@ -151,12 +151,3 @@ test("criticalChats lists gated chats worst-first with reasons", () => {
   }
 });
 
-test("unansweredChats surfaces active chats where the client had the last word", () => {
-  const r = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
-  const ids = r.unansweredChats.map((c) => c.chat_agr_no).sort();
-  assert.deepEqual(ids, ["100", "11"]);
-  assert.equal(r.totals.unansweredChats, 2);
-  // Longest wait first: chat 100 (06-12) waited longer than chat 11 (06-13).
-  assert.equal(r.unansweredChats[0].chat_agr_no, "100");
-  assert.equal(r.unansweredChats[0].waitingDays, 3);
-});

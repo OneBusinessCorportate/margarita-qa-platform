@@ -6,7 +6,6 @@ import type {
   ActiveInclusion,
   Chat,
   Evaluation,
-  ManagerEvaluation,
   ScoreOverride,
   Task,
   Violation,
@@ -31,7 +30,6 @@ interface Store {
   tasks: Task[];
   users: StoredUser[];
   violations: Violation[];
-  managerEvaluations: ManagerEvaluation[];
   activeExclusions: ActiveExclusion[];
   activeInclusions: ActiveInclusion[];
   reportSnapshots: ReportSnapshot[];
@@ -50,7 +48,6 @@ export function store(): Store {
       tasks: structuredClone(seedTasks),
       users: [],
       violations: [],
-      managerEvaluations: [],
       activeExclusions: [],
       activeInclusions: [],
       reportSnapshots: [],

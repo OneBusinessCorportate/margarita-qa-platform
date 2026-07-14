@@ -43,6 +43,11 @@ export default function AccountantViolationBreakdown({
       </div>
 
       <div className="space-y-2">
+        {withData.length === 0 && (
+          <div className="text-sm text-gray-500 py-2">
+            Нет нарушений за выбранный период
+          </div>
+        )}
         {withData.map((g) => (
           <details key={g.employee} className="rounded border border-gray-200">
             <summary className="cursor-pointer select-none px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -107,11 +112,6 @@ export default function AccountantViolationBreakdown({
                         {l.critical && (
                           <span className="inline-block rounded bg-red-600 text-white font-medium text-xs px-1.5 py-0.5">
                             критично
-                          </span>
-                        )}
-                        {!l.confirmed && (
-                          <span className="inline-block rounded bg-gray-200 text-gray-600 font-medium text-xs px-1.5 py-0.5" title="Авто-импорт — ещё не подтверждено Маргаритой">
-                            не подтв.
                           </span>
                         )}
                         {l.appealStatus === "appealed" && (

@@ -48,9 +48,24 @@ const KW = {
   // iu = Unicode case-fold so sentence-start capitals (Աշխատավարձ, Հարկ) match.
   taxes_hy: /(հարկ|ԱԱՀ|հայտ|հռչ|հաշվետ)/iu,
   salary_hy: /(աշխատավարձ|աշխ\.?\s*վ|ա\/վ|ա\.վ\.|հաշվ\.?\s*ց|ռոճիկ)/iu,
-  primary_hy: /(փաստաթ|[աՈ][կք]տ|հաշիվ|[աՈ][կք]ներ|ն[եա]ր[կք]ա)/iu,
+  // + ինվոյս (invoice), ֆակտուր (factura), CMR, մաքս (customs), ներմուծ/արտահանում
+  // (import/export), պայմանագ (contract) — the multilingual doc-request template.
+  primary_hy: /(փաստաթ|[աՈ][կք]տ|հաշիվ|[աՈ][կք]ներ|ն[եա]ր[կք]ա|ինվոյս|ֆակտուր|cmr|մաքս|ներմուծ|արտահան|պայմանագ)/iu,
   debts_hy: /(պարտք|պարտաբ)/iu,
+  // --- English (ASCII, \b-safe; low collision with RU/HY) -------------------
+  taxes_en: /\b(tax(?:es|ation)?|vat|tax\s+return|declaration)\b/i,
+  salary_en: /\b(salary|salaries|payroll|wage|wages|pay\s?slip)\b/i,
+  primary_en: /\b(primary\s+document|invoice|act\s+of\s+(?:completed|work)|acts?\s+of|contract|cmr|customs|waybill|consignment|shipping\s+document)\b/i,
+  debts_en: /\b(debt|debts|overdue|outstanding\s+(?:balance|amount|payment)|payment\s+reminder|arrears)\b/i,
 } as const;
+
+// English completion / request verb fragments.
+const DONE_SENT_EN = /\b(sent|submitted|filed|uploaded|declared|reported)\b/i;
+const DONE_RECV_EN = /\b(received|got|provided|prepared|obtained|collected|signed)\b/i;
+const REQ_EN = /\b(please\s+(?:provide|send|share|attach)|kindly\s+(?:provide|send)|we\s+(?:ask|need|request|kindly\s+ask)|request(?:ing)?|could\s+you\s+(?:please\s+)?(?:provide|send))\b/i;
+const PAID_EN = /\b(paid|settled|cleared|no\s+debt|fully\s+paid|debt\s+(?:is\s+)?closed)\b/i;
+const CALL_EN = /\b(called|phoned|rang|call(?:ed)?\s+the\s+client)\b/i;
+const NEG_EN = /\b(not|no|haven'?t|hasn'?t|didn'?t|did\s+not|won'?t|never)\s+(?:\w+\s+){0,2}?(sent|submitted|filed|received|got|provided|prepared|paid|settled|done|completed)\b/i;
 
 // --- Negation detectors ------------------------------------------------------
 // "не <опц. 1-2 слова> <глагол-выполнения>" — a completion that did NOT happen.
@@ -81,6 +96,16 @@ const NOTIFY_RU =
   /(рассыл|разосл|разошл|уведомл|уведомил|уведомля|сообщаем|сообщил|информир|напоминаем|напомнил)/i;
 // Armenian notification stem: «Տեղեկացնում ենք …» (we inform), «հիշեցնում» (remind).
 const NOTIFY_HY = /(տեղեկացն|հիշեցն|տեղեկացր)/iu;
+// Armenian REQUEST markers: «խնդրում ենք» (we ask), «կարիք», «պետք է» (need),
+// «ցանկալի է» (it is desirable). Stem «խնդր» covers խնդրում/խնդրե/խնդրանք. Used
+// both to FIRE a req rule and to GUARD the done rules — «խնդրում ենք տրամադրել»
+// ("please provide") is a request, not a completed «տրամ»(provided) action.
+const REQ_HY = /(խնդր|կարիք|պե՞?տք|ցանկալի|աղերս)/iu;
+// Russian tax-notification structure: the accountant lists the taxes to pay and
+// the settlement/treasury accounts to pay them to («оплатить на расчётные
+// счета», «реквизиты», «к оплате», «перечислить»). This IS the sent tax mailing.
+const NOTIFY_TAX_RU =
+  /(расчетн\w*\s*счет|расчётн\w*\s*счет|оплат\w*\s+на\s+(?:соответств\w*\s+)?(?:расчетн|расчётн)|реквизит|к\s+оплате|необходимо\s+оплат|перечисл)/i;
 
 // --- Scoped negation of the SENDING / notification verb (v8) -----------------
 // PARITY: mirrored 1:1 in db/migrations/20260714_mqa_detect_mailings_v8_scoped_send_negation.sql
@@ -110,6 +135,11 @@ const RULES: Rule[] = [
   // SEND verb (NEG_SEND_RU), so an unrelated receive-negation elsewhere in the
   // message («налоги отправил, зарплату не получил») does NOT flip it to «neg».
   { category: "main_taxes", type: "done", all: [KW.taxes_ru, DONE_TAX_RU], none: [NEG_SEND_RU] },
+  // Tax-notification mailing: the accountant POSTS the taxes to pay + the
+  // treasury/settlement accounts («…необходимо оплатить на соответствующие
+  // расчётные счета», реквизиты, «к оплате»). Listing taxes to pay by account IS
+  // the sent tax mailing → «Отправил», even without an explicit "отправил" verb.
+  { category: "main_taxes", type: "done", all: [KW.taxes_ru, NOTIFY_TAX_RU], none: [NEG_SEND_RU] },
   { category: "main_taxes", type: "neg", all: [KW.taxes_ru, NEG_SEND_RU] },
   // --- main_taxes (Armenian) ------------------------------------------------
   // հարկ=tax, ԱԱՀ=VAT, հայտ=declaration, ուղարկ=sent, ներկայաց=submitted
@@ -137,7 +167,7 @@ const RULES: Rule[] = [
     category: "salary",
     type: "done",
     all: [KW.salary_hy, /(ստաց|ուղարկ|տրամ|ստ\.)/iu],
-    none: [NEG_HY],
+    none: [NEG_HY, REQ_HY],
   },
   // «Տեղեկացնում ենք … աշխատավարձ …» — the salary рассылка was SENT (incl. the
   // "no salary this period" «չի կատարվում» template → STILL done). v8: guarded by
@@ -147,7 +177,7 @@ const RULES: Rule[] = [
   {
     category: "salary",
     type: "req",
-    all: [/(աշխատավարձ|աշխ\.?\s*վ|ա\/վ|ռոճիկ)/, /(խնդրե|կարիք|պե՞տք)/],
+    all: [/(աշխատավարձ|աշխ\.?\s*վ|ա\/վ|ռոճիկ)/iu, REQ_HY],
   },
   { category: "salary", type: "neg", all: [KW.salary_hy, NEG_HY] },
 
@@ -168,12 +198,12 @@ const RULES: Rule[] = [
     category: "primary_docs",
     type: "done",
     all: [KW.primary_hy, /(ստաց|ուղարկ|հանձնե|ստ\.)/iu],
-    none: [NEG_HY],
+    none: [NEG_HY, REQ_HY],
   },
   {
     category: "primary_docs",
     type: "req",
-    all: [/(փաստաթ|[աՈ][կք]տ|հաշիվ)/iu, /(խնդրե|կարիք|պետք)/iu],
+    all: [/(փաստաթ|[աՈ][կք]տ|հաշիվ|ինվոյս|ֆակտուր)/iu, REQ_HY],
   },
   { category: "primary_docs", type: "neg", all: [KW.primary_hy, NEG_HY] },
 
@@ -207,7 +237,51 @@ const RULES: Rule[] = [
   },
   { category: "debts", type: "call", all: [KW.debts_hy, /(զանգ|զ\.)/iu] },
   { category: "debts", type: "req", all: [KW.debts_hy, /(գր[եէ]|հուշ|տեղեկ|ծանուց)/iu] },
+
+  // --- main_taxes (English) — taxes are *sent* -----------------------------
+  { category: "main_taxes", type: "done", all: [KW.taxes_en, DONE_SENT_EN], none: [NEG_EN] },
+  { category: "main_taxes", type: "neg", all: [KW.taxes_en, NEG_EN] },
+  // --- salary (English) -----------------------------------------------------
+  { category: "salary", type: "done", all: [KW.salary_en, DONE_RECV_EN], none: [NEG_EN] },
+  { category: "salary", type: "req", all: [KW.salary_en, REQ_EN] },
+  { category: "salary", type: "neg", all: [KW.salary_en, NEG_EN] },
+  // --- primary_docs (English) ----------------------------------------------
+  { category: "primary_docs", type: "done", all: [KW.primary_en, DONE_RECV_EN], none: [NEG_EN] },
+  { category: "primary_docs", type: "req", all: [KW.primary_en, REQ_EN] },
+  { category: "primary_docs", type: "neg", all: [KW.primary_en, NEG_EN] },
+  // --- debts (English) ------------------------------------------------------
+  { category: "debts", type: "paid", all: [KW.debts_en, PAID_EN], none: [NEG_EN] },
+  { category: "debts", type: "call", all: [KW.debts_en, CALL_EN] },
+  { category: "debts", type: "req", all: [KW.debts_en, /\b(wrote|reminded|messaged|reminder|notified|sent\s+a\s+reminder)\b/i] },
 ];
+
+/**
+ * Онбординг / сервис-информация — приветственный шаблон нового клиента
+ * («…ваш ведущий бухгалтер… Налоговая система: … Даты оплаты налогов: …»).
+ * Он МОЖЕТ упоминать налоги/сроки, но это НЕ выполненная рассылка. Мы помечаем
+ * такое сообщение, чтобы классификатор никогда не засчитал его как «Отправил»/
+ * «Получил» (см. classifyMessage). Требуется несколько маркеров онбординга.
+ */
+const ONBOARDING_MARKERS: RegExp[] = [
+  /ведущ\w*\s+бухгалтер/i,
+  /бухгалтерск\w*\s+обслуживани/i,
+  /за\s+доверие|спасибо\s+вам\s+за/i,
+  /налогов\w*\s+систем\w*\s*[:—-]/i,
+  /срок\w*\s+оплаты\s+услуг/i,
+  /сумм\w*\s+обслуживани/i,
+  /меня\s+зовут/i,
+  /вид\s+деятельности\s*[:—-]/i,
+  /հաշվապահական\s+սպասարկ/iu,
+  /ձեր\s+վարող\s+հաշվապահ/iu,
+];
+
+/** True when a message is a client-onboarding / service-info template. */
+export function isOnboardingMessage(text: string): boolean {
+  if (!text) return false;
+  let hits = 0;
+  for (const re of ONBOARDING_MARKERS) if (re.test(text)) hits += 1;
+  return hits >= 2;
+}
 
 /** All signals fired by a single message (may be several categories). */
 export function detectAllSignals(text: string): MailingSignal[] {

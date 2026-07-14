@@ -28,7 +28,6 @@ export default function TaskModal({
   const [dueDate, setDueDate] = useState(defaultDate ?? today());
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState("Medium");
-  const [recurring, setRecurring] = useState(false);
   const [acc, setAcc] = useState(accountant ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +54,6 @@ export default function TaskModal({
           description: description || null,
           due_date_original: dueDate || null,
           priority,
-          recurring,
           task_status: "-",
         }),
       });
@@ -146,15 +144,6 @@ export default function TaskModal({
                 onChange={(e) => setDescription(e.target.value)}
               />
             </Field>
-
-            <label className="flex items-center gap-2 text-sm text-gray-600">
-              <input
-                type="checkbox"
-                checked={recurring}
-                onChange={(e) => setRecurring(e.target.checked)}
-              />
-              Повторяющаяся задача (закрывается только после подтверждения QA)
-            </label>
 
             {error && <div className="text-sm text-red-600">{error}</div>}
 

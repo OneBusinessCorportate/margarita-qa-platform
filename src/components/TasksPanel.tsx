@@ -22,7 +22,6 @@ interface Draft {
   completed_at: string;
   result: string;
   task_status: string;
-  recurring: boolean;
 }
 
 function blankDraft(): Draft {
@@ -36,7 +35,6 @@ function blankDraft(): Draft {
     completed_at: "",
     result: "",
     task_status: "-",
-    recurring: false,
   };
 }
 
@@ -118,7 +116,6 @@ export default function TasksPanel({
           completed_at: draft.completed_at || null,
           result: draft.result || null,
           task_status: draft.task_status,
-          recurring: draft.recurring,
         }),
       });
       if (!res.ok) {
@@ -211,10 +208,8 @@ export default function TasksPanel({
               <th>Due Date (Postponed)</th>
               <th>Completed At</th>
               <th>Приоритет</th>
-              <th>Повтор</th>
               <th>Статус</th>
               <th>Состояние</th>
-              <th>QA подтвердил</th>
             </tr>
           </thead>
           <tbody>
@@ -222,12 +217,6 @@ export default function TasksPanel({
               const chat = chatMap.get(t.chat_agr_no);
               const due = isTaskDue(t, asOf);
               const closed = isTaskClosed(t);
-              // A recurring task done by the accountant but awaiting QA confirmation.
-              const awaitingQa =
-                t.recurring === true &&
-                (t.task_status === "Completed (On Time)" ||
-                  t.task_status === "Completed (Late)") &&
-                t.qa_confirmed !== true;
               return (
                 <tr key={t.id} className={due ? "bg-red-50/60" : closed ? "bg-gray-50/60" : ""}>
                   <td>
@@ -273,15 +262,6 @@ export default function TasksPanel({
                     )}
                   </td>
                   <td className="text-xs">{t.priority ?? "—"}</td>
-                  <td className="text-xs text-center">
-                    {t.recurring ? (
-                      <span title="Повторяющаяся / незакрываемая — закроется только после подтверждения QA">
-                        🔁
-                      </span>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
                   <td className="text-xs whitespace-nowrap">
                     <select
                       className="input text-xs"
@@ -305,26 +285,8 @@ export default function TasksPanel({
                   <td className="text-xs whitespace-nowrap">
                     {closed ? (
                       <span className="text-green-700 font-medium">✓ закрыта</span>
-                    ) : awaitingQa ? (
-                      <span className="text-amber-700 font-medium">ждёт QA</span>
                     ) : (
                       <span className="text-gray-500">открыта</span>
-                    )}
-                  </td>
-                  <td className="text-xs whitespace-nowrap">
-                    {t.recurring ? (
-                      <label className="inline-flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={t.qa_confirmed === true}
-                          onChange={(e) =>
-                            patchTask(t.id, { qa_confirmed: e.target.checked })
-                          }
-                        />
-                        {t.qa_confirmed ? "подтверждено" : "подтвердить"}
-                      </label>
-                    ) : (
-                      <span className="text-gray-300">—</span>
                     )}
                   </td>
                 </tr>
@@ -403,14 +365,6 @@ export default function TasksPanel({
                   ))}
                 </select>
               </td>
-              <td className="text-center">
-                <input
-                  type="checkbox"
-                  checked={draft.recurring}
-                  onChange={(e) => setDraft({ ...draft, recurring: e.target.checked })}
-                  title="Повторяющаяся / незакрываемая задача — закроется только после подтверждения QA"
-                />
-              </td>
               <td>
                 <select
                   className="input text-xs"
@@ -424,7 +378,6 @@ export default function TasksPanel({
                   ))}
                 </select>
               </td>
-              <td className="text-xs text-gray-400">новая</td>
               <td>
                 <button
                   className="btn-primary"

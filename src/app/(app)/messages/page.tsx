@@ -16,6 +16,7 @@ import {
   buildReportMessage,
   buildTaxCabinetReconciliation,
   buildWeeklyReportMessage,
+  buildWeeklyViolationHistory,
   telegramConfigured,
   type TaxCabinetRow,
 } from "@/lib/templates";
@@ -252,6 +253,12 @@ export default async function MessagesPage({
 
   // Weekly fines block (Mon → the reported day) — appended to the Armenian
   // weekly summary so the Friday message is ONE text with the money included.
+  // Недельная история нарушений по дням (п.10) — тот же источник (mqa_violations)
+  // и движок, что дашборд/PDF, поэтому недельный итог совпадает.
+  const weeklyViolationHistory = buildWeeklyViolationHistory(weekViolations, {
+    weekFrom: weekStart,
+    weekTo: resolved.to,
+  });
   const fridayMessage = buildFridayFinesMessage(weekViolations, {
     weekFrom: weekStart,
     weekTo: resolved.to,
@@ -287,7 +294,6 @@ export default async function MessagesPage({
     name,
     text: buildAccountantMessage(report, name, { date: resolved.to }),
     critCount: report.criticalChats.filter((c) => c.accountant === name).length,
-    waitingCount: (report.unansweredChats ?? []).filter((c) => c.accountant === name).length,
   }));
 
   // The Armenian weekly summary — this week (Mon → reported day) against the
@@ -420,6 +426,24 @@ export default async function MessagesPage({
         </div>
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {weeklyMessage}
+        </pre>
+      </div>
+
+      {/* Недельная история нарушений по дням (п.10) — для руководства. */}
+      <div className="card p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">🗓 История нарушений за неделю (по дням)</div>
+          <div className="flex gap-2">
+            <CopyButton label="Копировать" className="btn-primary" text={weeklyViolationHistory} />
+            <SendTelegramButton
+              text={weeklyViolationHistory}
+              configured={botReady}
+              label="Отправить в Telegram"
+            />
+          </div>
+        </div>
+        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
+{weeklyViolationHistory}
         </pre>
       </div>
 
@@ -709,7 +733,7 @@ export default async function MessagesPage({
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {perAccountantMsgs.map(({ name, text, critCount, waitingCount }) => (
+            {perAccountantMsgs.map(({ name, text, critCount }) => (
               <div key={name} className="card p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
@@ -717,11 +741,6 @@ export default async function MessagesPage({
                     {critCount > 0 && (
                       <span className="inline-block rounded bg-rose-100 text-rose-700 font-semibold px-1.5 py-0.5 text-[11px] whitespace-nowrap">
                         ⛔️ {critCount}
-                      </span>
-                    )}
-                    {waitingCount > 0 && (
-                      <span className="inline-block rounded bg-orange-100 text-orange-700 font-semibold px-1.5 py-0.5 text-[11px] whitespace-nowrap">
-                        ⏳ {waitingCount}
                       </span>
                     )}
                   </div>

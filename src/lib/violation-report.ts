@@ -77,11 +77,15 @@ function toFineInput(v: Violation): FineViolation {
 export function dailyViolationRows(
   violations: Violation[]
 ): { violations: Violation[]; fineById: Record<string, number> } {
-  const narusheniya = groupNarusheniya(violations.map(toFineInput));
+  // Только ручные, подтверждённые Маргаритой нарушения. Авто/легаси-строки
+  // (confirmed === false) исключаются — платформа больше не создаёт нарушений
+  // автоматически, а старые авто-записи не должны попадать в текущие расчёты.
+  const src = violations.filter((v) => v.confirmed !== false);
+  const narusheniya = groupNarusheniya(src.map(toFineInput));
   const rows: Violation[] = [];
   const fineById: Record<string, number> = {};
   for (const n of narusheniya) {
-    const rep = violations[n.rowIndexes[0]];
+    const rep = src[n.rowIndexes[0]];
     if (!rep) continue;
     fineById[rep.id] = n.fine;
     rows.push({
@@ -95,16 +99,22 @@ export function dailyViolationRows(
 
 /**
  * Build the per-accountant breakdown + summary from live violation rows.
- * `roster` (optional) seeds accountants with zero violations so the dashboard
- * can show the whole team, not only those who slipped.
+ *
+ * Показываем ТОЛЬКО сотрудников, у которых есть хотя бы одно ручное нарушение
+ * (сотрудники с нулём нарушений не выводятся — п.9). Учитываются только
+ * подтверждённые Маргаритой нарушения (confirmed !== false): авто/легаси-записи
+ * исключены. `roster` больше не используется для «посева» нулевых строк —
+ * параметр сохранён только ради обратной совместимости вызовов.
  */
 export function buildLiveViolationBreakdown(
   violations: Violation[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   roster: string[] = []
 ): ViolationReport {
+  const src = violations.filter((v) => v.confirmed !== false);
   // Keep the ORIGINAL row alongside each fine-input so we can carry note /
   // confirmed / appeal flags onto the grouped нарушение (the representative row).
-  const fineInput: FineViolation[] = violations.map((v) => ({
+  const fineInput: FineViolation[] = src.map((v) => ({
     vdate: (v.vdate ?? "").slice(0, 10),
     accountant: canonicalShortName(v.accountant) ?? v.accountant ?? "",
     severity: v.gross ? "Грубое" : v.severity,
@@ -128,7 +138,6 @@ export function buildLiveViolationBreakdown(
       total: 0,
     });
   };
-  for (const r of roster) if (r) seed(canonicalShortName(r) ?? r);
 
   const summary: ViolationReportSummary = {
     violations: 0,
@@ -145,7 +154,7 @@ export function buildLiveViolationBreakdown(
     const g = perAcc.get(key)!;
     // Representative row = the earliest problem in this нарушение; carry its
     // note / confirmed / appeal flags (Margarita's own data).
-    const rep = violations[n.rowIndexes[0]];
+    const rep = src[n.rowIndexes[0]];
     const critical = isCritical(n.severity);
     const line: ViolationLine = {
       date: n.vdate || null,

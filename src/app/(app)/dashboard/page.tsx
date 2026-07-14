@@ -16,6 +16,7 @@ import ExportPdfButton from "@/components/ExportPdfButton";
 import AccountantViolationBreakdown from "@/components/AccountantViolationBreakdown";
 import MargaritaSummary from "@/components/MargaritaSummary";
 import EmployeeAuditSummary from "@/components/EmployeeAuditSummary";
+import AutoRefresh from "@/components/AutoRefresh";
 
 export const dynamic = "force-dynamic";
 
@@ -102,9 +103,13 @@ export default async function DashboardPage({
   return (
     <div className="space-y-4">
       <div className="no-print">
-        <h1 className="text-xl font-semibold">Отчёт</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold">Отчёт</h1>
+          {!snapshot && <AutoRefresh />}
+        </div>
         <p className="text-sm text-gray-500">
           Ежедневный отчёт по качеству — по дате и бухгалтеру.
+          {!snapshot && " Данные обновляются автоматически, без перезагрузки."}
         </p>
       </div>
 

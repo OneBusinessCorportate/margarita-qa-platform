@@ -54,7 +54,12 @@ import ViolationModal from "./ViolationModal";
 import TaskModal from "./TaskModal";
 
 /** A stored mailing status for one category: value + where it came from. */
-type MailingCell = { status: string; source: ChatMailing["source"] };
+type MailingCell = {
+  status: string;
+  source: ChatMailing["source"];
+  /** Relevant mailing date: confirmed_at ?? detected_at (not "today"). */
+  at?: string | null;
+};
 
 // The "рассылка выполнена" status the detector emits per рассылка-category.
 // When a message-confirmed рассылка is detected AFTER a row was already saved
@@ -295,7 +300,11 @@ export default function ScoringPanel({
       const cats = m.get(key)!;
       const cur = cats[row.category];
       if (cur && cur.source === "manual" && row.source !== "manual") continue;
-      cats[row.category] = { status: row.status, source: row.source };
+      cats[row.category] = {
+        status: row.status,
+        source: row.source,
+        at: row.confirmed_at ?? row.detected_at ?? null,
+      };
     }
     return m;
   }, [detectedMailings, date, repOf]);
@@ -1462,11 +1471,6 @@ function ChatScoreRow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
-  // True when this row's saved score is Критично — indicates a violation exists
-  // (or was just auto-created). Shown as a badge near the save button.
-  const [autoViolationLogged, setAutoViolationLogged] = useState(
-    Boolean(existing) && bandFor(existing!.total_score) === "Критично"
-  );
 
   const staleDays = lastActivity ? daysBetween(lastActivity, asOf) : null;
   const isStale = isStaleActivity(lastActivity, asOf);
@@ -1678,33 +1682,8 @@ function ChatScoreRow({
           body: JSON.stringify({ agr_no: chat.agr_no, accountant: newAcc }),
         }).catch(() => {/* best-effort */});
       }
-      // Auto-log a violation whenever a NEW evaluation lands as "Критично".
-      // Uses the saved total_score so override is respected. Тяжесть по
-      // умолчанию — «Среднее» (стандартный сервис): по «Условия» штраф идёт по
-      // недельной эскалации (1-й чат за неделю — предупреждение, 2-й и далее —
-      // 1 000 др), а НЕ фиксированные 2 000. «Критичное»/«Грубое» ставится
-      // вручную, если чат действительно критичный («… в других случаях
-      // СТАНДАРТНЫЙ»).
-      if (isNew && bandFor(saved.total_score) === "Критично") {
-        fetch("/api/violations", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            vdate: date,
-            accountant: accountant || null,
-            chat_agr_no: chat.agr_no,
-            client: chat.chat_name || null,
-            severity: "Среднее",
-            violation_type: null,
-            sanction: null,
-            note: "авто из оценки",
-          }),
-        })
-          .then(() => setAutoViolationLogged(true))
-          .catch(() => {/* best-effort */});
-      }
-      // Update the badge for non-new saves too (score may have changed).
-      setAutoViolationLogged(bandFor(saved.total_score) === "Критично");
+      // Нарушения создаёт ТОЛЬКО Маргарита вручную (журнал «Нарушения»).
+      // Автоматическое создание нарушения из оценки удалено намеренно.
     } catch {
       setError("Сеть");
     } finally {
@@ -2088,20 +2067,42 @@ function ChatScoreRow({
               )}
             </div>
           )}
-          {/* Detected mailing statuses summary — quick reference in the info cell */}
-          {MONTHLY_CATEGORIES.some((c) => c.id !== "debts" && detectedStatuses[c.id]) && (
-            <div className="text-xs mt-1 flex flex-wrap gap-1">
-              {MONTHLY_CATEGORIES.filter((c) => c.id !== "debts" && detectedStatuses[c.id]).map((c) => (
-                <span
-                  key={c.id}
-                  className="inline-block rounded bg-sky-50 text-sky-700 px-1.5 py-0.5"
-                  title={`Авто-рассылка ${c.name}: ${detectedStatuses[c.id]}`}
-                >
-                  📧 {c.shortName}: {detectedStatuses[c.id]}
-                </span>
-              ))}
-            </div>
-          )}
+          {/* 📌 Сохранено — что бот распознал по рассылкам этого чата (п.2):
+              найденные категории, дата релевантного/подтверждённого сообщения
+              (не «сегодня») и статус подтверждения Маргаритой. Если ничего не
+              распознано — нейтральное «Рассылки не обнаружены». */}
+          {(() => {
+            const found = MONTHLY_CATEGORIES.filter((c) => detectedStatuses[c.id]);
+            const dates = found
+              .map((c) => mailingRows[c.id]?.at)
+              .filter((v): v is string => Boolean(v))
+              .map((v) => v.slice(0, 10))
+              .sort();
+            const relevantDate = dates.length ? dates[dates.length - 1] : null;
+            const confirmed = found.some((c) => manualMailing.has(c.id));
+            return (
+              <div className="text-xs mt-1 rounded bg-gray-50 border border-gray-100 px-2 py-1 space-y-0.5">
+                <div className="font-medium text-gray-500">📌 Сохранено</div>
+                {found.length === 0 ? (
+                  <div className="text-gray-400">Рассылки не обнаружены</div>
+                ) : (
+                  <>
+                    <div className="text-gray-700">
+                      Найдено: {found.map((c) => c.shortName).join(", ")}
+                    </div>
+                    {relevantDate && (
+                      <div className="text-gray-500">
+                        Дата: {relevantDate.split("-").reverse().join(".")}
+                      </div>
+                    )}
+                    <div className={confirmed ? "text-emerald-700" : "text-sky-700"}>
+                      {confirmed ? "Подтверждено Маргаритой" : "Авто-распознавание"}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
           {/* Action buttons: violation / task / hide / add-to-review */}
           <div className="mt-1.5 flex flex-wrap gap-1">
             <button
@@ -2335,14 +2336,6 @@ function ChatScoreRow({
           >
             {saving ? "Сохраняю…" : savedId ? "✓ Сохранено · изменить" : "Оценить"}
           </button>
-          {autoViolationLogged && (
-            <div
-              className="mt-1 inline-flex items-center gap-0.5 rounded bg-red-100 text-red-700 font-medium text-[10px] px-1.5 py-0.5 whitespace-nowrap"
-              title="Нарушение автоматически добавлено в журнал «Нарушения»"
-            >
-              ⚠️ в нарушениях
-            </div>
-          )}
           {mailingPersistError && (
             <div
               className="mt-1 text-[10px] text-red-600"

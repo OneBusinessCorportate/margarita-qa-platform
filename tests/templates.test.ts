@@ -46,7 +46,7 @@ test("report message stars honour the roster filter", () => {
   assert.doesNotMatch(msg, new RegExp(`⭐️ ${droppedStar}:`));
 });
 
-test("report message shows requests per day in roster order with «Нарушения: нет»", () => {
+test("report message shows request counts (unique chats) in roster order with «Нарушения: нет»", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report, {
     requests: [
@@ -54,14 +54,13 @@ test("report message shows requests per day in roster order with «Наруше�
       { accountant: "Նաիրա", count: 20 },
       { accountant: "-", count: 50 },
     ],
-    requestDays: 2,
     roster: ["Նաիրա", "Անի"],
   });
   assert.match(msg, /Кол-во запросов за день:/);
-  // Roster order, per-day figures, each with an inline «Нарушения: нет».
-  assert.match(msg, /Նաիրա — 10\nНарушения: нет/);
-  assert.match(msg, /Անի — 8\nНарушения: нет/);
-  assert.doesNotMatch(msg, /- — 25/); // non-roster name is skipped
+  // Roster order; counts are unique-chat figures (no per-day division).
+  assert.match(msg, /Նաիրա — 20\nНарушения: нет/);
+  assert.match(msg, /Անի — 16\nНарушения: нет/);
+  assert.doesNotMatch(msg, /- — 50/); // non-roster name is skipped
 });
 
 test("violations are merged under each accountant with the daily 0/1000 rule", () => {
@@ -94,31 +93,46 @@ test("violations are merged under each accountant with the daily 0/1000 rule", (
   assert.match(msg, /Итого штрафов: 1 000 др/);
 });
 
-test("daily fine never exceeds 1 000 — severity and manual sanction do not raise it", () => {
+test("severity alone does NOT inflate the auto fine (0/1000), same engine as PDF", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report, {
     requests: [{ accountant: "Լիլիթ", count: 5 }],
-    requestDays: 1,
     roster: ["Լիլիթ"],
     violations: [
-      // Critical + a big manual sanction: still just предупреждение (1st/day).
+      // Critical severity, NO manual sanction → 1st/day = предупреждение.
       viol({
         id: "a", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: "B-1",
-        severity: "Критичное", violation_type: "Грубый ответ", sanction: 5000,
+        severity: "Критичное", violation_type: "Грубый ответ",
         created_at: "2026-06-15T10:00:00Z",
       }),
-      // 2nd of the day → exactly 1 000, never 2 000.
+      // 2nd of the day, no manual sanction → exactly 1 000, never 2 000.
       viol({
         id: "b", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: "B-2",
-        severity: "Критичное", violation_type: "Долгий ответ", sanction: 2000,
+        severity: "Критичное", violation_type: "Долгий ответ",
         created_at: "2026-06-15T11:00:00Z",
       }),
     ],
   });
   assert.match(msg, /- B-1 — Грубый ответ — предупреждение \/ 0 др/);
   assert.match(msg, /- B-2 — Долгий ответ — 1 000 др/);
-  assert.doesNotMatch(msg, /2 000|5 000/); // caps at 1 000, no higher amounts
+  assert.doesNotMatch(msg, /2 000/); // severity never inflates to 2 000
   assert.match(msg, /Итого штрафов: 1 000 др/);
+});
+
+test("manual sanction OVERRIDES the auto rule and carries into the message (п.5/п.7)", () => {
+  const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
+  const msg = buildReportMessage(report, {
+    roster: ["Լիլիթ"],
+    violations: [
+      viol({
+        id: "a", vdate: "2026-06-15", accountant: "Լիլիթ", chat_agr_no: "B-1",
+        violation_type: "Грубый ответ", sanction: 5000, created_at: "2026-06-15T10:00:00Z",
+      }),
+    ],
+  });
+  // Margarita's explicit 5 000 overrides the 0/1000 auto rule — same as PDF/dashboard.
+  assert.match(msg, /5\s?000 др/);
+  assert.match(msg, /Итого штрафов: 5\s?000 др/);
 });
 
 test("score message includes overall, band, monthly statuses and link", () => {
@@ -299,7 +313,6 @@ function fakeReport(over: Partial<DailyReport>): DailyReport {
       newChats: 0,
       chatsWithoutResponsible: 0,
       evaluatedChats: 0,
-      unansweredChats: 0,
     },
     coveragePct: 0,
     distribution: { Отлично: 0, Хорошо: 0, Плохо: 0, Критично: 0 },
@@ -307,7 +320,6 @@ function fakeReport(over: Partial<DailyReport>): DailyReport {
     perAccountant: [],
     needsAttention: [],
     criticalChats: [],
-    unansweredChats: [],
     tasks: { total: 0, onTime: 0, late: 0, overdue: 0, perAccountant: [], items: [] },
     ...over,
   };
@@ -432,7 +444,7 @@ test("weekly fines breakdown: с ростером и без нарушений �
 
 // --- Ежедневный отчёт по нарушениям ПО КАЖДОМУ СОТРУДНИКУ ---------------------
 
-test("daily staff report: shows every rostered employee incl. «0 нарушений», with client/type/fine/comment/status/manager", () => {
+test("daily staff report: только ручные нарушения; сотрудники с 0 нарушений скрыты (п.5/п.9/п.12)", () => {
   const violations: Violation[] = [
     viol({
       id: "1", vdate: "2026-07-10", accountant: "Լիլիթ", chat_agr_no: "B-1",
@@ -453,20 +465,21 @@ test("daily staff report: shows every rostered employee incl. «0 нарушен
 
   assert.match(msg, /^Ежедневный отчёт по нарушениям \(по сотрудникам\)/);
   assert.match(msg, /Дата: 10\.07\.2026/);
-  // Нарушитель с деталями.
-  assert.match(msg, /— Լիլիթ Խոսրովյան — 2 нарушения/);
+  assert.match(msg, /Լիլիթ Խոսրովյան — 1 нарушение/);
   assert.match(msg, /Клиент: Клиент А \(B-1\)/);
-  assert.match(msg, /Нарушение: Грубый ответ ⚠ критично/);
   assert.match(msg, /Комментарий: проверить срочно/);
-  // Менеджер есть → показан; нет записи → «не указан».
   assert.match(msg, /Менеджер: manager_onebusiness/);
-  assert.match(msg, /Менеджер: не указан/);
-  // Статус подтверждения виден для обоих значений.
-  assert.match(msg, /Статус: подтверждено/);
-  assert.match(msg, /Статус: не подтверждено/);
-  // Сотрудники без нарушений всё равно показаны как «0 нарушений».
-  assert.match(msg, /— Ավագ Հայրապետյան — 0 нарушений/);
-  assert.match(msg, /— Գայանե Աբգարյան — 0 нарушений/);
+  assert.ok(!/Клиент Б/.test(msg), "неподтверждённая запись не должна выводиться");
+  assert.ok(!/не подтверждено/.test(msg), "статуса «не подтверждено» больше не бывает");
+  assert.ok(!/Ավագ/.test(msg), "сотрудник без нарушений не должен выводиться");
+  assert.ok(!/Գայанե/.test(msg), "сотрудник без нарушений не должен выводиться");
+});
+
+test("daily staff report: общий пустой статус, когда нарушений нет (п.9)", () => {
+  const breakdown = buildLiveViolationBreakdown([], ["Լիլիթ", "Ավագ"]);
+  const msg = buildDailyStaffViolationsMessage(breakdown, { date: "2026-07-10" });
+  assert.match(msg, /Нет нарушений за выбранный период/);
+  assert.ok(!/Լիլիթ/.test(msg));
 });
 
 // --- Сверка налогового кабинета ----------------------------------------------
