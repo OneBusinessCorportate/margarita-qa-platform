@@ -154,11 +154,33 @@ export async function listChatMailings(period: string): Promise<ChatMailing[]> {
 }
 
 /**
- * Count client messages ("запросы") per accountant over an inclusive ISO date
- * window, Yerevan days. Feeds the «Кол-во запросов за день» report section:
- * every client message in a chat counts toward the chat's assigned accountant.
- * Returns totals — the caller divides by the day count for a per-day figure.
- * Empty on mock store / read errors (the report section is then omitted).
+ * Tally UNIQUE client chats per accountant from raw client messages. The unit is
+ * a CHAT, not a message: five client messages in one chat count as ONE request
+ * for that chat's accountant (fixes the impossible «Запрос — 60» totals that
+ * counted every message / duplicate sync record). Pure + unit-tested.
+ */
+export function tallyRequestChats(
+  rows: { chat_id: string | number }[],
+  chatIdToAcc: Map<string, string>
+): { accountant: string; count: number }[] {
+  const chatsByAcc = new Map<string, Set<string>>();
+  for (const m of rows) {
+    const cid = String(m.chat_id);
+    const acc = chatIdToAcc.get(cid);
+    if (!acc) continue;
+    if (!chatsByAcc.has(acc)) chatsByAcc.set(acc, new Set());
+    chatsByAcc.get(acc)!.add(cid);
+  }
+  return [...chatsByAcc.entries()]
+    .map(([accountant, set]) => ({ accountant, count: set.size }))
+    .sort((a, b) => b.count - a.count);
+}
+
+/**
+ * Count UNIQUE client chats ("запросы") per accountant over an inclusive ISO date
+ * window, Yerevan days. The unit is the chat, not the message — so the figure can
+ * never exceed the accountant's chat count. Feeds the «Кол-во запросов за день»
+ * section. Empty on mock store / read errors (the section is then omitted).
  */
 export async function countClientRequests(
   from: string,
@@ -189,7 +211,7 @@ export async function countClientRequests(
     new Date(to + "T00:00:00Z").getTime() + 24 * 60 * 60 * 1000 - offsetMs
   ).toISOString();
 
-  const counts = new Map<string, number>();
+  const rows: { chat_id: string | number }[] = [];
   const PAGE = 1000;
   for (let fromRow = 0; ; fromRow += PAGE) {
     const { data, error } = await sb
@@ -203,15 +225,11 @@ export async function countClientRequests(
       console.warn(`countClientRequests: ${error.message}`);
       return [];
     }
-    for (const m of data ?? []) {
-      const acc = chatIdToAcc.get(String(m.chat_id));
-      if (acc) counts.set(acc, (counts.get(acc) ?? 0) + 1);
-    }
+    rows.push(...((data ?? []) as { chat_id: string | number }[]));
     if ((data ?? []).length < PAGE) break;
   }
-  return [...counts.entries()]
-    .map(([accountant, count]) => ({ accountant, count }))
-    .sort((a, b) => b.count - a.count);
+  // Unique chats per accountant — NOT message counts (see tallyRequestChats).
+  return tallyRequestChats(rows, chatIdToAcc);
 }
 
 export async function getChat(agrNo: string): Promise<Chat | null> {

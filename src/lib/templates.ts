@@ -137,7 +137,7 @@ export function buildReportMessage(
   options: ReportMessageOptions = {}
 ): string {
   const { serviceQualityPct, perAccountant, filters } = report;
-  const { violations = [], sheetUrl, roster, requests, requestDays } = options;
+  const { violations = [], sheetUrl, roster, requests } = options;
   const dateISO =
     options.date ??
     filters.to ??
@@ -184,40 +184,41 @@ export function buildReportMessage(
   //   • 2-е и каждое следующее за тот же день → 1 000 др.
   // Максимум — 1 000 др, суммы 2 000 и выше НЕ используются. Нарушения берём как
   // есть от вызывающей стороны (только подтверждённые Маргаритой).
-  const DAILY_PENALTY = 1000; // потолок штрафа за одно нарушение
+  // Штрафы считаем ЕДИНЫМ движком groupNarusheniya (violations.ts) — тем же, что
+  // PDF и дашборд. Так суммы в сообщении, PDF и на дашборде всегда совпадают
+  // (п.7). Один чат = одно нарушение (типы через запятую), 1-е за день —
+  // предупреждение (0), далее 1 000 др, ручная санкция перебивает.
   type ViolItem = { code: string; type: string; fine: number };
   const violByAcc = new Map<string, ViolItem[]>();
-  const seenAccDay = new Map<string, number>();
   let totalFine = 0;
-  // Стабильный порядок: по дню, затем по времени создания — так «первое» за день
-  // определяется детерминированно.
-  const sortedViol = [...violations].sort(
-    (a, b) =>
-      (a.vdate ?? "").localeCompare(b.vdate ?? "") ||
-      (a.created_at ?? "").localeCompare(b.created_at ?? "")
-  );
-  for (const v of sortedViol) {
-    const acc = v.accountant?.trim() || "-";
-    const day = (v.vdate ?? "").slice(0, 10);
-    const seenKey = `${acc}|${day}`;
-    const seen = seenAccDay.get(seenKey) ?? 0;
-    const fine = seen >= 1 ? DAILY_PENALTY : 0; // 1-е за день — предупреждение
-    seenAccDay.set(seenKey, seen + 1);
-    totalFine += fine;
+  for (const n of groupNarusheniya(
+    violations.map((v) => ({
+      vdate: v.vdate,
+      accountant: v.accountant,
+      severity: v.severity,
+      sanction: v.sanction,
+      chat_agr_no: v.chat_agr_no,
+      client: v.client,
+      violation_type: v.violation_type,
+    }))
+  )) {
+    const acc = n.accountant?.trim() || "-";
+    totalFine += n.fine;
     const list = violByAcc.get(acc) ?? [];
     list.push({
-      code: v.chat_agr_no?.trim() || "-",
-      type: (v.violation_type ?? "").trim() || "-",
-      fine,
+      code: n.chat_agr_no?.trim() || n.client?.trim() || "-",
+      type: n.types.join(", ") || "-",
+      fine: n.fine,
     });
     violByAcc.set(acc, list);
   }
 
-  // Per-day request figure per accountant.
-  const days = requestDays && requestDays > 1 ? requestDays : 1;
+  // Request figure per accountant = UNIQUE client chats in the reporting scope
+  // (see tallyRequestChats). No per-day division — the count is already the
+  // per-scope unique-chat figure, so it can never exceed the chat count.
   const reqByAcc = new Map<string, number>();
   for (const r of requests ?? []) {
-    reqByAcc.set(r.accountant, Math.round(r.count / days));
+    reqByAcc.set(r.accountant, r.count);
   }
 
   // Кого показываем: бухгалтеры с запросами за день ИЛИ с нарушениями. С
