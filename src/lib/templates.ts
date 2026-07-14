@@ -618,6 +618,14 @@ export function buildDailyStaffViolationsMessage(
       `штрафов: ${s.penalties} · сумма: ${fmtDram(s.fineTotal)} др`
   );
 
+  // Сотрудники без нарушений не выводятся (п.9). Если нарушений нет вовсе —
+  // один общий пустой статус на всю секцию, без строк по каждому сотруднику.
+  if (report.perAccountant.length === 0) {
+    lines.push("");
+    lines.push("Нет нарушений за выбранный период");
+    return lines.join("\n");
+  }
+
   for (const g of report.perAccountant) {
     lines.push("");
     lines.push(`— ${g.employeeFull} — ${fmtViolationCount(g.count)}`);

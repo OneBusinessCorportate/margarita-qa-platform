@@ -90,6 +90,9 @@ export default function ViolationsPanel({
   const filtered = useMemo(
     () =>
       rows.filter((v) => {
+        // Легаси авто-нарушения («Авто из оценки», confirmed=false) исключены из
+        // журнала — их создаёт больше не платформа, а только Маргарита вручную.
+        if (v.confirmed === false) return false;
         if (fSeverity && v.severity !== fSeverity) return false;
         if (fAccountant && v.accountant !== fAccountant) return false;
         if (!showAllDates) {
