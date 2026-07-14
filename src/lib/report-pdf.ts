@@ -461,21 +461,6 @@ export function buildReportPdf(
       "Нарушений за период нет ✅"
     );
 
-    // Без ответа — текущий бэклог (клиент написал последним).
-    const unansRows = report.unansweredChats
-      .slice(0, 40)
-      .map((c) => {
-        const name = c.chat_name ? ` — ${c.chat_name}` : "";
-        const who = c.accountant ?? "—";
-        const wait = c.waitingDays != null ? ` · ждёт ${c.waitingDays} дн` : "";
-        return `• ${c.chat_agr_no}${name} · ${who}${wait}`;
-      });
-    section(
-      `Без ответа сейчас (${report.unansweredChats.length})`,
-      unansRows,
-      "Все чаты отвечены ✅"
-    );
-
     // Задачи — per-task detail with the date fields the grid counts hid (п.5):
     // Due Date (Original), Due Date (Postponed), Completed At + менеджер (п.6).
     const taskRows = (report.tasks.items ?? []).map((t) => {

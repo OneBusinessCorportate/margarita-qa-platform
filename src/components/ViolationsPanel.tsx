@@ -87,45 +87,6 @@ export default function ViolationsPanel({
   const [fTo, setFTo] = useState(today());
   const [showAllDates, setShowAllDates] = useState(false);
 
-  // Import critical chats
-  const [importing, setImporting] = useState(false);
-  const [importMsg, setImportMsg] = useState<string | null>(null);
-
-  async function importCritical() {
-    const date = showAllDates ? today() : fFrom;
-    setImporting(true);
-    setImportMsg(null);
-    try {
-      const res = await fetch("/api/violations/import-critical", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date }),
-      });
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        setImportMsg(d.error || "Ошибка импорта");
-        return;
-      }
-      const { created, skipped }: { created: number; skipped: number } = await res.json();
-      setImportMsg(`Добавлено: ${created}, пропущено: ${skipped}`);
-      if (created > 0) {
-        const listRes = await fetch(`/api/violations?from=${date}&to=${date}`);
-        if (listRes.ok) {
-          const fresh: Violation[] = await listRes.json();
-          setRows((prev) => {
-            const existingIds = new Set(prev.map((v) => v.id));
-            const newRows = fresh.filter((v) => !existingIds.has(v.id));
-            return [...newRows, ...prev];
-          });
-        }
-      }
-    } catch {
-      setImportMsg("Сетевая ошибка");
-    } finally {
-      setImporting(false);
-    }
-  }
-
   const filtered = useMemo(
     () =>
       rows.filter((v) => {
@@ -317,19 +278,6 @@ export default function ViolationsPanel({
           Сброс
         </button>
         <span className="text-xs text-gray-400 pb-1.5">Показано: {filtered.length}</span>
-        <div className="flex items-center gap-2 pb-1.5 ml-auto">
-          <button
-            className="btn-secondary !py-1 !px-2 text-xs"
-            onClick={importCritical}
-            disabled={importing}
-            title={`Импортировать чаты с оценкой «Критично» за ${showAllDates ? "сегодня" : fFrom}`}
-          >
-            {importing ? "…" : "➕ Импортировать критичные чаты"}
-          </button>
-          {importMsg && (
-            <span className="text-xs text-gray-500">{importMsg}</span>
-          )}
-        </div>
       </div>
 
       {error && <div className="text-sm text-red-600 px-1">{error}</div>}
@@ -498,11 +446,6 @@ export default function ViolationsPanel({
                       {v.severity ?? "—"}
                     </span>
                     <div className="mt-0.5 space-x-1">
-                      {v.confirmed === false && (
-                        <span className="inline-block rounded bg-gray-200 text-gray-600 text-[11px] px-1 py-0.5" title="Авто-импорт — не подтверждено Маргаритой">
-                          не подтв.
-                        </span>
-                      )}
                       {v.appeal_status === "appealed" && (
                         <span className="inline-block rounded bg-blue-100 text-blue-700 text-[11px] px-1 py-0.5">апелляция</span>
                       )}

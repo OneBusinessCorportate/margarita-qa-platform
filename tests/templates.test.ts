@@ -299,7 +299,6 @@ function fakeReport(over: Partial<DailyReport>): DailyReport {
       newChats: 0,
       chatsWithoutResponsible: 0,
       evaluatedChats: 0,
-      unansweredChats: 0,
     },
     coveragePct: 0,
     distribution: { Отлично: 0, Хорошо: 0, Плохо: 0, Критично: 0 },
@@ -307,7 +306,6 @@ function fakeReport(over: Partial<DailyReport>): DailyReport {
     perAccountant: [],
     needsAttention: [],
     criticalChats: [],
-    unansweredChats: [],
     tasks: { total: 0, onTime: 0, late: 0, overdue: 0, perAccountant: [], items: [] },
     ...over,
   };

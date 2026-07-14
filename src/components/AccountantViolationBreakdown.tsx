@@ -109,11 +109,6 @@ export default function AccountantViolationBreakdown({
                             критично
                           </span>
                         )}
-                        {!l.confirmed && (
-                          <span className="inline-block rounded bg-gray-200 text-gray-600 font-medium text-xs px-1.5 py-0.5" title="Авто-импорт — ещё не подтверждено Маргаритой">
-                            не подтв.
-                          </span>
-                        )}
                         {l.appealStatus === "appealed" && (
                           <span className="inline-block rounded bg-blue-100 text-blue-700 font-medium text-xs px-1.5 py-0.5">
                             апелляция

@@ -732,9 +732,6 @@ export function buildAccountantMessage(
     new Date().toISOString().slice(0, 10);
   const acc = report.perAccountant.find((a) => a.accountant === accountant);
   const crit = report.criticalChats.filter((c) => c.accountant === accountant);
-  const waiting = (report.unansweredChats ?? []).filter(
-    (c) => c.accountant === accountant
-  );
 
   const lines: string[] = [];
   lines.push(`👤 ${accountant}`);
@@ -763,23 +760,13 @@ export function buildAccountantMessage(
     lines.push("✅ Критичных чатов нет — спасибо за работу!");
   }
 
-  if (waiting.length) {
-    lines.push("");
-    lines.push(`⏳ Чаты без ответа (${waiting.length}):`);
-    for (const w of waiting.slice(0, 10)) {
-      const days =
-        w.waitingDays != null && w.waitingDays > 0 ? ` · ждёт ${w.waitingDays} дн` : "";
-      lines.push(`• ${chatLabel(w.chat_agr_no, w.chat_name)}${days}`);
-    }
-  }
-
   return lines.join("\n");
 }
 
 /**
- * Distinct accountants who have something worth sending (a critical chat, a low
- * average, or a chat still waiting on a reply) for the period — the people
- * Margarita should message, most urgent first.
+ * Distinct accountants who have something worth sending (a critical chat or a
+ * low average) for the period — the people Margarita should message, most
+ * urgent first.
  */
 export function accountantsToMessage(report: DailyReport): string[] {
   const score = new Map<string, number>();
@@ -788,7 +775,6 @@ export function accountantsToMessage(report: DailyReport): string[] {
     score.set(name, (score.get(name) ?? 0) + by);
   };
   for (const c of report.criticalChats) bump(c.accountant, 100);
-  for (const w of report.unansweredChats ?? []) bump(w.accountant, 10);
   for (const a of report.perAccountant) if (a.lowCount > 0) bump(a.accountant, a.lowCount);
   return [...score.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))

@@ -108,18 +108,6 @@ export interface TaskReportRow {
   completed_at: string | null;
 }
 
-/**
- * A live chat still awaiting a reply (the client had the last word). This is a
- * current-state service signal — it is NOT tied to the report's date window.
- */
-export interface UnansweredChat {
-  chat_agr_no: string;
-  chat_name: string | null;
-  accountant: string | null;
-  /** Whole days the client has been waiting, relative to `asOf` (null if unknown). */
-  waitingDays: number | null;
-}
-
 export interface DaySummary {
   date: string;
   activeChats?: number;
@@ -144,8 +132,6 @@ export interface DailyReport {
     newChats: number;
     chatsWithoutResponsible: number;
     evaluatedChats: number;
-    /** Live chats where the client had the last word (still unanswered). */
-    unansweredChats: number;
   };
   /**
    * Share of the live book that was actually reviewed in the window:
@@ -168,8 +154,6 @@ export interface DailyReport {
   needsAttention: AttentionItem[];
   /** Chats that scored Критично in the window, worst score first. May be empty. */
   criticalChats: CriticalChat[];
-  /** Live chats still awaiting a reply, longest wait first. May be empty. */
-  unansweredChats: UnansweredChat[];
   /** Per-day × per-accountant scores; populated for multi-day windows (weekly view, stars). */
   perDayPerAccountant?: DayAccountantScore[];
   /** Per-day aggregate metrics (evaluated count, distribution, service %); multi-day only. */
@@ -503,25 +487,6 @@ export function buildReport(
         a.chat_agr_no.localeCompare(b.chat_agr_no)
     );
 
-  // Unanswered chats — current-state service backlog (client had the last word).
-  // Independent of the date window: it is "who is waiting right now".
-  const unansweredChats: UnansweredChat[] = scopedChats
-    .filter((c) => c.status === "Active" && c.unanswered === true)
-    .map((c) => {
-      const last = lastActivityOf(c);
-      return {
-        chat_agr_no: c.agr_no,
-        chat_name: c.chat_name ?? null,
-        accountant: c.accountant,
-        waitingDays: last ? Math.max(0, daysBetween(last, asOf)) : null,
-      };
-    })
-    .sort(
-      (a, b) =>
-        (b.waitingDays ?? -1) - (a.waitingDays ?? -1) ||
-        a.chat_agr_no.localeCompare(b.chat_agr_no)
-    );
-
   // Tasks block.
   const scopedTasks = tasks.filter((t) => {
     const d = t.checking_date ?? t.completed_at ?? t.due_date_original;
@@ -702,7 +667,6 @@ export function buildReport(
         (c) => c.status === "Active" && !c.accountant
       ).length,
       evaluatedChats,
-      unansweredChats: unansweredChats.length,
     },
     coveragePct,
     distribution,
@@ -710,7 +674,6 @@ export function buildReport(
     perAccountant,
     needsAttention,
     criticalChats,
-    unansweredChats,
     perDayPerAccountant,
     perDay,
     tasks: {

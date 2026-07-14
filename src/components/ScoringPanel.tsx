@@ -1462,11 +1462,6 @@ function ChatScoreRow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null);
-  // True when this row's saved score is Критично — indicates a violation exists
-  // (or was just auto-created). Shown as a badge near the save button.
-  const [autoViolationLogged, setAutoViolationLogged] = useState(
-    Boolean(existing) && bandFor(existing!.total_score) === "Критично"
-  );
 
   const staleDays = lastActivity ? daysBetween(lastActivity, asOf) : null;
   const isStale = isStaleActivity(lastActivity, asOf);
@@ -1678,33 +1673,8 @@ function ChatScoreRow({
           body: JSON.stringify({ agr_no: chat.agr_no, accountant: newAcc }),
         }).catch(() => {/* best-effort */});
       }
-      // Auto-log a violation whenever a NEW evaluation lands as "Критично".
-      // Uses the saved total_score so override is respected. Тяжесть по
-      // умолчанию — «Среднее» (стандартный сервис): по «Условия» штраф идёт по
-      // недельной эскалации (1-й чат за неделю — предупреждение, 2-й и далее —
-      // 1 000 др), а НЕ фиксированные 2 000. «Критичное»/«Грубое» ставится
-      // вручную, если чат действительно критичный («… в других случаях
-      // СТАНДАРТНЫЙ»).
-      if (isNew && bandFor(saved.total_score) === "Критично") {
-        fetch("/api/violations", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            vdate: date,
-            accountant: accountant || null,
-            chat_agr_no: chat.agr_no,
-            client: chat.chat_name || null,
-            severity: "Среднее",
-            violation_type: null,
-            sanction: null,
-            note: "авто из оценки",
-          }),
-        })
-          .then(() => setAutoViolationLogged(true))
-          .catch(() => {/* best-effort */});
-      }
-      // Update the badge for non-new saves too (score may have changed).
-      setAutoViolationLogged(bandFor(saved.total_score) === "Критично");
+      // Нарушения создаёт ТОЛЬКО Маргарита вручную (журнал «Нарушения»).
+      // Автоматическое создание нарушения из оценки удалено намеренно.
     } catch {
       setError("Сеть");
     } finally {
@@ -2335,14 +2305,6 @@ function ChatScoreRow({
           >
             {saving ? "Сохраняю…" : savedId ? "✓ Сохранено · изменить" : "Оценить"}
           </button>
-          {autoViolationLogged && (
-            <div
-              className="mt-1 inline-flex items-center gap-0.5 rounded bg-red-100 text-red-700 font-medium text-[10px] px-1.5 py-0.5 whitespace-nowrap"
-              title="Нарушение автоматически добавлено в журнал «Нарушения»"
-            >
-              ⚠️ в нарушениях
-            </div>
-          )}
           {mailingPersistError && (
             <div
               className="mt-1 text-[10px] text-red-600"
