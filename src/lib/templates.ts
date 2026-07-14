@@ -17,6 +17,7 @@ import { MONTHLY_CATEGORIES, bandFor, failingMailings, type QualityBand } from "
 import type { Chat, Evaluation, Violation } from "./types";
 import { groupNarusheniya } from "./violations";
 import type { ViolationReport } from "./violation-report";
+import type { MailingComplianceReport } from "./mailing-compliance";
 
 export function telegramConfigured(): boolean {
   return Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
@@ -631,6 +632,49 @@ export function buildWeeklyViolationHistory(
   }
   lines.push("");
   lines.push(`Итого за неделю: ${weekCount} нарушений, штрафы ${fmtDram(weekTotal)} др`);
+  return lines.join("\n");
+}
+
+/**
+ * Telegram-ready mailing-compliance report (файл-2). Grouped by accountant, each
+ * category on its own line with «Статус — N» pairs. Zero-count statuses and
+ * empty accountants/categories are omitted; consistent names/capitalization; the
+ * period is shown at the top. Uses the SAME canonical report object as the
+ * dashboard/PDF (buildMailingCompliance), so the numbers always agree.
+ */
+export function buildMailingComplianceMessage(
+  report: MailingComplianceReport,
+  options: { periodLabel?: string } = {}
+): string {
+  const lines: string[] = [];
+  lines.push("Отчёт по рассылкам");
+  lines.push("");
+  lines.push(`Период: ${options.periodLabel ?? report.period}`);
+
+  const grand: Record<string, number> = {};
+  let shownAccountants = 0;
+  for (const acc of report.perAccountant) {
+    const catsWithData = acc.categories.filter((c) => c.statuses.length > 0);
+    if (catsWithData.length === 0) continue; // skip empty accountants
+    shownAccountants += 1;
+    lines.push("");
+    lines.push(acc.accountant);
+    for (const cat of catsWithData) {
+      lines.push(cat.label);
+      const pairs = cat.statuses
+        .filter((s) => s.count > 0)
+        .map((s) => {
+          grand[cat.label] = (grand[cat.label] ?? 0) + s.count;
+          return `${s.status} — ${s.count}`;
+        });
+      lines.push(pairs.join("  "));
+    }
+  }
+
+  if (shownAccountants === 0) {
+    lines.push("");
+    lines.push("Нет данных по рассылкам за период");
+  }
   return lines.join("\n");
 }
 
