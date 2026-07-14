@@ -89,3 +89,36 @@ describe("report consistency — one canonical pipeline", () => {
     assert.match(msg, /5\s?000 др/);
   });
 });
+
+describe("weekly violation history (п.10)", () => {
+  it("groups by day, one chat row (comma types), weekly total matches the fine engine", async () => {
+    const { buildWeeklyViolationHistory } = await import("../src/lib/templates.js");
+    const vs: Violation[] = [
+      viol({ id: "1", vdate: "2026-06-15", accountant: "Гаяне", chat_agr_no: "B-1", client: "ABC", violation_type: "опоздание", created_at: "2026-06-15T09:00:00Z" }),
+      viol({ id: "2", vdate: "2026-06-15", accountant: "Гаяне", chat_agr_no: "B-1", client: "ABC", violation_type: "неверная инфо", created_at: "2026-06-15T10:00:00Z" }),
+      viol({ id: "3", vdate: "2026-06-16", accountant: "Лилит", chat_agr_no: "B-2", client: "XYZ", violation_type: "грубость", note: "разобрать", created_at: "2026-06-16T09:00:00Z" }),
+      // unconfirmed/legacy must be excluded
+      viol({ id: "4", vdate: "2026-06-16", accountant: "Лилит", chat_agr_no: "B-9", violation_type: "авто", confirmed: false, created_at: "2026-06-16T11:00:00Z" }),
+    ];
+    const msg = buildWeeklyViolationHistory(vs, { weekFrom: "2026-06-15", weekTo: "2026-06-21" });
+    // grouped by day
+    assert.match(msg, /▸ 15\.06\.2026/);
+    assert.match(msg, /▸ 16\.06\.2026/);
+    // B-1 collapses two problems into one row, comma-separated
+    const b1Lines = msg.split("\n").filter((l) => l.includes("B-1"));
+    assert.equal(b1Lines.length, 1, "one row for B-1");
+    assert.match(b1Lines[0], /опоздание, неверная инфо/);
+    // comment surfaced; unconfirmed excluded
+    assert.match(msg, /«разобрать»/);
+    assert.ok(!/B-9/.test(msg), "unconfirmed/legacy excluded");
+
+    // Weekly total matches computeViolationFines over the SAME confirmed rows.
+    const confirmed = vs.filter((v) => v.confirmed !== false);
+    const engineTotal = computeViolationFines(
+      confirmed.map((v) => ({ vdate: v.vdate, accountant: v.accountant, severity: v.severity, sanction: v.sanction, chat_agr_no: v.chat_agr_no, client: v.client, violation_type: v.violation_type }))
+    ).reduce((s, n) => s + n, 0);
+    const m = msg.match(/штрафы ([\d\s]+) др/);
+    const msgTotal = m ? Number(m[1].replace(/\s/g, "")) : -1;
+    assert.equal(msgTotal, engineTotal);
+  });
+});

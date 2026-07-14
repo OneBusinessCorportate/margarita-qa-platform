@@ -567,6 +567,73 @@ export function buildWeeklyFinesBreakdown(
   return lines.join("\n");
 }
 
+/**
+ * Недельная история нарушений по ДНЯМ (п.10) — для раздела «Сообщения», чтобы
+ * руководство видело нарушения за каждый день недели. Показываются только дни, в
+ * которых есть нарушения. По каждому чату — ОДНА строка (несколько нарушений по
+ * чату за день объединены через запятую): клиент/чат, бухгалтер, типы,
+ * предупреждение/штраф с суммой и комментарий. Границы дней — Ереван (даты уже
+ * приходят как Yerevan-ISO из вызывающей стороны). Суммы считаются тем же
+ * движком `groupNarusheniya`, что дашборд/PDF, поэтому недельный итог совпадает.
+ * Только подтверждённые ручные нарушения (confirmed !== false).
+ */
+export function buildWeeklyViolationHistory(
+  weekViolations: Violation[],
+  options: { weekFrom: string; weekTo: string }
+): string {
+  const { weekFrom, weekTo } = options;
+  const confirmed = weekViolations.filter((v) => v.confirmed !== false);
+  const fineInput = confirmed.map((v) => ({
+    vdate: v.vdate,
+    accountant: v.accountant,
+    severity: v.gross ? "Грубое" : v.severity,
+    sanction: v.sanction,
+    chat_agr_no: v.chat_agr_no,
+    client: v.client,
+    violation_type: v.violation_type,
+  }));
+  const narusheniya = groupNarusheniya(fineInput);
+
+  const byDay = new Map<string, typeof narusheniya>();
+  for (const n of narusheniya) {
+    const day = (n.vdate ?? "").slice(0, 10);
+    if (!day) continue;
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day)!.push(n);
+  }
+
+  const lines: string[] = [];
+  lines.push(`История нарушений за неделю (${fmtDay(weekFrom)} — ${fmtDay(weekTo)}):`);
+  if (byDay.size === 0) {
+    lines.push("");
+    lines.push("Нет нарушений за неделю");
+    return lines.join("\n");
+  }
+
+  let weekTotal = 0;
+  let weekCount = 0;
+  for (const day of [...byDay.keys()].sort()) {
+    const items = byDay.get(day)!;
+    lines.push("");
+    lines.push(`▸ ${fmtFullDay(day)}`);
+    for (const n of items) {
+      weekCount += 1;
+      weekTotal += n.fine;
+      const who = n.accountant?.trim() || "—";
+      const target = n.client?.trim() || n.chat_agr_no?.trim() || "—";
+      const code = n.chat_agr_no && n.client ? ` (${n.chat_agr_no})` : "";
+      const types = n.types.join(", ") || "—";
+      const money = n.fine > 0 ? `${fmtDram(n.fine)} др` : "предупреждение";
+      const note = confirmed[n.rowIndexes[0]]?.note?.trim();
+      const noteStr = note ? ` — «${note}»` : "";
+      lines.push(`  • ${target}${code} · ${who} · ${types} · ${money}${noteStr}`);
+    }
+  }
+  lines.push("");
+  lines.push(`Итого за неделю: ${weekCount} нарушений, штрафы ${fmtDram(weekTotal)} др`);
+  return lines.join("\n");
+}
+
 /** dd.mm.yyyy — full date for the standalone daily / reconciliation reports. */
 function fmtFullDay(iso: string | null): string {
   if (!iso) return "—";
