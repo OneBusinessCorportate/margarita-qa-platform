@@ -11,6 +11,7 @@ const LINKS = [
   { href: "/handbook", label: "Регламент" },
   { href: "/dashboard", label: "Отчёт" },
   { href: "/mailing-report", label: "Рассылки" },
+  { href: "/reconcile", label: "Сверка" },
   { href: "/work-report", label: "Отчёт по работе" },
   { href: "/messages", label: "Сообщения" },
 ];
