@@ -1,5 +1,6 @@
 import { getWorkReport } from "@/lib/appeals-data";
 import { listAccountants } from "@/lib/repo";
+import AutoRefresh from "@/components/AutoRefresh";
 
 export const dynamic = "force-dynamic";
 
@@ -34,11 +35,14 @@ export default async function WorkReportPage({
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-semibold">Отчёт по работе</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold">Отчёт по работе</h1>
+          <AutoRefresh />
+        </div>
         <p className="text-sm text-gray-500">
           Объём проверок Маргариты: сколько чатов проверено, сколько проблем и
           нарушений создано, сколько апелляций и их решения — по периоду и
-          бухгалтерам.
+          бухгалтерам. Данные обновляются автоматически, без перезагрузки.
         </p>
       </div>
 
