@@ -6,7 +6,6 @@ import {
   DAILY_CRITERIA,
   MONTHLY_CATEGORIES,
   PREV_STATUS_DEFAULT,
-  bandFor,
   canonicalMonthlyStatus,
   computeOverall,
   daysBetween,
@@ -1614,7 +1613,6 @@ function ChatScoreRow({
         prev: prevStatuses[cat.id] ?? PREV_STATUS_DEFAULT,
       };
     }
-    const isNew = !savedId;
     const payload = {
       chat_agr_no: chat.agr_no,
       checking_date: date,

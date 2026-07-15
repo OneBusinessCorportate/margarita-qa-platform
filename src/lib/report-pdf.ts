@@ -104,8 +104,6 @@ interface Cell {
   align?: "left" | "center";
 }
 
-type Doc = InstanceType<typeof PDFDocument>;
-
 /** Build the day-by-day monitoring grid PDF and resolve with its bytes. */
 export function buildReportPdf(
   report: DailyReport,

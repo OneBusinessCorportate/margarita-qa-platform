@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { SINGLE_TASK_STATUSES, TASK_PRIORITIES } from "@/lib/scoring";
+import { TASK_PRIORITIES } from "@/lib/scoring";
 import type { Task } from "@/lib/types";
 
 const today = () => new Date().toISOString().slice(0, 10);

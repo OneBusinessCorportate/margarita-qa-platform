@@ -25,7 +25,7 @@ export function telegramConfigured(): boolean {
 
 /** DD.MM from an ISO date (for the report header). */
 function fmtDay(iso: string): string {
-  const [y, m, d] = iso.slice(0, 10).split("-");
+  const [, m, d] = iso.slice(0, 10).split("-");
   return d && m ? `${d}.${m}` : iso;
 }
 
