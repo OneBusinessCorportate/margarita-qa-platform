@@ -36,6 +36,26 @@ test("chatsChecked counts distinct chats across evaluations", () => {
   assert.deepEqual(r.appeals, { total: 3, pending: 1, approved: 1, rejected: 1 });
 });
 
+test("unconfirmed / auto violations are excluded (confirmed === false)", () => {
+  // Same as the dashboard/daily report: only Margarita's confirmed violations
+  // count. Auto/legacy rows (confirmed: false) must NOT inflate the numbers.
+  const r = buildWorkReport({
+    evaluations: [{ chat_agr_no: "B-1", accountant: "Olya", checking_date: "2026-07-01" }],
+    violations: [
+      { accountant: "Olya", vdate: "2026-07-01", chat_agr_no: "B-1" }, // confirmed (undefined)
+      { accountant: "Olya", vdate: "2026-07-01", chat_agr_no: "B-2", confirmed: true },
+      { accountant: "Olya", vdate: "2026-07-01", chat_agr_no: "B-3", confirmed: false }, // auto
+      { accountant: "David", vdate: "2026-07-02", chat_agr_no: "B-9", confirmed: false }, // auto
+    ],
+    issues: [],
+    appeals: [],
+  });
+  // Only the two confirmed chats (B-1, B-2) count — the two auto rows drop out.
+  assert.equal(r.violations, 2);
+  const david = r.byAccountant.find((x) => x.name.startsWith("David"));
+  assert.ok(!david, "accountant with only auto violations produces no row");
+});
+
 test("byDate buckets by calendar day, newest first", () => {
   const r = buildWorkReport({ evaluations, violations, issues, appeals });
   assert.deepEqual(

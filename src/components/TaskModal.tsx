@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { TASK_PRIORITIES } from "@/lib/scoring";
+import { SINGLE_TASK_STATUSES, TASK_PRIORITIES, isTaskClosed } from "@/lib/scoring";
 import type { Task } from "@/lib/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
 /**
- * Add a task without leaving the scoring page — mirrors ViolationModal.
+ * Add a task without leaving the scoring page — mirrors ViolationModal, and now
+ * carries the SAME fields as the «Задачи» page table so a task created here is
+ * complete, not a stub: № / Чат / Бухгалтер, Описание, Due Date (Original),
+ * Due Date (Postponed), Completed At, Приоритет, Статус и Состояние.
  * Pre-filled from the chat row; on save POSTs to /api/tasks.
  */
 export default function TaskModal({
@@ -26,12 +29,17 @@ export default function TaskModal({
   onSaved?: (t: Task) => void;
 }) {
   const [dueDate, setDueDate] = useState(defaultDate ?? today());
+  const [duePostponed, setDuePostponed] = useState("");
+  const [completedAt, setCompletedAt] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState("Medium");
+  const [status, setStatus] = useState<string>("-");
   const [acc, setAcc] = useState(accountant ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+
+  const closed = isTaskClosed({ task_status: status });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -40,6 +48,17 @@ export default function TaskModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // When the status becomes «Completed …», default Completed At to today (as on
+  // the Задачи page); clear it when the task is no longer completed.
+  function changeStatus(next: string) {
+    setStatus(next);
+    if (next.startsWith("Completed")) {
+      setCompletedAt((prev) => prev || today());
+    } else {
+      setCompletedAt("");
+    }
+  }
 
   async function save() {
     setSaving(true);
@@ -53,8 +72,10 @@ export default function TaskModal({
           accountant: acc || null,
           description: description || null,
           due_date_original: dueDate || null,
+          due_date_postponed: duePostponed || null,
+          completed_at: completedAt || null,
           priority,
-          task_status: "-",
+          task_status: status,
         }),
       });
       if (!res.ok) {
@@ -92,6 +113,7 @@ export default function TaskModal({
           </button>
         </div>
 
+        {/* № / Чат */}
         <div className="text-xs text-gray-500">
           {client ?? chatAgrNo}
           <span className="text-gray-400"> · № {chatAgrNo}</span>
@@ -103,8 +125,26 @@ export default function TaskModal({
           </div>
         ) : (
           <>
+            <Field label="Бухгалтер">
+              <input
+                className="input w-full"
+                value={acc}
+                onChange={(e) => setAcc(e.target.value)}
+                placeholder="имя бухгалтера"
+              />
+            </Field>
+
+            <Field label="Описание">
+              <input
+                className="input w-full"
+                placeholder="напр. «вернётся с ответом через 2 дня»"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </Field>
+
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Срок">
+              <Field label="Due Date (Original)">
                 <input
                   type="date"
                   className="input w-full"
@@ -112,6 +152,18 @@ export default function TaskModal({
                   onChange={(e) => setDueDate(e.target.value)}
                 />
               </Field>
+              <Field label="Due Date (Postponed)">
+                <input
+                  type="date"
+                  className="input w-full"
+                  value={duePostponed}
+                  onChange={(e) => setDuePostponed(e.target.value)}
+                  title="Перенос срока — исходный срок остаётся слева"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <Field label="Приоритет">
                 <select
                   className="input w-full"
@@ -125,25 +177,46 @@ export default function TaskModal({
                   ))}
                 </select>
               </Field>
+              <Field label="Статус">
+                <select
+                  className="input w-full"
+                  value={status}
+                  onChange={(e) => changeStatus(e.target.value)}
+                >
+                  {SINGLE_TASK_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </Field>
             </div>
 
-            <Field label="Бухгалтер">
-              <input
-                className="input w-full"
-                value={acc}
-                onChange={(e) => setAcc(e.target.value)}
-                placeholder="имя бухгалтера"
-              />
-            </Field>
-
-            <Field label="Описание задачи">
-              <input
-                className="input w-full"
-                placeholder="напр. «вернётся с ответом через 2 дня»"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Completed At">
+                <input
+                  type="date"
+                  className="input w-full"
+                  value={completedAt}
+                  onChange={(e) => setCompletedAt(e.target.value)}
+                  disabled={!status.startsWith("Completed")}
+                  title={
+                    status.startsWith("Completed")
+                      ? "Дата фактического выполнения"
+                      : "Доступно, когда статус «Completed …»"
+                  }
+                />
+              </Field>
+              <Field label="Состояние">
+                <div className="input w-full flex items-center bg-gray-50">
+                  {closed ? (
+                    <span className="text-green-700 font-medium">✓ закрыта</span>
+                  ) : (
+                    <span className="text-gray-500">открыта</span>
+                  )}
+                </div>
+              </Field>
+            </div>
 
             {error && <div className="text-sm text-red-600">{error}</div>}
 

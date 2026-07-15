@@ -32,6 +32,8 @@ export interface ViolationLike {
   chat_agr_no?: string | null;
   client?: string | null;
   violation_type?: string | null;
+  /** false = авто/легаси-запись (не подтверждена Маргаритой) — не считается. */
+  confirmed?: boolean | null;
 }
 
 export interface IssueLike {
@@ -148,8 +150,14 @@ export function buildWorkReport({
   // Нарушения → предупреждение/штраф по ЕДИНОМУ движку (violations.ts), как на
   // дашборде: 1-е за день — предупреждение (0 др), повторное — 1 000 др, ручная
   // санкция перебивает. Так counts здесь и на дашборде всегда совпадают.
+  //
+  // Только ПОДТВЕРЖДЁННЫЕ Маргаритой нарушения (confirmed !== false). Авто- и
+  // легаси-записи («авто из оценки», помеченные confirmed=false) исключаются —
+  // ровно как в дашборде, ежедневном отчёте и разбивке нарушений. Иначе отчёт
+  // показывал «слишком много» ненастоящих нарушений.
+  const confirmedViolations = violations.filter((v) => v.confirmed !== false);
   const narusheniya = groupNarusheniya(
-    violations.map((v) => ({
+    confirmedViolations.map((v) => ({
       vdate: (v.vdate || "").slice(0, 10),
       accountant: v.accountant ?? "",
       severity: v.gross ? "Грубое" : v.severity ?? null,
