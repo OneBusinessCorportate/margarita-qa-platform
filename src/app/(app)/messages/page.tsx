@@ -3,7 +3,6 @@ import {
   getDailyAnalytics,
   getReport,
   listAccountants,
-  listChats,
   listViolations,
 } from "@/lib/repo";
 import { mondayOf } from "@/lib/scoring";
@@ -14,15 +13,12 @@ import {
   buildFridayFinesMessage,
   buildMonthlyFinesMessage,
   buildReportMessage,
-  buildTaxCabinetReconciliation,
   buildWeeklyReportMessage,
   buildWeeklyViolationHistory,
   telegramConfigured,
-  type TaxCabinetRow,
 } from "@/lib/templates";
 import { computeViolationFines } from "@/lib/violations";
 import { dailyViolationRows } from "@/lib/violation-report";
-import type { Chat } from "@/lib/types";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
 import PrintComparisonButton from "@/components/PrintComparisonButton";
@@ -173,71 +169,6 @@ export default async function MessagesPage({
   const dailyRows = dailyRowsAll.filter((v) => v.confirmed !== false);
   const { violations: dailyViolations } = dailyViolationRows(dailyRows);
 
-  // ── Ежедневный отчёт по нарушениям ПО КАЖДОМУ СОТРУДНИКУ + сверка налогового
-  // кабинета ─────────────────────────────────────────────────────────────────
-  // Полная картина за день: все сотрудники ростера (включая «0 нарушений»),
-  // по каждому нарушению — клиент/чат, тип, штраф, комментарий, статус и
-  // менеджер. Разбивка считается тем же движком, что и на дашборде
-  // (buildLiveViolationBreakdown), новой логики расчёта нет. Менеджер и данные
-  // налогового кабинета берутся из mqa_chats (listChats) — только реальные
-  // данные, ничего не выдумывается.
-  const allChats = await listChats();
-  const chatByCode = new Map<string, Chat>(allChats.map((c) => [c.agr_no, c]));
-
-  // Налоговый кабинет: чат считается «в кабинете», если у него есть налоговые
-  // данные (name_tax / HVHH / дата активации). «В dashboard» — если чат есть в
-  // mqa_chats и активен. Детально выводим только расхождения: (1) чаты кабинета,
-  // выпавшие из активных; (2) чаты, по которым есть нарушения, но самого чата в
-  // dashboard нет (проверка за текущий год — по загруженным нарушениям).
-  const hasTaxData = (c: Chat) =>
-    Boolean(
-      (c.name_tax && c.name_tax.trim()) ||
-        (c.hvhh && c.hvhh.trim()) ||
-        c.tax_activation_date
-    );
-  const taxChats = allChats.filter(hasTaxData);
-  const taxTotal = taxChats.length;
-  const taxInDashboard = taxChats.filter((c) => c.status === "Active").length;
-
-  const taxRows: TaxCabinetRow[] = [];
-  const seenTaxRow = new Set<string>();
-  for (const c of taxChats) {
-    if (c.status !== "Active") {
-      seenTaxRow.add(c.agr_no);
-      taxRows.push({
-        agr_no: c.agr_no,
-        client: c.name_tax ?? c.name_agr ?? c.chat_name,
-        hvhh: c.hvhh,
-        accountant: c.accountant,
-        manager: c.manager,
-        inTaxCabinet: true,
-        inDashboard: false,
-        discrepancy: "в налоговом кабинете, но не активен в dashboard",
-      });
-    }
-  }
-  for (const v of yearViolations) {
-    const code = v.chat_agr_no?.trim();
-    if (!code || chatByCode.has(code) || seenTaxRow.has(code)) continue;
-    seenTaxRow.add(code);
-    taxRows.push({
-      agr_no: code,
-      client: v.client,
-      hvhh: null,
-      accountant: v.accountant,
-      manager: null,
-      inTaxCabinet: false,
-      inDashboard: false,
-      discrepancy: "есть нарушения, но чат отсутствует в dashboard",
-    });
-  }
-  const taxReconMessage = buildTaxCabinetReconciliation({
-    taxTotal,
-    inDashboard: taxInDashboard,
-    rows: taxRows,
-    date: resolved.to,
-  });
-
   // Ежедневный отчёт — СТРОГО за один день: «Нарушения» и «Кол-во запросов за
   // день» показывают только текущий день (dailyViolations = auditDailyViolations
   // за [resolved.from..resolved.to], requests — за тот же день). Недельная
@@ -369,37 +300,19 @@ export default async function MessagesPage({
             <CopyButton label="Копировать отчёт" className="btn-primary" text={reportMessage} />
             <a
               className="btn-secondary"
-              href={`/api/report/pdf?from=${resolved.from}&to=${resolved.to}`}
+              href={`/api/report/pdf?from=${resolved.from}&to=${resolved.to}&period=daily`}
             >
-              📄 PDF
+              📄 PDF (день)
             </a>
             <SendTelegramButton
               text={reportMessage}
               configured={botReady}
-              pdfPeriod={{ from: resolved.from, to: resolved.to }}
+              pdfPeriod={{ from: resolved.from, to: resolved.to, period: "daily" }}
             />
           </div>
         </div>
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {reportMessage}
-        </pre>
-      </div>
-
-      {/* Сверка налогового кабинета с dashboard — сводка + расхождения. */}
-      <div className="card p-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">🗂 Сверка налогового кабинета</div>
-          <div className="flex gap-2">
-            <CopyButton label="Копировать сверку" className="btn-primary" text={taxReconMessage} />
-            <SendTelegramButton
-              text={taxReconMessage}
-              configured={botReady}
-              label="Отправить в Telegram"
-            />
-          </div>
-        </div>
-        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
-{taxReconMessage}
         </pre>
       </div>
 
@@ -417,10 +330,17 @@ export default async function MessagesPage({
           </div>
           <div className="flex gap-2">
             <CopyButton label="Копировать отчёт" className="btn-primary" text={weeklyMessage} />
+            <a
+              className="btn-secondary"
+              href={`/api/report/pdf?from=${resolved.from}&to=${resolved.to}&period=weekly`}
+            >
+              📄 PDF (неделя)
+            </a>
             <SendTelegramButton
               text={weeklyMessage}
               configured={botReady}
               label="Отправить в Telegram"
+              pdfPeriod={{ from: resolved.from, to: resolved.to, period: "weekly" }}
             />
           </div>
         </div>

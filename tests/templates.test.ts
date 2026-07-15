@@ -8,7 +8,6 @@ import {
   buildMonthlyFinesMessage,
   buildReportMessage,
   buildScoreMessage,
-  buildTaxCabinetReconciliation,
   buildWeeklyFinesBreakdown,
   buildWeeklyReportMessage,
   surveyInviteAm,
@@ -480,36 +479,4 @@ test("daily staff report: общий пустой статус, когда на�
   const msg = buildDailyStaffViolationsMessage(breakdown, { date: "2026-07-10" });
   assert.match(msg, /Нет нарушений за выбранный период/);
   assert.ok(!/Լիլիթ/.test(msg));
-});
-
-// --- Сверка налогового кабинета ----------------------------------------------
-
-test("tax cabinet reconciliation: summary + per-row discrepancy details", () => {
-  const msg = buildTaxCabinetReconciliation({
-    taxTotal: 690,
-    inDashboard: 690,
-    date: "2026-07-13",
-    rows: [
-      {
-        agr_no: "B-3850", client: "ИП Грант Серобян", hvhh: null,
-        accountant: "Նաիրա", manager: null, inTaxCabinet: false, inDashboard: false,
-        discrepancy: "есть нарушения, но чат отсутствует в dashboard",
-      },
-    ],
-  });
-  assert.match(msg, /^Сверка налогового кабинета/);
-  assert.match(msg, /Чатов в налоговом кабинете: 690/);
-  assert.match(msg, /Из них в dashboard: 690/);
-  assert.match(msg, /Расхождений: 1/);
-  assert.match(msg, /▸ ИП Грант Серобян — B-3850/);
-  assert.match(msg, /Бухгалтер: Նաիրա/);
-  assert.match(msg, /Менеджер: не указан/);
-  assert.match(msg, /В dashboard: нет/);
-  assert.match(msg, /Расхождение: есть нарушения, но чат отсутствует в dashboard/);
-});
-
-test("tax cabinet reconciliation: no discrepancies → clean message", () => {
-  const msg = buildTaxCabinetReconciliation({ taxTotal: 690, inDashboard: 690, rows: [] });
-  assert.match(msg, /Расхождений: 0/);
-  assert.match(msg, /расхождений нет ✅/);
 });

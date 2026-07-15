@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { sendDocumentToTelegram, sendToTelegram } from "@/lib/telegram";
-import { assemblePdfReport } from "@/lib/report-data";
+import { assemblePdfReport, type ReportPeriod } from "@/lib/report-data";
 import { buildReportPdf } from "@/lib/report-pdf";
 
 export const dynamic = "force-dynamic";
@@ -8,15 +8,16 @@ export const maxDuration = 60;
 
 /**
  * POST /api/telegram/send
- * Body: { text, pdf?: { from?: "YYYY-MM-DD", to?: "YYYY-MM-DD" } }
+ * Body: { text, pdf?: { from?: "YYYY-MM-DD", to?: "YYYY-MM-DD", period?: "daily"|"weekly" } }
  *
- * Sends the message; when `pdf` is present, also builds the analytics PDF for
- * that window and sends it as a document right after (Telegram captions are
- * capped at 1024 chars, so the long text goes as a normal message first).
+ * Sends the message; when `pdf` is present, also builds the report PDF for that
+ * window (daily or weekly, matching the message) and sends it as a document
+ * right after (Telegram captions are capped at 1024 chars, so the long text
+ * goes as a normal message first).
  */
 export async function POST(req: Request) {
   let text = "";
-  let pdf: { from?: string; to?: string } | null = null;
+  let pdf: { from?: string; to?: string; period?: ReportPeriod } | null = null;
   try {
     const body = await req.json();
     text = String(body.text ?? "");
@@ -24,6 +25,7 @@ export async function POST(req: Request) {
       pdf = {
         from: typeof body.pdf.from === "string" ? body.pdf.from : undefined,
         to: typeof body.pdf.to === "string" ? body.pdf.to : undefined,
+        period: body.pdf.period === "weekly" ? "weekly" : "daily",
       };
     }
   } catch {
@@ -39,12 +41,15 @@ export async function POST(req: Request) {
 
   if (pdf) {
     try {
-      const { report, resolved, roster } = await assemblePdfReport(pdf.from, pdf.to);
-      const bytes = await buildReportPdf(report, { roster });
+      const { report, resolved, roster, violations, requests, mode } =
+        await assemblePdfReport(pdf.from, pdf.to, pdf.period ?? "daily");
+      const bytes = await buildReportPdf(report, { roster, violations, requests, mode });
       const docResult = await sendDocumentToTelegram(
-        `report-${resolved.from}_${resolved.to}.pdf`,
+        `report-${mode}-${resolved.from}_${resolved.to}.pdf`,
         bytes,
-        "📎 Таблица мониторинга за период"
+        mode === "weekly"
+          ? "📎 Недельный отчёт (таблица мониторинга)"
+          : "📎 Ежедневный отчёт бухгалтерии"
       );
       if (!docResult.ok) {
         // The text already went out — report the attachment failure without
