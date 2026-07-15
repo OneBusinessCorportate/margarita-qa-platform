@@ -11,8 +11,8 @@ export default function SendTelegramButton({
   text: string;
   configured: boolean;
   label?: string;
-  /** When set, the analytics PDF for this window is attached after the message. */
-  pdfPeriod?: { from: string; to: string };
+  /** When set, the report PDF for this window is attached after the message. */
+  pdfPeriod?: { from: string; to: string; period?: "daily" | "weekly" };
 }) {
   const [state, setState] = useState<"idle" | "sending" | "ok" | "err">("idle");
   const [msg, setMsg] = useState<string | null>(null);

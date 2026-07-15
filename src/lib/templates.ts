@@ -133,12 +133,60 @@ function fmtDram(n: number): string {
  * every next = 1 000 др (hard cap 1 000; severity/AI never sets the amount).
  * Violations passed in must already be Margarita's confirmed rows.
  */
-export function buildReportMessage(
+/** One top-scoring accountant shown in the «Звезда дня» block. */
+export interface DailyReportStar {
+  accountant: string;
+  avgScore: number;
+}
+
+/** One нарушение line under an accountant: chat code — problem — fine. */
+export interface DailyReportViolItem {
+  code: string;
+  type: string;
+  fine: number;
+}
+
+/** One accountant row of «Кол-во запросов за день» with their нарушения. */
+export interface DailyReportRow {
+  accountant: string;
+  count: number;
+  violations: DailyReportViolItem[];
+}
+
+/**
+ * Structured body of the daily accounting report, shared by the Telegram
+ * message (buildReportMessage) and the daily PDF (buildReportPdf, mode "daily")
+ * so the two ALWAYS agree: same service %, same «Звезда дня», the same
+ * per-accountant request counts and the same нарушения priced by the ONE fine
+ * engine (groupNarusheniya). Changing the daily report means changing this
+ * model once — both outputs follow, so PDF and message can never drift apart.
+ */
+export interface DailyReportModel {
+  /** Header date / period label, e.g. "15.07" or "13.07 — 15.07". */
+  dateLabel: string;
+  /** «Общий уровень сервиса» percent for the department. */
+  servicePct: number;
+  /** Звёзды дня — top-scoring accountants (roster only). */
+  stars: DailyReportStar[];
+  /** Кол-во запросов за день — per accountant, with their нарушения under each. */
+  rows: DailyReportRow[];
+  /** Sum of all fines in the window (др). */
+  totalFine: number;
+}
+
+/**
+ * Compute the shared daily-report model from the aggregate report + the
+ * window's confirmed violations and per-accountant request counts. Money uses
+ * the single groupNarusheniya engine (1-е нарушение за день — предупреждение /
+ * 0 др, каждое следующее — 1 000 др, ручная санкция перебивает), exactly like
+ * the PDF and the dashboard, so the figures always match.
+ */
+export function buildDailyReportModel(
   report: DailyReport,
   options: ReportMessageOptions = {}
-): string {
+): DailyReportModel {
   const { serviceQualityPct, perAccountant, filters } = report;
-  const { violations = [], sheetUrl, roster, requests } = options;
+  const { violations = [], roster, requests } = options;
   const dateISO =
     options.date ??
     filters.to ??
@@ -146,13 +194,6 @@ export function buildReportMessage(
     new Date().toISOString().slice(0, 10);
   const rosterSet = roster && roster.length > 0 ? new Set(roster) : null;
   const inRoster = (name: string) => !rosterSet || rosterSet.has(name);
-  const lines: string[] = [];
-
-  lines.push("Ежедневный отчет бухгалтерии");
-  lines.push("");
-  lines.push(`Дата: ${periodHeader(report, dateISO)}`);
-  lines.push("");
-  lines.push(`Общий уровень сервиса: ${serviceQualityPct}% по отделу`);
 
   // ── Stars of the day (roster only) ─────────────────────────────────────────
   const scored = perAccountant.filter(
@@ -160,37 +201,22 @@ export function buildReportMessage(
   );
   const topScore = scored.reduce((m, a) => Math.max(m, a.avgScore), 0);
   const perfect = scored.filter((a) => a.avgScore === 100);
-  const stars = perfect.length
+  const starList = perfect.length
     ? perfect
     : topScore > 0
       ? scored.filter((a) => a.avgScore === topScore)
       : [];
+  const stars: DailyReportStar[] = starList.map((s) => ({
+    accountant: s.accountant,
+    avgScore: s.avgScore,
+  }));
 
-  if (stars.length) {
-    lines.push("");
-    lines.push("Звезда дня");
-    lines.push("");
-    for (const s of stars) {
-      lines.push(`⭐️ ${s.accountant}: ${s.avgScore}% оценка`);
-    }
-  }
-
-  // ── Кол-во запросов за день + нарушения ПОД КАЖДЫМ бухгалтером ──────────────
-  // Единый блок: для каждого бухгалтера — число запросов за день, а сразу под
-  // ним его нарушения (или «Нарушения: нет»). Отдельный длинный отчёт по всем
-  // сотрудникам больше не нужен.
-  //
-  // Деньги — простое правило Маргариты, БЕЗ ИИ-тяжести и без ручных санкций:
+  // ── Нарушения per accountant (single fine engine — matches PDF/dashboard) ──
+  // Деньги — единое правило Маргариты (groupNarusheniya, тот же, что PDF/дашборд):
   //   • 1-е нарушение бухгалтера за ДЕНЬ → предупреждение / 0 др;
-  //   • 2-е и каждое следующее за тот же день → 1 000 др.
-  // Максимум — 1 000 др, суммы 2 000 и выше НЕ используются. Нарушения берём как
-  // есть от вызывающей стороны (только подтверждённые Маргаритой).
-  // Штрафы считаем ЕДИНЫМ движком groupNarusheniya (violations.ts) — тем же, что
-  // PDF и дашборд. Так суммы в сообщении, PDF и на дашборде всегда совпадают
-  // (п.7). Один чат = одно нарушение (типы через запятую), 1-е за день —
-  // предупреждение (0), далее 1 000 др, ручная санкция перебивает.
-  type ViolItem = { code: string; type: string; fine: number };
-  const violByAcc = new Map<string, ViolItem[]>();
+  //   • 2-е и каждое следующее за тот же день → 1 000 др;
+  //   • ручная санкция (> 0) перебивает. Один чат = одно нарушение.
+  const violByAcc = new Map<string, DailyReportViolItem[]>();
   let totalFine = 0;
   for (const n of groupNarusheniya(
     violations.map((v) => ({
@@ -214,9 +240,7 @@ export function buildReportMessage(
     violByAcc.set(acc, list);
   }
 
-  // Request figure per accountant = UNIQUE client chats in the reporting scope
-  // (see tallyRequestChats). No per-day division — the count is already the
-  // per-scope unique-chat figure, so it can never exceed the chat count.
+  // Request figure per accountant = UNIQUE client chats in the reporting scope.
   const reqByAcc = new Map<string, number>();
   for (const r of requests ?? []) {
     reqByAcc.set(r.accountant, r.count);
@@ -239,28 +263,73 @@ export function buildReportMessage(
     for (const acc of violByAcc.keys()) addName(acc);
   }
 
-  if (namesToShow.length > 0) {
+  const rows: DailyReportRow[] = namesToShow.map((name) => ({
+    accountant: name,
+    count: reqByAcc.get(name) ?? 0,
+    violations: violByAcc.get(name) ?? [],
+  }));
+
+  return {
+    dateLabel: periodHeader(report, dateISO),
+    servicePct: serviceQualityPct,
+    stars,
+    rows,
+    totalFine,
+  };
+}
+
+/** Money label for one нарушение: «N др» or «предупреждение / 0 др». */
+export function dailyFineLabel(fine: number): string {
+  return fine > 0 ? `${fmtDram(fine)} др` : "предупреждение / 0 др";
+}
+
+/**
+ * Daily accounting report message — matches the format the department sends,
+ * with each accountant's violations merged directly UNDER their request count.
+ * A thin text renderer over `buildDailyReportModel`; the daily PDF renders the
+ * SAME model, so the message and the PDF always show identical figures.
+ */
+export function buildReportMessage(
+  report: DailyReport,
+  options: ReportMessageOptions = {}
+): string {
+  const model = buildDailyReportModel(report, options);
+  const { sheetUrl } = options;
+  const lines: string[] = [];
+
+  lines.push("Ежедневный отчет бухгалтерии");
+  lines.push("");
+  lines.push(`Дата: ${model.dateLabel}`);
+  lines.push("");
+  lines.push(`Общий уровень сервиса: ${model.servicePct}% по отделу`);
+
+  if (model.stars.length) {
+    lines.push("");
+    lines.push("Звезда дня");
+    lines.push("");
+    for (const s of model.stars) {
+      lines.push(`⭐️ ${s.accountant}: ${s.avgScore}% оценка`);
+    }
+  }
+
+  if (model.rows.length > 0) {
     lines.push("");
     lines.push("Кол-во запросов за день:");
-    for (const name of namesToShow) {
-      const count = reqByAcc.get(name) ?? 0;
-      const viols = violByAcc.get(name) ?? [];
+    for (const row of model.rows) {
       lines.push("");
-      lines.push(`${name} — ${count}`);
-      if (viols.length === 0) {
+      lines.push(`${row.accountant} — ${row.count}`);
+      if (row.violations.length === 0) {
         lines.push("Нарушения: нет");
       } else {
         lines.push("Нарушения:");
-        for (const item of viols) {
-          const money =
-            item.fine > 0 ? `${fmtDram(item.fine)} др` : "предупреждение / 0 др";
-          lines.push(`- ${item.code} — ${item.type} — ${money}`);
+        for (const item of row.violations) {
+          lines.push(`- ${item.code} — ${item.type} — ${dailyFineLabel(item.fine)}`);
         }
       }
     }
-    if (totalFine > 0) {
+    if (model.totalFine > 0) {
       lines.push("");
-      lines.push(`Итого штрафов: ${fmtDram(totalFine)} др`);
+      lines.push(`Итого штрафов: ${fmtDram(model.totalFine)} др`);
     }
   }
 
@@ -758,72 +827,6 @@ export function buildDailyStaffViolationsMessage(
       lines.push(`    Статус: ${statusParts.join(" · ")}`);
       lines.push(`    Менеджер: ${managerFor(l.chatCode)}`);
     }
-  }
-
-  return lines.join("\n");
-}
-
-/** Одна строка сверки чата налогового кабинета с dashboard. */
-export interface TaxCabinetRow {
-  agr_no: string;
-  client: string | null; // клиент / компания
-  hvhh: string | null;
-  accountant: string | null; // ответственный бухгалтер
-  manager: string | null;
-  inTaxCabinet: boolean; // есть ли в налоговом кабинете
-  inDashboard: boolean; // есть ли в dashboard
-  /** Короткое описание расхождения; null — расхождения нет. */
-  discrepancy: string | null;
-}
-
-export interface TaxCabinetReconInput {
-  /** Всего чатов, у которых есть данные налогового кабинета. */
-  taxTotal: number;
-  /** Сколько из них присутствуют (активны) в dashboard. */
-  inDashboard: number;
-  /** Детальные строки для вывода (обычно только расхождения). */
-  rows: TaxCabinetRow[];
-  date?: string;
-}
-
-/**
- * Сверка налогового кабинета с dashboard: сводка (сколько чатов в кабинете,
- * сколько в dashboard, сколько расхождений) плюс детальный разбор по каждой
- * строке-расхождению. По каждому чату видно: клиент/компания, HVHH, чат,
- * ответственный бухгалтер, менеджер, есть ли он в налоговом кабинете, есть ли в
- * dashboard и в чём расхождение. Данные реальные (mqa_chats + mqa_violations),
- * ничего не выдумывается.
- */
-export function buildTaxCabinetReconciliation(input: TaxCabinetReconInput): string {
-  const { taxTotal, inDashboard, rows } = input;
-  const dateISO = input.date ?? new Date().toISOString().slice(0, 10);
-  const discrepancies = rows.filter((r) => r.discrepancy);
-
-  const lines: string[] = [];
-  lines.push("Сверка налогового кабинета");
-  lines.push("");
-  lines.push(`Дата: ${fmtFullDay(dateISO)}`);
-  lines.push("");
-  lines.push(`Чатов в налоговом кабинете: ${taxTotal}`);
-  lines.push(`Из них в dashboard: ${inDashboard}`);
-  lines.push(`Расхождений: ${discrepancies.length}`);
-
-  if (rows.length === 0) {
-    lines.push("");
-    lines.push("Все чаты налогового кабинета есть в dashboard — расхождений нет ✅");
-    return lines.join("\n");
-  }
-
-  const yn = (b: boolean) => (b ? "да" : "нет");
-  for (const r of rows) {
-    lines.push("");
-    lines.push(`▸ ${r.client?.trim() || r.agr_no} — ${r.agr_no}`);
-    lines.push(`  HVHH: ${r.hvhh?.trim() || "не указан"}`);
-    lines.push(`  Бухгалтер: ${r.accountant?.trim() || "не указан"}`);
-    lines.push(`  Менеджер: ${r.manager?.trim() || "не указан"}`);
-    lines.push(`  В налоговом кабинете: ${yn(r.inTaxCabinet)}`);
-    lines.push(`  В dashboard: ${yn(r.inDashboard)}`);
-    lines.push(`  Расхождение: ${r.discrepancy ?? "нет"}`);
   }
 
   return lines.join("\n");
