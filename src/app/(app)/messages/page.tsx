@@ -64,28 +64,19 @@ export default async function MessagesPage({
     client?: string;
   };
 }) {
-  // Ежедневный отчёт — СТРОГО за сегодня (по календарю Еревана, UTC+4). Раньше
-  // без дат бралась «последний оценённый день», из-за чего отчёт мог отставать
-  // и показывать данные за прошлый день/пятницу. Теперь по умолчанию — только
-  // сегодня; если за сегодня ещё нет оценок, отчёт честно показывает сегодня
-  // (а не старый день). Явные даты из фильтра по-прежнему имеют приоритет.
-  const todayYerevan = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Yerevan",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-
+  // Ежедневный отчёт — по умолчанию за ПОСЛЕДНИЙ ОЦЕНЁННЫЙ день: если Маргарита
+  // уже оценила чаты сегодня, это сегодня; если за сегодня ещё нет ни одной
+  // оценки, показываем последний день с оценками (напр. вчера), а НЕ пустой
+  // отчёт «0% сервиса / без звезды дня». Раньше страница жёстко брала «сегодня»,
+  // из-за чего до первой оценки за день отчёт показывал 0% при живых запросах.
+  // Разрешение окна делает getDailyAnalytics (берёт max(checking_date)); явные
+  // даты из фильтра по-прежнему в приоритете.
   const filters = {
     from: searchParams.from || undefined,
     to: searchParams.to || undefined,
     accountant: searchParams.accountant || undefined,
     client: searchParams.client || undefined,
   };
-  if (!filters.from && !filters.to) {
-    filters.from = todayYerevan;
-    filters.to = todayYerevan;
-  }
 
   const [{ report, resolved }, allAccountants] = await Promise.all([
     getDailyAnalytics(filters),
