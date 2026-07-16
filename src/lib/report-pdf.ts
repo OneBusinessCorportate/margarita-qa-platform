@@ -21,6 +21,7 @@ import type { DailyReport, DaySummary } from "./report";
 import type { Violation } from "./types";
 import { computeViolationFines } from "./violations";
 import { buildDailyReportModel, dailyFineLabel } from "./templates";
+import { isValidEmployee } from "./valid-employees";
 
 export interface ReportPdfOptions {
   /** Canonical employee names — the grid's accountant rows, in this order. */
@@ -181,6 +182,87 @@ export function buildReportPdf(
   });
 }
 
+/**
+ * Компактная таблица оценок «сотрудник × %» (п.1: общая таблица с оценками всех
+ * бухгалтеров, которой в дневном PDF не было). Колонки: имя · Оценка % · Низких
+ * (Плохо/Критично) · N (оценено). Цвет ячейки % — как в спреадшите.
+ */
+function renderScoresTable(
+  doc: PDFKit.PDFDocument,
+  left: number,
+  contentW: number,
+  title: string,
+  rows: { name: string; pct: number; low: number; count: number }[]
+): void {
+  if (rows.length === 0) return;
+  if (doc.y + 60 > doc.page.height - doc.page.margins.bottom) doc.addPage();
+  doc.moveDown(0.6);
+  doc.font("Bold").fontSize(11).fillColor(COLORS.text).text(title, left, doc.y);
+  doc.moveDown(0.2);
+
+  const rowH = 16;
+  const wPct = 70,
+    wLow = 55,
+    wN = 60;
+  const wName = contentW - wPct - wLow - wN;
+  const cols: { w: number; align: "left" | "center" }[] = [
+    { w: wName, align: "left" },
+    { w: wPct, align: "center" },
+    { w: wLow, align: "center" },
+    { w: wN, align: "center" },
+  ];
+  let y = doc.y;
+  const cell = (
+    x: number,
+    w: number,
+    text: string,
+    bg: string,
+    fg: string,
+    bold: boolean,
+    align: "left" | "center"
+  ) => {
+    doc.rect(x, y, w, rowH).fillAndStroke(bg, COLORS.border);
+    doc.font(bold ? "Bold" : "Regular").fontSize(8).fillColor(fg);
+    doc.text(text, x + 3, y + 5, { width: w - 6, align, lineBreak: false });
+  };
+
+  // Header.
+  const header = ["Бухгалтер / сотрудник", "Оценка %", "Низких", "Оценено N"];
+  let x = left;
+  header.forEach((h, i) => {
+    cell(x, cols[i].w, h, COLORS.headerBg, COLORS.text, true, cols[i].align);
+    x += cols[i].w;
+  });
+  y += rowH;
+
+  // Rows.
+  for (const r of rows) {
+    if (y + rowH > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
+    const c = r.pct >= 0 ? scoreColors(r.pct) : { bg: "#ffffff", fg: COLORS.muted };
+    x = left;
+    cell(x, cols[0].w, r.name, COLORS.labelBg, COLORS.text, true, "left");
+    x += cols[0].w;
+    cell(x, cols[1].w, r.pct >= 0 ? `${r.pct}%` : "—", c.bg, c.fg, true, "center");
+    x += cols[1].w;
+    cell(
+      x,
+      cols[2].w,
+      r.low ? String(r.low) : "—",
+      "#ffffff",
+      r.low ? COLORS.red.fg : COLORS.muted,
+      false,
+      "center"
+    );
+    x += cols[2].w;
+    cell(x, cols[3].w, String(r.count), "#ffffff", "#6b7280", false, "center");
+    y += rowH;
+  }
+  doc.y = y + 4;
+}
+
 /** The single-day report — rendered from the shared daily model (matches msg). */
 function renderDaily(
   doc: PDFKit.PDFDocument,
@@ -203,6 +285,30 @@ function renderDaily(
   const svc = scoreColors(model.servicePct);
   doc.font("Bold").fontSize(12).fillColor(svc.fg)
     .text(`Общий уровень сервиса: ${model.servicePct}% по отделу`, left, doc.y);
+
+  // Общая таблица оценок всех бухгалтеров (п.1) — то, чего в дневном PDF не было.
+  const accRows = report.perAccountant
+    .filter((a) => isValidEmployee(a.accountant))
+    .map((a) => ({
+      name: a.accountant,
+      pct: a.avgScore,
+      low: a.lowCount,
+      count: a.count,
+    }));
+  renderScoresTable(doc, left, contentW, "Оценки бухгалтеров", accRows);
+
+  // Оценки менеджеров (п.2) — показываем, когда менеджер отвечал в чатах и есть
+  // оценки; иначе таблица опускается (не засоряем пустой строкой).
+  const INVALID = new Set(["-", "—", "--", "#N/A", ""]);
+  const mgrRows = (report.managerScores ?? [])
+    .filter((m) => m.accountant && !INVALID.has(m.accountant.trim()))
+    .map((m) => ({
+      name: m.accountant,
+      pct: m.avgScore,
+      low: m.lowCount,
+      count: m.count,
+    }));
+  renderScoresTable(doc, left, contentW, "Оценки менеджеров", mgrRows);
 
   // Звезда дня.
   if (model.stars.length) {
