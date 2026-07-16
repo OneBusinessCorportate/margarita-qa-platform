@@ -27,6 +27,7 @@ export default function AppealsPanel({ initialAppeals }: { initialAppeals: Appea
   const [comments, setComments] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const accountants = useMemo(() => {
     const set = new Set<string>();
@@ -50,6 +51,7 @@ export default function AppealsPanel({ initialAppeals }: { initialAppeals: Appea
   async function decide(appeal: Appeal, decision: "approved" | "rejected") {
     setBusy(appeal.id);
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch(`/api/appeals/${appeal.id}`, {
         method: "PATCH",
@@ -67,6 +69,17 @@ export default function AppealsPanel({ initialAppeals }: { initialAppeals: Appea
             ? { ...a, status: updated.status, resolved_by: updated.resolved_by, resolution_comment: updated.resolution_comment, resolved_at: updated.resolved_at }
             : a
         )
+      );
+      // Подтверждение: при фильтре «На рассмотрении» карточка после решения
+      // уходит из списка — без явного сообщения кажется, что «ничего не
+      // произошло». Показываем, что решение сохранено (и где его найти).
+      const who = appeal.problem_title || appeal.problem_id || "апелляция";
+      setNotice(
+        `Апелляция «${who}» — ${
+          decision === "approved" ? "одобрена" : "отклонена"
+        }. Она ушла из списка «На рассмотрении» — смотрите её в фильтре «${
+          decision === "approved" ? "Одобрены" : "Отклонены"
+        }» или «Все».`
       );
     } catch (e: any) {
       setError(e.message);
@@ -124,6 +137,19 @@ export default function AppealsPanel({ initialAppeals }: { initialAppeals: Appea
       </div>
 
       {error && <div className="card p-3 text-sm text-red-700 bg-red-50">{error}</div>}
+
+      {notice && (
+        <div className="card p-3 text-sm text-green-800 bg-green-50 border-green-200 flex items-start justify-between gap-3">
+          <span>✓ {notice}</span>
+          <button
+            className="text-green-700 hover:text-green-900 shrink-0"
+            onClick={() => setNotice(null)}
+            aria-label="Закрыть"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {visible.length === 0 ? (
         <div className="card p-6 text-center text-sm text-gray-500">Апелляций по фильтру нет.</div>
