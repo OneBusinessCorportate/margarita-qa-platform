@@ -595,7 +595,16 @@ export async function createChatByNumber(
 export async function listTasks(chatAgrNo?: string): Promise<Task[]> {
   const sb = getServiceClient();
   if (sb) {
-    let q = sb.from(TABLES.tasks).select("*");
+    // A stable order + explicit high limit like every other list here: without
+    // them PostgREST caps at its default (~1000 rows) AND returns an arbitrary
+    // slice (no ORDER BY), so once tasks grow past the cap the dashboard's task
+    // metrics would fluctuate between refreshes. Order deterministically and
+    // lift the cap so reports always see every task in range.
+    let q = sb
+      .from(TABLES.tasks)
+      .select("*")
+      .order("checking_date", { ascending: false })
+      .limit(20000);
     if (chatAgrNo) q = q.eq("chat_agr_no", chatAgrNo);
     const { data, error } = await q;
     if (error) throw error;
@@ -887,7 +896,10 @@ export async function listScoreOverrides(chat?: string): Promise<ScoreOverride[]
     let q = sb
       .from(TABLES.chatScoreOverrides)
       .select("*")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      // Lift PostgREST's default ~1000-row cap so no manual override silently
+      // drops out of the report once the table grows (see listEvaluations).
+      .limit(20000);
     if (chat) q = q.eq("chat_agr_no", chat);
     const { data, error } = await q;
     if (error) throw new Error(error.message);
