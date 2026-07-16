@@ -34,6 +34,32 @@ export function storageGuard(): NextResponse | null {
 }
 
 /**
+ * Extract a human-readable message from anything that was thrown. Supabase /
+ * PostgREST reject with a PLAIN OBJECT ({ message, details, hint, code }), NOT
+ * an Error instance — so `String(e)` on it yields the useless "[object Object]"
+ * that surfaced to QA in the UI (she pressed «Оценить» and saw «[object
+ * Object]»). Pull `.message` (falling back to `.details`, then the pg `code`)
+ * so a real DB failure is legible instead of opaque.
+ */
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === "object") {
+    const o = e as Record<string, unknown>;
+    const parts = [o.message, o.details, o.hint].filter(
+      (p): p is string => typeof p === "string" && p.trim() !== ""
+    );
+    if (parts.length) {
+      return typeof o.code === "string" && o.code
+        ? `${parts.join(" — ")} (${o.code})`
+        : parts.join(" — ");
+    }
+    if (typeof o.code === "string" && o.code) return `Ошибка базы данных (${o.code})`;
+  }
+  const s = String(e ?? "").trim();
+  return s && s !== "[object Object]" ? s : "Ошибка базы данных";
+}
+
+/**
  * Turn a thrown repo/DB error into a clean JSON response instead of an opaque
  * 500. PostgREST's "no rows" (PGRST116, from `.single()` on a missing row)
  * becomes a 404 so the client can tell "not found" from "server broke".
@@ -44,7 +70,7 @@ export function dbErrorResponse(e: unknown): NextResponse {
   if (e instanceof WorkflowError) {
     return NextResponse.json({ error: e.message }, { status: e.httpStatus });
   }
-  const msg = e instanceof Error ? e.message : String(e ?? "Ошибка базы данных");
+  const msg = errorMessage(e);
   const notFound = /PGRST116|Results contain 0 rows|0 rows/i.test(msg);
   return NextResponse.json(
     { error: notFound ? "Запись не найдена" : msg },

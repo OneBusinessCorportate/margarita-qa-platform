@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteEvaluation, updateEvaluation } from "@/lib/repo";
+import { dbErrorResponse } from "@/lib/api-guard";
 import { getSession } from "@/lib/session";
 import { validConfidence } from "@/lib/confidence";
 import type { NewEvaluationInput } from "@/lib/types";
@@ -58,11 +59,8 @@ export async function PUT(
     const session = await getSession();
     const updated = await updateEvaluation(params.id, input, session?.email ?? null);
     return NextResponse.json(updated);
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message ?? "Update failed" },
-      { status: 404 }
-    );
+  } catch (e) {
+    return dbErrorResponse(e);
   }
 }
 
@@ -73,10 +71,7 @@ export async function DELETE(
   try {
     await deleteEvaluation(params.id);
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message ?? "Delete failed" },
-      { status: 404 }
-    );
+  } catch (e) {
+    return dbErrorResponse(e);
   }
 }
