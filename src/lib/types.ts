@@ -76,8 +76,19 @@ export interface EvaluationScores {
     criteria?: CriteriaScores;
     monthly?: Record<string, { status: string }>;
     total?: number;
+    /** Уверенность модели в этом прогнозе (0..100), привязана к версии. */
+    confidence?: number;
   };
 }
+
+/**
+ * Статус проверки AI-оценки Маргаритой (фича «Уверенность модели»):
+ *   • `not_reviewed` — AI сгенерировал оценку, но Маргарита её ещё не проверяла
+ *     (легаси-строки без AI-снимка тоже трактуются как «не проверено»);
+ *   • `accepted`     — Маргарита приняла оценку AI без изменений;
+ *   • `corrected`    — Маргарита исправила оценку AI (см. reviewed_at/by).
+ */
+export type ReviewStatus = "not_reviewed" | "accepted" | "corrected";
 
 export interface Evaluation {
   id: string;
@@ -93,6 +104,26 @@ export interface Evaluation {
   quality_band: QualityBand;
   comment: string | null;
   created_at: string;
+  /**
+   * Уверенность модели в исходной AI-оценке, 0..100 (%). `null` — данных нет
+   * (легаси-строки, менеджер/юрист без прогноза): такие строки ИСКЛЮЧАЮТСЯ из
+   * расчётов на основе уверенности и показываются как «Нет данных», НЕ как 0%.
+   * Значение принадлежит ИМЕННО той версии оценки, что выдала модель, и не
+   * перезаписывается при ручной правке.
+   */
+  ai_confidence?: number | null;
+  /**
+   * Исходная общая оценка AI (снимок `scores.ai.total`), продублирована в
+   * колонку ради быстрой аналитики/корреляции без разбора JSON. Не
+   * перезаписывается при последующих правках Маргариты.
+   */
+  ai_total?: number | null;
+  /** Принято/исправлено/не проверено (см. ReviewStatus). Легаси ⇒ not_reviewed. */
+  review_status?: ReviewStatus;
+  /** Кто провёл проверку (принял/исправил) — email/имя из сессии. */
+  reviewed_by?: string | null;
+  /** Когда проведена проверка/исправление (ISO timestamp). */
+  reviewed_at?: string | null;
 }
 
 export type TaskStatus =
@@ -137,6 +168,11 @@ export interface NewEvaluationInput {
   comment: string | null;
   /** Optional manual Общая оценка override (else computed from criteria). */
   total_override?: number | null;
+  /**
+   * Уверенность модели в её прогнозе (0..100). Присылается панелью вместе со
+   * снимком `scores.ai` при первом сохранении. `null`/отсутствует ⇒ «Нет данных».
+   */
+  ai_confidence?: number | null;
 }
 
 /**

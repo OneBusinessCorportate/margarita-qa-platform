@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { deleteEvaluation, updateEvaluation } from "@/lib/repo";
+import { getSession } from "@/lib/session";
+import { validConfidence } from "@/lib/confidence";
 import type { NewEvaluationInput } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -48,9 +50,13 @@ export async function PUT(
     comment: body.comment ?? null,
     total_override:
       typeof body.total_override === "number" ? body.total_override : null,
+    ai_confidence:
+      validConfidence(body.ai_confidence) ??
+      validConfidence(body.scores?.ai?.confidence),
   };
   try {
-    const updated = await updateEvaluation(params.id, input);
+    const session = await getSession();
+    const updated = await updateEvaluation(params.id, input, session?.email ?? null);
     return NextResponse.json(updated);
   } catch (e: any) {
     return NextResponse.json(

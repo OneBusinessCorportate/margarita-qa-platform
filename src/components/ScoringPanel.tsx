@@ -19,6 +19,7 @@ import {
   type EvalRole,
 } from "@/lib/scoring";
 import { predictEvaluation, toSnapshot, type AiModel } from "@/lib/ai";
+import { reviewStatusFor } from "@/lib/confidence";
 import {
   SORT_OPTIONS,
   autoDebtStatus,
@@ -1503,6 +1504,31 @@ function ChatScoreRow({
       ? Number(override)
       : computeOverall(criteria, monthly, DAILY_CRITERIA);
 
+  // Статус проверки для этой строки: пока не сохранено — «Не проверено»; после
+  // сохранения сравниваем текущий финал с прогнозом AI (принято/исправлено).
+  const reviewStatus: "not_reviewed" | "accepted" | "corrected" = !savedId
+    ? "not_reviewed"
+    : reviewStatusFor(
+        { criteria: ai.criteria, monthly: ai.monthly, total: ai.total, confidence: ai.confidence },
+        { criteria, monthly },
+        total
+      ) ?? "not_reviewed";
+  const reviewBadge =
+    reviewStatus === "accepted"
+      ? { text: "✓ Принято без изменений", cls: "bg-green-100 text-green-700" }
+      : reviewStatus === "corrected"
+        ? { text: "✎ Исправлено Маргаритой", cls: "bg-amber-100 text-amber-800" }
+        : { text: "⏳ Не проверено", cls: "bg-gray-100 text-gray-500" };
+  // Цвет плашки уверенности: ≥90 — зелёная, ≥70 — синяя, ≥50 — янтарная, иначе красная.
+  const confColor =
+    ai.confidence >= 90
+      ? "bg-emerald-100 text-emerald-700"
+      : ai.confidence >= 70
+        ? "bg-blue-100 text-blue-700"
+        : ai.confidence >= 50
+          ? "bg-amber-100 text-amber-800"
+          : "bg-red-100 text-red-700";
+
   const touched =
     Boolean(savedId) ||
     prefilledFromPrev ||
@@ -1624,6 +1650,8 @@ function ChatScoreRow({
       },
       comment: comment || null,
       total_override: override.trim() !== "" ? Number(override) : null,
+      // Уверенность модели в исходном прогнозе — привязана к этой версии AI-оценки.
+      ai_confidence: ai.confidence,
     };
     try {
       const res = await fetch(
@@ -2157,12 +2185,20 @@ function ChatScoreRow({
           </div>
         </td>
         <td className={`${aiCell} text-center`}>
-          <span
-            className="inline-block rounded bg-indigo-100 text-indigo-700 font-semibold text-[11px] px-1.5 py-0.5 whitespace-nowrap"
-            title={ai.note}
-          >
-            🤖 AI
-          </span>
+          <div className="flex flex-col items-center gap-0.5">
+            <span
+              className="inline-block rounded bg-indigo-100 text-indigo-700 font-semibold text-[11px] px-1.5 py-0.5 whitespace-nowrap"
+              title={ai.note}
+            >
+              🤖 AI
+            </span>
+            <span
+              className={`inline-block rounded ${confColor} font-semibold text-[10px] px-1.5 py-0.5 whitespace-nowrap`}
+              title={`Уверенность модели: ${ai.confidence}%`}
+            >
+              {ai.confidence}%
+            </span>
+          </div>
         </td>
         {DAILY_CRITERIA.map((c) => (
           <td key={c.id} className={`${aiCell} text-center tabular-nums`} title={c.name}>
@@ -2217,9 +2253,17 @@ function ChatScoreRow({
       {/* ---- Your editable line ---- */}
       <tr className={savedId ? "bg-green-100" : "bg-blue-50/40"}>
         <td className={`${youCell} text-center`}>
-          <span className="inline-block rounded bg-blue-600 text-white font-semibold text-[11px] px-1.5 py-0.5 whitespace-nowrap">
-            ✍️ Вы
-          </span>
+          <div className="flex flex-col items-center gap-0.5">
+            <span className="inline-block rounded bg-blue-600 text-white font-semibold text-[11px] px-1.5 py-0.5 whitespace-nowrap">
+              ✍️ Вы
+            </span>
+            <span
+              className={`inline-block rounded ${reviewBadge.cls} font-medium text-[10px] px-1.5 py-0.5 whitespace-nowrap`}
+              title="Итог проверки AI-оценки Маргаритой"
+            >
+              {reviewBadge.text}
+            </span>
+          </div>
         </td>
         {DAILY_CRITERIA.map((c) => (
           <td key={c.id} className={`${youCell} text-center`}>

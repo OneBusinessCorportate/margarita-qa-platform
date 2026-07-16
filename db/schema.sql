@@ -68,24 +68,45 @@ create table if not exists mqa_evaluations (
   role          text not null default 'accountant'
                 check (role in ('accountant', 'manager', 'lawyer')),
   accountant    text,                          -- graded person's name (any role)
-  scores        jsonb not null default '{}'::jsonb, -- { criteria?, tasks? }
+  scores        jsonb not null default '{}'::jsonb, -- { criteria?, tasks?, ai? }
   total_score   double precision not null default 0, -- numeric would surface as string via PostgREST
   quality_band  text not null,
   comment       text,
   created_at    timestamptz not null default now(),
+  -- Фича «Уверенность модели»: уверенность AI в ИСХОДНОЙ оценке (0..100, %),
+  -- продублированная исходная общая оценка AI и статус проверки Маргаритой.
+  -- NULL у ai_confidence ⇒ «Нет данных» (не 0%). Исходный AI-снимок также лежит
+  -- в scores->'ai' и не перезаписывается при правке. См.
+  -- db/migrations/20260716_mqa_evaluation_confidence.sql.
+  ai_confidence double precision
+                check (ai_confidence is null or (ai_confidence >= 0 and ai_confidence <= 100)),
+  ai_total      double precision,
+  review_status text not null default 'not_reviewed'
+                check (review_status in ('not_reviewed', 'accepted', 'corrected')),
+  reviewed_by   text,
+  reviewed_at   timestamptz,
   -- One evaluation per chat per role per day. The app + importer upsert against
   -- this; without it, re-imports created duplicate rows that double-counted in
-  -- the report. See db/migrations/20260617_mqa_dedupe_evaluations_and_fix_manager.sql.
+  -- the report. Also prevents duplicate review-history records for a (chat, day,
+  -- role). See db/migrations/20260617_mqa_dedupe_evaluations_and_fix_manager.sql.
   constraint mqa_evaluations_chat_date_role_key
     unique (chat_agr_no, checking_date, role)
 );
 
 -- If the table predates the per-role split, add the column in place.
 alter table mqa_evaluations add column if not exists role text not null default 'accountant';
+-- Model-confidence columns (idempotent, for tables from an earlier deploy).
+alter table mqa_evaluations add column if not exists ai_confidence double precision;
+alter table mqa_evaluations add column if not exists ai_total      double precision;
+alter table mqa_evaluations add column if not exists review_status text not null default 'not_reviewed';
+alter table mqa_evaluations add column if not exists reviewed_by   text;
+alter table mqa_evaluations add column if not exists reviewed_at   timestamptz;
 
 create index if not exists mqa_evaluations_checking_date_idx on mqa_evaluations (checking_date);
 create index if not exists mqa_evaluations_accountant_idx on mqa_evaluations (accountant);
 create index if not exists mqa_evaluations_chat_idx on mqa_evaluations (chat_agr_no);
+create index if not exists mqa_evaluations_review_status_idx on mqa_evaluations (review_status);
+create index if not exists mqa_evaluations_ai_confidence_idx on mqa_evaluations (ai_confidence);
 
 create table if not exists mqa_tasks (
   id                  text primary key default gen_random_uuid()::text,

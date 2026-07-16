@@ -105,8 +105,12 @@ test("toSnapshot keeps exactly the fields the learner needs", () => {
   const model = trainAiModel([]);
   const p = predictEvaluation("Գայանե", { salary: "Получил" }, model);
   const snap = toSnapshot(p);
-  assert.deepEqual(Object.keys(snap).sort(), ["criteria", "monthly", "total"]);
+  assert.deepEqual(
+    Object.keys(snap).sort(),
+    ["confidence", "criteria", "monthly", "total"]
+  );
   assert.equal(snap.total, p.total);
+  assert.equal(snap.confidence, p.confidence);
 });
 
 test("the model is JSON-serializable (server → client prop)", () => {
