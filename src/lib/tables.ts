@@ -15,6 +15,7 @@ export const TABLES = {
   tasks: `${PREFIX}tasks`,
   users: `${PREFIX}users`,
   violations: `${PREFIX}violations`,
+  violationAppeals: `${PREFIX}violation_appeals`,
   activeExclusions: `${PREFIX}active_exclusions`,
   activeInclusions: `${PREFIX}active_inclusions`,
   reportSnapshots: `${PREFIX}report_snapshots`,

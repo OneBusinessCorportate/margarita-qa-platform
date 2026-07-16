@@ -139,6 +139,31 @@ export interface NewEvaluationInput {
   total_override?: number | null;
 }
 
+/**
+ * Единая модель статуса нарушения в рабочем цикле «бухгалтер → апелляция →
+ * решение Маргариты» (Phase 11). Один и тот же набор значений используется в БД,
+ * API, UI, отчётах и тестах:
+ *   • `new`             — новое нарушение, бухгалтер ещё не отреагировал;
+ *   • `acknowledged`    — бухгалтер нажал «Ознакомлен»;
+ *   • `appealed`        — бухгалтер подал апелляцию, ждёт решения;
+ *   • `appeal_approved` — Маргарита приняла апелляцию (штраф снимается);
+ *   • `appeal_rejected` — Маргарита отклонила апелляцию (нарушение в силе).
+ */
+export type ViolationStatus =
+  | "new"
+  | "acknowledged"
+  | "appealed"
+  | "appeal_approved"
+  | "appeal_rejected";
+
+export const VIOLATION_STATUSES: ViolationStatus[] = [
+  "new",
+  "acknowledged",
+  "appealed",
+  "appeal_approved",
+  "appeal_rejected",
+];
+
 export interface Violation {
   id: string;
   vdate: string; // ISO date
@@ -152,7 +177,20 @@ export interface Violation {
   note: string | null;
   /** Подтверждено Маргаритой (по умолчанию true — она сама вносит нарушения). */
   confirmed?: boolean;
-  /** Статус апелляции по нарушению: null | 'appealed' | 'approved' | 'rejected'. */
+  /**
+   * Статус рабочего цикла (см. ViolationStatus). Отсутствует у легаси-строк —
+   * тогда трактуется как `new` (или `appealed`/… по устаревшему appeal_status).
+   */
+  status?: ViolationStatus | null;
+  /** Когда бухгалтер нажал «Ознакомлен» (ISO timestamp). */
+  acknowledged_at?: string | null;
+  /** Кто ознакомился (имя бухгалтера / email, кто зафиксировал действие). */
+  acknowledged_by?: string | null;
+  /**
+   * Легаси-поле статуса апелляции: null | 'appealed' | 'approved' | 'rejected'.
+   * Держим синхронным со `status` ради обратной совместимости (дашборд,
+   * telegram, violation-report читают именно его).
+   */
   appeal_status?: string | null;
   created_at: string;
 }
@@ -168,7 +206,38 @@ export interface NewViolationInput {
   sanction?: number | null;
   note?: string | null;
   confirmed?: boolean;
+  status?: ViolationStatus | null;
   appeal_status?: string | null;
+}
+
+export type AppealStatus = "pending" | "approved" | "rejected";
+
+/**
+ * Апелляция бухгалтера на конкретное нарушение (mqa_violation_appeals). Связана
+ * с нарушением по `violation_id` (FK). Одно нарушение может иметь не более одной
+ * АКТИВНОЙ (pending) апелляции — гарантируется на уровне БД частичным уникальным
+ * индексом и проверкой в репозитории.
+ */
+export interface ViolationAppeal {
+  id: string;
+  violation_id: string;
+  /** Кто подал (имя бухгалтера — ключ для сведения в отчётах). */
+  accountant: string | null;
+  /** Текст объяснения бухгалтера (обязателен, не пустой). */
+  appeal_text: string;
+  status: AppealStatus;
+  /** Комментарий Маргариты к решению (необязателен, особенно при отклонении). */
+  decision_comment: string | null;
+  /** Кто вынес решение. */
+  resolved_by: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface NewViolationAppealInput {
+  violation_id: string;
+  accountant?: string | null;
+  appeal_text: string;
 }
 
 export interface NewTaskInput {
