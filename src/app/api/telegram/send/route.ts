@@ -41,9 +41,9 @@ export async function POST(req: Request) {
 
   if (pdf) {
     try {
-      const { report, resolved, roster, violations, requests, mode } =
+      const { report, resolved, roster, violations, requests, mode, trend } =
         await assemblePdfReport(pdf.from, pdf.to, pdf.period ?? "daily");
-      const bytes = await buildReportPdf(report, { roster, violations, requests, mode });
+      const bytes = await buildReportPdf(report, { roster, violations, requests, mode, trend });
       const docResult = await sendDocumentToTelegram(
         `report-${mode}-${resolved.from}_${resolved.to}.pdf`,
         bytes,

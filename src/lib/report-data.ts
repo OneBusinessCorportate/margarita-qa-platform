@@ -17,7 +17,7 @@ import {
 } from "./repo";
 import { mondayOf } from "./scoring";
 import { dailyViolationRows } from "./violation-report";
-import type { DailyReport } from "./report";
+import { addDays, type DailyReport } from "./report";
 import type { Violation } from "./types";
 
 export type ReportPeriod = "daily" | "weekly";
@@ -33,6 +33,12 @@ export interface AssembledPdfReport {
   requests: { accountant: string; count: number }[];
   /** Which shape to render. */
   mode: ReportPeriod;
+  /**
+   * Daily mode only: a multi-day report (last ~week ending at `to`) so the daily
+   * PDF can render the all-accountants trend grid (динамика/прогресс). Undefined
+   * for weekly mode, whose grid already shows day-by-day dynamics.
+   */
+  trend?: DailyReport;
 }
 
 export async function assemblePdfReport(
@@ -85,6 +91,15 @@ export async function assemblePdfReport(
   const confirmed = dayViolationsRaw.filter((v) => v.confirmed !== false);
   const { violations } = dailyViolationRows(confirmed);
 
+  // Trend window for the all-accountants dynamics grid: the ~week ending at the
+  // reported day. When the report already spans that window (a range request in
+  // daily mode) it has the per-day data, so reuse it instead of re-fetching.
+  const trendFrom = addDays(resolved.to, -6);
+  const trend =
+    trendFrom < resolved.from
+      ? await getReport({ from: trendFrom, to: resolved.to })
+      : report;
+
   return {
     report,
     resolved: { from: resolved.from, to: resolved.to },
@@ -92,5 +107,6 @@ export async function assemblePdfReport(
     violations,
     requests,
     mode: "daily",
+    trend,
   };
 }

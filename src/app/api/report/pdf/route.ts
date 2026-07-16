@@ -15,12 +15,12 @@ export const maxDuration = 60;
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const period: ReportPeriod = searchParams.get("period") === "weekly" ? "weekly" : "daily";
-  const { report, resolved, roster, violations, requests, mode } = await assemblePdfReport(
+  const { report, resolved, roster, violations, requests, mode, trend } = await assemblePdfReport(
     searchParams.get("from") ?? undefined,
     searchParams.get("to") ?? undefined,
     period
   );
-  const pdf = await buildReportPdf(report, { roster, violations, requests, mode });
+  const pdf = await buildReportPdf(report, { roster, violations, requests, mode, trend });
   const filename = `report-${mode}-${resolved.from}_${resolved.to}.pdf`;
   return new Response(new Uint8Array(pdf), {
     headers: {
