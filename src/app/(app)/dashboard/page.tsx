@@ -3,6 +3,7 @@ import {
   getDailyAnalytics,
   getReport,
   getReportSnapshot,
+  getViolationWorkflowReport,
   listAccountants,
   listReportSnapshots,
   listViolations,
@@ -115,6 +116,26 @@ export default async function DashboardPage({
     }
   }
 
+  // Ключевые метрики рабочего цикла (нарушения → апелляции) за окно — та же
+  // агрегация, что /work-report и Telegram (buildViolationWorkflowReport).
+  const flow = snapshot
+    ? null
+    : await getViolationWorkflowReport({
+        from: win.from,
+        to: win.to,
+        accountant: filters.accountant,
+      });
+  const flowTiles = flow
+    ? [
+        { label: "Подано апелляций", value: flow.appealsSubmitted },
+        { label: "Ожидают решения", value: flow.appealsPending, alert: flow.appealsPending > 0 },
+        { label: "Принято", value: flow.appealsApproved },
+        { label: "Отклонено", value: flow.appealsRejected },
+        { label: "Обработано апелляций", value: flow.appealsProcessed },
+        { label: "Не обработано бухгалтерами", value: flow.unprocessedViolations, alert: flow.unprocessedViolations > 0 },
+      ]
+    : [];
+
   // История оценок за неделю (п.6): полная таблица «бухгалтер × день» за выбранную
   // неделю с навигацией по прошлым неделям. Тот же движок, что и недельный PDF.
   const today = new Date().toISOString().slice(0, 10);
@@ -200,6 +221,29 @@ export default async function DashboardPage({
           appeals: appealSummary,
         }}
       />
+
+      {/* Ключевые метрики рабочего цикла: апелляции и необработанные нарушения. */}
+      {flow && (flowTiles.some((t) => t.value > 0)) && (
+        <div className="no-print">
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <h2 className="font-semibold">Апелляции и ознакомления</h2>
+            <Link href="/appeals" className="text-sm text-blue-600 hover:underline">
+              → к апелляциям
+            </Link>
+            <Link href="/work-report" className="text-sm text-blue-600 hover:underline">
+              → отчёт по работе
+            </Link>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {flowTiles.map((t) => (
+              <div key={t.label} className={`card px-4 py-3 ${t.alert ? "ring-2 ring-amber-300" : ""}`}>
+                <div className="text-2xl font-semibold">{t.value}</div>
+                <div className="text-xs text-gray-500">{t.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <ReportView report={report} previousReport={previousReport} />
 

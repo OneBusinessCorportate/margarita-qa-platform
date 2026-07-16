@@ -17,6 +17,7 @@ import { MONTHLY_CATEGORIES, bandFor, failingMailings, type QualityBand } from "
 import type { Chat, Evaluation, Violation } from "./types";
 import { groupNarusheniya } from "./violations";
 import type { ViolationReport } from "./violation-report";
+import type { ViolationWorkflowReport } from "./appeals-report";
 import type { MailingComplianceReport } from "./mailing-compliance";
 
 export function telegramConfigured(): boolean {
@@ -1030,6 +1031,81 @@ export function buildWeeklyReportMessage(
   }
 
   return lines.join("\n");
+}
+
+export interface MargaritaWorkReportOptions {
+  /** ISO date / period label shown in the header (defaults to today). */
+  date?: string;
+}
+
+/**
+ * «Работа Маргариты за день» — the acknowledgement + appeals section of the
+ * daily Telegram report (Phase 6). Rendered from the SAME aggregation
+ * (buildViolationWorkflowReport) as the web /work-report and /dashboard, so the
+ * figures always agree.
+ *
+ * Sent as PLAIN text (sendToTelegram uses no parse_mode), so no Markdown/HTML
+ * escaping is required and arbitrary characters in accountant names can never
+ * break the layout. If a future caller switches to a parse mode, escape names
+ * with `escapeTelegramText` below before rendering.
+ *
+ * IMPORTANT (Phase 6): callers MUST catch data-loading failures and NOT call
+ * this with an all-zero report — a load failure must read differently from a
+ * genuinely quiet day. This function assumes it is given real stored numbers
+ * and marks a truly empty day explicitly ("действий нет").
+ */
+export function buildMargaritaWorkReportMessage(
+  report: ViolationWorkflowReport,
+  options: MargaritaWorkReportOptions = {}
+): string {
+  const dateISO = options.date ?? new Date().toISOString().slice(0, 10);
+  const lines: string[] = [];
+  lines.push("Работа Маргариты за день");
+  lines.push("");
+  lines.push(`Дата: ${fmtFullDay(dateISO)}`);
+  lines.push("");
+  lines.push(`Проверено чатов: ${report.chatsChecked}`);
+  lines.push(`Создано нарушений: ${report.violationsCreated}`);
+  lines.push(`Ознакомлено бухгалтерами: ${report.acknowledged}`);
+  lines.push(`Подано апелляций: ${report.appealsSubmitted}`);
+  lines.push(`Принято апелляций: ${report.appealsApproved}`);
+  lines.push(`Отклонено апелляций: ${report.appealsRejected}`);
+  lines.push(`Ожидают решения: ${report.appealsPending}`);
+  lines.push(`Не обработано бухгалтерами: ${report.unprocessedViolations}`);
+
+  // Genuinely quiet day — say so explicitly (distinct from a load failure,
+  // which the caller must handle before ever reaching here).
+  if (report.violationsCreated === 0 && report.appealsSubmitted === 0) {
+    lines.push("");
+    lines.push("За день новых нарушений и апелляций нет.");
+    return lines.join("\n");
+  }
+
+  // Per-accountant breakdown — only people with violations or appeals.
+  const rows = report.byAccountant.filter(
+    (r) => r.violations > 0 || r.appealsSubmitted > 0
+  );
+  for (const r of rows) {
+    lines.push("");
+    lines.push(r.name);
+    lines.push(`Нарушений: ${r.violations}`);
+    lines.push(`Ознакомлено: ${r.acknowledgements}`);
+    lines.push(`Апелляций: ${r.appealsSubmitted}`);
+    lines.push(`Принято: ${r.approved}`);
+    lines.push(`Отклонено: ${r.rejected}`);
+    lines.push(`Ожидают решения: ${r.pending}`);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Escape text for a Telegram message sent with HTML parse mode. Unused by the
+ * current plain-text sender, but provided so any future parse-mode caller can
+ * render user-controlled names/notes safely.
+ */
+export function escapeTelegramHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /** Per-chat / per-accountant score message. */
