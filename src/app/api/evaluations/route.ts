@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createEvaluation, listEvaluations } from "@/lib/repo";
 import { storageGuard, dbErrorResponse } from "@/lib/api-guard";
+import { getSession } from "@/lib/session";
+import { validConfidence } from "@/lib/confidence";
 import type { NewEvaluationInput } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +48,9 @@ function parseInput(body: any): NewEvaluationInput | null {
     comment: body.comment ?? null,
     total_override:
       typeof body.total_override === "number" ? body.total_override : null,
+    ai_confidence:
+      validConfidence(body.ai_confidence) ??
+      validConfidence(body.scores?.ai?.confidence),
   };
 }
 
@@ -66,7 +71,8 @@ export async function POST(req: Request) {
     );
   }
   try {
-    const created = await createEvaluation(input);
+    const session = await getSession();
+    const created = await createEvaluation(input, session?.email ?? null);
     return NextResponse.json(created, { status: 201 });
   } catch (e) {
     return dbErrorResponse(e);

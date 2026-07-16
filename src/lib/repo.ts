@@ -23,6 +23,7 @@ import {
 } from "./report";
 import { telegramChatId } from "./chat-list";
 import { buildViolationWorkflowReport } from "./appeals-report";
+import { reviewStatusFor, validConfidence } from "./confidence";
 import type { DebtTotals } from "./debts";
 import { debtsCellValue } from "./debts";
 import type {
@@ -33,11 +34,13 @@ import type {
   Chat,
   ChatMailing,
   Evaluation,
+  EvaluationScores,
   NewEvaluationInput,
   NewScoreOverrideInput,
   NewTaskInput,
   NewViolationAppealInput,
   NewViolationInput,
+  ReviewStatus,
   ScoreOverride,
   Task,
   TaskPatch,
@@ -76,11 +79,89 @@ function overallFor(input: NewEvaluationInput): number {
 // surface as strings depending on driver/type. Normalize so downstream math
 // (report aggregation) always operates on real numbers.
 function normalizeEvaluation(row: any): Evaluation {
+  const num = (v: any): number | null =>
+    v == null || v === "" || Number.isNaN(Number(v)) ? null : Number(v);
   return {
     ...row,
     role: row.role ?? "accountant",
     total_score: Number(row.total_score),
+    ai_confidence: num(row.ai_confidence),
+    ai_total: num(row.ai_total),
+    review_status: row.review_status ?? "not_reviewed",
+    reviewed_by: row.reviewed_by ?? null,
+    reviewed_at: row.reviewed_at ?? null,
   } as Evaluation;
+}
+
+/**
+ * Собирает поля «уверенность/статус проверки», сохраняя ИСХОДНУЮ AI-оценку.
+ * `existing` — строка до сохранения (или null при первом сохранении). Исходный
+ * снимок AI (scores.ai + ai_confidence + ai_total) фиксируется один раз и НЕ
+ * перезаписывается: финал Маргариты пишется в остальные поля scores/total_score.
+ */
+function deriveReviewFields(
+  existing: Evaluation | null,
+  input: NewEvaluationInput,
+  finalTotal: number,
+  reviewedBy: string | null,
+  nowISO: string
+): {
+  scores: EvaluationScores;
+  ai_confidence: number | null;
+  ai_total: number | null;
+  review_status: ReviewStatus;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+} {
+  // Исходный снимок AI: у уже существующей строки он приоритетнее (не трогаем).
+  const originalAi = existing?.scores?.ai ?? input.scores.ai ?? null;
+
+  const originalConfidence =
+    validConfidence(existing?.ai_confidence) ??
+    validConfidence(existing?.scores?.ai?.confidence) ??
+    validConfidence(input.ai_confidence) ??
+    validConfidence(input.scores.ai?.confidence);
+
+  const originalAiTotal =
+    (existing?.ai_total ?? null) != null
+      ? existing!.ai_total!
+      : typeof existing?.scores?.ai?.total === "number"
+        ? existing.scores.ai!.total!
+        : typeof originalAi?.total === "number"
+          ? originalAi.total
+          : null;
+
+  // Финал Маргариты — во все поля scores, КРОМЕ ai (там держим исходный снимок).
+  const scores: EvaluationScores = { ...input.scores };
+  if (originalAi) scores.ai = originalAi;
+  else delete scores.ai;
+  if (originalConfidence != null && scores.ai) {
+    scores.ai = { ...scores.ai, confidence: originalConfidence };
+  }
+
+  // Статус: если есть базовый AI-снимок — сравниваем; иначе сохраняем прежний.
+  const derived = reviewStatusFor(originalAi, input.scores, finalTotal);
+  let review_status: ReviewStatus;
+  let reviewed_by: string | null;
+  let reviewed_at: string | null;
+  if (derived) {
+    review_status = derived;
+    reviewed_by = reviewedBy ?? existing?.reviewed_by ?? null;
+    reviewed_at = nowISO;
+  } else {
+    review_status = existing?.review_status ?? "not_reviewed";
+    reviewed_by = existing?.reviewed_by ?? null;
+    reviewed_at = existing?.reviewed_at ?? null;
+  }
+
+  return {
+    scores,
+    ai_confidence: originalConfidence ?? null,
+    ai_total: originalAiTotal,
+    review_status,
+    reviewed_by,
+    reviewed_at,
+  };
 }
 
 // --- Chats -----------------------------------------------------------------
@@ -396,34 +477,46 @@ function applyEvalFilters(rows: Evaluation[], f: ReportFilters): Evaluation[] {
 
 /** Compute total + band from scores using the active model, then persist. */
 export async function createEvaluation(
-  input: NewEvaluationInput
+  input: NewEvaluationInput,
+  reviewedBy: string | null = null
 ): Promise<Evaluation> {
   const total = overallFor(input);
-
-  const row: Evaluation = {
-    id: randomUUID(),
-    chat_agr_no: input.chat_agr_no,
-    period: input.period,
-    checking_date: input.checking_date,
-    role: input.role ?? "accountant",
-    accountant: input.accountant,
-    scores: input.scores,
-    total_score: total,
-    quality_band: bandFor(total),
-    comment: input.comment,
-    created_at: new Date().toISOString(),
-  };
+  const role = input.role ?? "accountant";
+  const now = new Date().toISOString();
 
   const sb = getServiceClient();
   if (sb) {
+    // Find any existing row for the same (chat, date, role) so we can PRESERVE
+    // its original AI snapshot/confidence instead of clobbering it on re-save.
+    const { data: existingData } = await sb
+      .from(TABLES.evaluations)
+      .select("*")
+      .eq("chat_agr_no", input.chat_agr_no)
+      .eq("checking_date", input.checking_date)
+      .eq("role", role)
+      .maybeSingle();
+    const existing = existingData ? normalizeEvaluation(existingData) : null;
+    const review = deriveReviewFields(existing, input, total, reviewedBy, now);
+
     // Upsert on (chat_agr_no, checking_date, role): one row per role per day.
-    // This makes re-scoring a chat that the page hadn't loaded (it only loads
-    // the most recent 1000 evaluations) update the existing row instead of
-    // hitting the unique constraint. id/created_at are omitted so the existing
-    // row keeps them on conflict, and the DB defaults fill them on insert.
-    const payload: Record<string, unknown> = { ...row };
-    delete payload.id;
-    delete payload.created_at;
+    // id/created_at are omitted so the existing row keeps them on conflict, and
+    // the DB defaults fill them on insert.
+    const payload: Record<string, unknown> = {
+      chat_agr_no: input.chat_agr_no,
+      period: input.period,
+      checking_date: input.checking_date,
+      role,
+      accountant: input.accountant,
+      scores: review.scores,
+      total_score: total,
+      quality_band: bandFor(total),
+      comment: input.comment,
+      ai_confidence: review.ai_confidence,
+      ai_total: review.ai_total,
+      review_status: review.review_status,
+      reviewed_by: review.reviewed_by,
+      reviewed_at: review.reviewed_at,
+    };
     const { data, error } = await sb
       .from(TABLES.evaluations)
       .upsert(payload, { onConflict: "chat_agr_no,checking_date,role" })
@@ -432,8 +525,35 @@ export async function createEvaluation(
     if (error) throw error;
     return normalizeEvaluation(data);
   }
+
   // Mock store: replace any existing row for the same (chat, date, role).
   const s = store();
+  const existing =
+    s.evaluations.find(
+      (e) =>
+        e.chat_agr_no === input.chat_agr_no &&
+        e.checking_date === input.checking_date &&
+        (e.role ?? "accountant") === role
+    ) ?? null;
+  const review = deriveReviewFields(existing, input, total, reviewedBy, now);
+  const row: Evaluation = {
+    id: existing?.id ?? randomUUID(),
+    chat_agr_no: input.chat_agr_no,
+    period: input.period,
+    checking_date: input.checking_date,
+    role,
+    accountant: input.accountant,
+    scores: review.scores,
+    total_score: total,
+    quality_band: bandFor(total),
+    comment: input.comment,
+    created_at: existing?.created_at ?? now,
+    ai_confidence: review.ai_confidence,
+    ai_total: review.ai_total,
+    review_status: review.review_status,
+    reviewed_by: review.reviewed_by,
+    reviewed_at: review.reviewed_at,
+  };
   s.evaluations = s.evaluations.filter(
     (e) =>
       !(
@@ -448,23 +568,41 @@ export async function createEvaluation(
 
 export async function updateEvaluation(
   id: string,
-  input: NewEvaluationInput
+  input: NewEvaluationInput,
+  reviewedBy: string | null = null
 ): Promise<Evaluation> {
   const total = overallFor(input);
-  const patch = {
-    chat_agr_no: input.chat_agr_no,
-    period: input.period,
-    checking_date: input.checking_date,
-    role: input.role ?? "accountant",
-    accountant: input.accountant,
-    scores: input.scores,
-    total_score: total,
-    quality_band: bandFor(total),
-    comment: input.comment,
-  };
+  const role = input.role ?? "accountant";
+  const now = new Date().toISOString();
 
   const sb = getServiceClient();
   if (sb) {
+    // Load the row first: its original AI snapshot/confidence must survive the
+    // edit (do NOT overwrite the original AI result when Margarita corrects it).
+    const { data: existingData, error: findErr } = await sb
+      .from(TABLES.evaluations)
+      .select("*")
+      .eq("id", id)
+      .single();
+    if (findErr) throw findErr;
+    const existing = normalizeEvaluation(existingData);
+    const review = deriveReviewFields(existing, input, total, reviewedBy, now);
+    const patch = {
+      chat_agr_no: input.chat_agr_no,
+      period: input.period,
+      checking_date: input.checking_date,
+      role,
+      accountant: input.accountant,
+      scores: review.scores,
+      total_score: total,
+      quality_band: bandFor(total),
+      comment: input.comment,
+      ai_confidence: review.ai_confidence,
+      ai_total: review.ai_total,
+      review_status: review.review_status,
+      reviewed_by: review.reviewed_by,
+      reviewed_at: review.reviewed_at,
+    };
     const { data, error } = await sb
       .from(TABLES.evaluations)
       .update(patch)
@@ -477,7 +615,24 @@ export async function updateEvaluation(
   const rows = store().evaluations;
   const idx = rows.findIndex((e) => e.id === id);
   if (idx === -1) throw new Error(`Evaluation ${id} not found`);
-  rows[idx] = { ...rows[idx], ...patch };
+  const review = deriveReviewFields(rows[idx], input, total, reviewedBy, now);
+  rows[idx] = {
+    ...rows[idx],
+    chat_agr_no: input.chat_agr_no,
+    period: input.period,
+    checking_date: input.checking_date,
+    role,
+    accountant: input.accountant,
+    scores: review.scores,
+    total_score: total,
+    quality_band: bandFor(total),
+    comment: input.comment,
+    ai_confidence: review.ai_confidence,
+    ai_total: review.ai_total,
+    review_status: review.review_status,
+    reviewed_by: review.reviewed_by,
+    reviewed_at: review.reviewed_at,
+  };
   return rows[idx];
 }
 

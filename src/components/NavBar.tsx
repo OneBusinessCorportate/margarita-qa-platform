@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/appeals", label: "Апелляции" },
   { href: "/handbook", label: "Регламент" },
   { href: "/dashboard", label: "Отчёт" },
+  { href: "/confidence", label: "Уверенность AI" },
   { href: "/mailing-report", label: "Рассылки" },
   { href: "/reconcile", label: "Сверка" },
   { href: "/work-report", label: "Отчёт по работе" },

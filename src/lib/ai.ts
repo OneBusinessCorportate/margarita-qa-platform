@@ -49,6 +49,13 @@ export interface AiPrediction {
   monthly: Record<string, { status: string }>;
   total: number;
   band: QualityBand;
+  /**
+   * Уверенность модели в этом прогнозе, 0..100 (%). Детерминирована: растёт с
+   * объёмом истории по бухгалтеру и общему числу обученных пар, падает при
+   * большой исторической ошибке (learned bias); правило «рассылка не выполнена»
+   * даёт высокую уверенность (это жёсткое правило, а не суждение модели).
+   */
+  confidence: number;
   /** Short human explanation of where the numbers came from. */
   note: string;
 }
@@ -58,6 +65,8 @@ export interface AiSnapshot {
   criteria: CriteriaScores;
   monthly: Record<string, { status: string }>;
   total: number;
+  /** Уверенность модели в этом прогнозе (0..100), привязана к этой версии. */
+  confidence: number;
 }
 
 /** The chat facts the AI uses to auto-fill mailing statuses (same as the human row). */
@@ -196,6 +205,49 @@ function learnedBias(model: AiModel, accountant: string | null): number {
   return stats.sum / stats.count;
 }
 
+// Confidence tuning constants (documented so the analytics читаются осмысленно).
+const CONFIDENCE_GATED = 95; // жёсткое правило «рассылка не выполнена» → высокая уверенность
+const CONFIDENCE_BASE = 45; // старт при полном отсутствии истории
+const CONFIDENCE_ACC_MAX = 40; // максимальная прибавка за историю по бухгалтеру
+const CONFIDENCE_GLOBAL_MAX = 12; // максимальная прибавка за общий объём обучения
+const CONFIDENCE_ACC_SCALE = 6; // «половинное насыщение» по эффективному числу оценок бухгалтера
+const CONFIDENCE_GLOBAL_SCALE = 30; // то же по общему числу обученных пар
+const CONFIDENCE_BIAS_PENALTY_MAX = 25; // штраф за большую историческую ошибку модели
+const CONFIDENCE_CEIL = 99; // модель никогда не заявляет 100% — оставляем «зазор»
+
+/** Эффективное число оценок бухгалтера (recency-weighted) по критериям. */
+function accountantEffectiveN(model: AiModel, accountant: string | null): number {
+  const rec = model.criteria[accountant ?? GLOBAL];
+  if (!rec) return 0;
+  let best = 0;
+  for (const c of CRITERIA) {
+    const s = rec[c.id];
+    if (s && s.count > best) best = s.count;
+  }
+  return best;
+}
+
+/**
+ * Детерминированная уверенность модели (0..100) для одного прогноза. Чистая
+ * функция от обученной модели, бухгалтера и признака «gated» — одинаковый вход
+ * даёт одинаковый выход (важно для тестов и для привязки уверенности к версии).
+ */
+export function predictionConfidence(
+  model: AiModel,
+  accountant: string | null,
+  gated: boolean
+): number {
+  if (gated) return CONFIDENCE_GATED;
+  const nAcc = accountantEffectiveN(model, accountant);
+  const nGlob = model.trainedPairs;
+  const bias = Math.abs(learnedBias(model, accountant));
+  let conf = CONFIDENCE_BASE;
+  conf += CONFIDENCE_ACC_MAX * (1 - Math.exp(-nAcc / CONFIDENCE_ACC_SCALE));
+  conf += CONFIDENCE_GLOBAL_MAX * (1 - Math.exp(-nGlob / CONFIDENCE_GLOBAL_SCALE));
+  conf -= Math.min(CONFIDENCE_BIAS_PENALTY_MAX, bias);
+  return Math.max(0, Math.min(CONFIDENCE_CEIL, Math.round(conf)));
+}
+
 /**
  * The AI's mailing status for one category, from the same facts the human row
  * auto-fills from: the debt feed wins for «Долги»; otherwise a carried-forward
@@ -262,7 +314,9 @@ export function predictEvaluation(
       ? `прогноз обучен на ${model.trainedPairs} ${pluralEval(model.trainedPairs)} Маргариты`
       : "прогноз по статусам прошлой проверки";
 
-  return { criteria, monthly, total, band: bandFor(total), note };
+  const confidence = predictionConfidence(model, accountant, gated);
+
+  return { criteria, monthly, total, band: bandFor(total), confidence, note };
 }
 
 function pluralEval(n: number): string {
@@ -273,5 +327,10 @@ function pluralEval(n: number): string {
 
 /** The snapshot to persist with Margarita's row so the model can learn. */
 export function toSnapshot(p: AiPrediction): AiSnapshot {
-  return { criteria: p.criteria, monthly: p.monthly, total: p.total };
+  return {
+    criteria: p.criteria,
+    monthly: p.monthly,
+    total: p.total,
+    confidence: p.confidence,
+  };
 }
