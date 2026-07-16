@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   getDailyAnalytics,
+  getReport,
   getReportSnapshot,
   listAccountants,
   listReportSnapshots,
@@ -8,9 +9,11 @@ import {
 } from "@/lib/repo";
 import { getWorkReport } from "@/lib/appeals-data";
 import { reportSnapshotLabel } from "@/lib/report";
+import { mondayOf } from "@/lib/scoring";
 import { buildLiveViolationBreakdown } from "@/lib/violation-report";
 import DashboardFilters from "@/components/DashboardFilters";
 import ReportView from "@/components/ReportView";
+import WeeklyScores from "@/components/WeeklyScores";
 import SaveReportButton from "@/components/SaveReportButton";
 import ExportPdfButton from "@/components/ExportPdfButton";
 import AccountantViolationBreakdown from "@/components/AccountantViolationBreakdown";
@@ -19,6 +22,17 @@ import EmployeeAuditSummary from "@/components/EmployeeAuditSummary";
 import AutoRefresh from "@/components/AutoRefresh";
 
 export const dynamic = "force-dynamic";
+
+function addDaysIso(iso: string, n: number): string {
+  const d = new Date(iso.slice(0, 10) + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function ddmm(iso: string): string {
+  const [, m, d] = iso.slice(0, 10).split("-");
+  return d && m ? `${d}.${m}` : iso;
+}
 
 function fmtSavedAt(iso: string): string {
   const d = new Date(iso);
@@ -38,6 +52,7 @@ export default async function DashboardPage({
     accountant?: string;
     client?: string;
     snapshot?: string;
+    week?: string;
   };
 }) {
   const filters = {
@@ -100,6 +115,33 @@ export default async function DashboardPage({
     }
   }
 
+  // История оценок за неделю (п.6): полная таблица «бухгалтер × день» за выбранную
+  // неделю с навигацией по прошлым неделям. Тот же движок, что и недельный PDF.
+  const today = new Date().toISOString().slice(0, 10);
+  const weekStart = mondayOf(searchParams.week || win.to || today);
+  const weekDays = Array.from({ length: 7 }, (_, i) => addDaysIso(weekStart, i));
+  const weekEnd = weekDays[6];
+  const weeklyReport = snapshot
+    ? null
+    : await getReport({
+        accountant: filters.accountant,
+        client: filters.client,
+        from: weekStart,
+        to: weekEnd,
+      });
+  const weekHref = (monday: string): string => {
+    const p = new URLSearchParams();
+    if (filters.accountant) p.set("accountant", filters.accountant);
+    if (filters.client) p.set("client", filters.client);
+    if (searchParams.from) p.set("from", searchParams.from);
+    if (searchParams.to) p.set("to", searchParams.to);
+    p.set("week", monday);
+    return `/dashboard?${p.toString()}#weekly`;
+  };
+  const nextWeekStart = addDaysIso(weekStart, 7);
+  const nextWeekHref =
+    nextWeekStart <= mondayOf(today) ? weekHref(nextWeekStart) : null;
+
   return (
     <div className="space-y-4">
       <div className="no-print">
@@ -160,6 +202,20 @@ export default async function DashboardPage({
       />
 
       <ReportView report={report} previousReport={previousReport} />
+
+      {/* История оценок за неделю (п.6) — полная таблица за текущую/прошлые недели. */}
+      {weeklyReport && (
+        <div id="weekly">
+          <WeeklyScores
+            report={weeklyReport}
+            weekDays={weekDays}
+            weekLabel={`${ddmm(weekStart)} – ${ddmm(weekEnd)}`}
+            prevHref={weekHref(addDaysIso(weekStart, -7))}
+            nextHref={nextWeekHref}
+            today={today}
+          />
+        </div>
+      )}
 
       {/* Нарушения по бухгалтерам — ЖИВЫЕ данные за выбранный период. */}
       <AccountantViolationBreakdown
