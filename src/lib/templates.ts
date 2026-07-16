@@ -105,8 +105,10 @@ function fmtDram(n: number): string {
 }
 
 /**
- * Daily accounting report message — matches the format the department sends,
- * with each accountant's violations merged directly UNDER their request count:
+ * Daily accounting report message — compact, two-group format (отзыв
+ * руководителя, июль 2026): all accountants are shown, but the clean ones are
+ * collapsed into a single names list and only the violators get a detailed
+ * breakdown, so «Нарушения: нет» is never repeated per person:
  *
  *   Ежедневный отчет бухгалтерии
  *
@@ -118,21 +120,18 @@ function fmtDram(n: number): string {
  *
  *   ⭐️ Имя: 100% оценка
  *
- *   Кол-во запросов за день:
+ *   Бухгалтеры без нарушений:
+ *   Դավիթ, Հասմիկ, Նաիրա
  *
- *   Գայանե — 3
- *   Нарушения:
+ *   Бухгалтеры с нарушениями:
+ *   Գայանե
  *   - B-1234 — поздний ответ — предупреждение / 0 др
  *   - B-5678 — без ответа — 1 000 др
  *
- *   Դավիթ — 10
- *   Нарушения: нет
- *
- * Only accountants with requests OR violations are listed (roster order); the
- * separate all-employees violations report is no longer sent. Money is the
- * simple daily rule — 1st violation per accountant/day = предупреждение (0 др),
- * every next = 1 000 др (hard cap 1 000; severity/AI never sets the amount).
- * Violations passed in must already be Margarita's confirmed rows.
+ * Money is the simple daily rule — 1st violation per accountant/day =
+ * предупреждение (0 др), every next = 1 000 др (hard cap 1 000; severity/AI
+ * never sets the amount). Violations passed in must already be Margarita's
+ * confirmed rows.
  */
 /** One top-scoring accountant shown in the «Звезда дня» block. */
 export interface DailyReportStar {
@@ -147,7 +146,7 @@ export interface DailyReportViolItem {
   fine: number;
 }
 
-/** One accountant row of «Кол-во запросов за день» with their нарушения. */
+/** One accountant WITH нарушения: name, their request count, and нарушения. */
 export interface DailyReportRow {
   accountant: string;
   count: number;
@@ -157,10 +156,15 @@ export interface DailyReportRow {
 /**
  * Structured body of the daily accounting report, shared by the Telegram
  * message (buildReportMessage) and the daily PDF (buildReportPdf, mode "daily")
- * so the two ALWAYS agree: same service %, same «Звезда дня», the same
- * per-accountant request counts and the same нарушения priced by the ONE fine
- * engine (groupNarusheniya). Changing the daily report means changing this
- * model once — both outputs follow, so PDF and message can never drift apart.
+ * so the two ALWAYS agree: same service %, same «Звезда дня» and the same
+ * нарушения priced by the ONE fine engine (groupNarusheniya). Changing the
+ * daily report means changing this model once — both outputs follow, so PDF and
+ * message can never drift apart.
+ *
+ * Формат (по отзыву руководителя, июль 2026): показываем ВСЕХ бухгалтеров, но
+ * компактно — тех, у кого нарушений нет, одним списком имён; тех, у кого есть, —
+ * детально (имя + нарушения). Строку «Нарушения: нет» по каждому больше не
+ * пишем, чтобы отчёт был компактным и читаемым.
  */
 export interface DailyReportModel {
   /** Header date / period label, e.g. "15.07" or "13.07 — 15.07". */
@@ -169,8 +173,14 @@ export interface DailyReportModel {
   servicePct: number;
   /** Звёзды дня — top-scoring accountants (roster only). */
   stars: DailyReportStar[];
-  /** Кол-во запросов за день — per accountant, with their нарушения under each. */
+  /** Бухгалтеры С нарушениями — имя + их нарушения (только нарушители). */
   rows: DailyReportRow[];
+  /**
+   * Бухгалтеры БЕЗ нарушений — только имена (компактный список). С ростером это
+   * все действующие бухгалтеры, у кого за день нет нарушений; без ростера — те,
+   * у кого были запросы за день и нет нарушений.
+   */
+  cleanAccountants: string[];
   /** Sum of all fines in the window (др). */
   totalFine: number;
 }
@@ -247,34 +257,49 @@ export function buildDailyReportModel(
     reqByAcc.set(r.accountant, r.count);
   }
 
-  // Кого показываем: бухгалтеры с запросами за день ИЛИ с нарушениями. С
-  // ростером — в порядке ростера, плюс нарушители вне ростера (напр. «-»).
-  const namesToShow: string[] = [];
-  const seenName = new Set<string>();
-  const addName = (name: string) => {
-    if (seenName.has(name)) return;
-    seenName.add(name);
-    namesToShow.push(name);
+  // Бухгалтеры С нарушениями — детально (имя + нарушения). С ростером — в
+  // порядке ростера, плюс нарушители вне ростера (напр. «-»); без ростера — в
+  // порядке появления нарушений.
+  const rows: DailyReportRow[] = [];
+  const seenViol = new Set<string>();
+  const addViol = (name: string) => {
+    if (seenViol.has(name)) return;
+    seenViol.add(name);
+    rows.push({
+      accountant: name,
+      count: reqByAcc.get(name) ?? 0,
+      violations: violByAcc.get(name) ?? [],
+    });
   };
   if (rosterSet) {
-    for (const n of roster!) if ((reqByAcc.get(n) ?? 0) > 0 || violByAcc.has(n)) addName(n);
-    for (const acc of violByAcc.keys()) if (!rosterSet.has(acc)) addName(acc);
+    for (const n of roster!) if (violByAcc.has(n)) addViol(n);
+    for (const acc of violByAcc.keys()) if (!rosterSet.has(acc)) addViol(acc);
   } else {
-    for (const r of requests ?? []) if (r.count > 0) addName(r.accountant);
-    for (const acc of violByAcc.keys()) addName(acc);
+    for (const acc of violByAcc.keys()) addViol(acc);
   }
 
-  const rows: DailyReportRow[] = namesToShow.map((name) => ({
-    accountant: name,
-    count: reqByAcc.get(name) ?? 0,
-    violations: violByAcc.get(name) ?? [],
-  }));
+  // Бухгалтеры БЕЗ нарушений — только имена. С ростером показываем ВСЕХ
+  // действующих бухгалтеров без нарушений; без ростера — тех, у кого были
+  // запросы за день и нет нарушений.
+  const cleanAccountants: string[] = [];
+  if (rosterSet) {
+    for (const n of roster!) if (!violByAcc.has(n)) cleanAccountants.push(n);
+  } else {
+    const seenClean = new Set<string>();
+    for (const r of requests ?? []) {
+      if (r.count > 0 && !violByAcc.has(r.accountant) && !seenClean.has(r.accountant)) {
+        seenClean.add(r.accountant);
+        cleanAccountants.push(r.accountant);
+      }
+    }
+  }
 
   return {
     dateLabel: periodHeader(report, dateISO),
     servicePct: serviceQualityPct,
     stars,
     rows,
+    cleanAccountants,
     totalFine,
   };
 }
@@ -313,21 +338,24 @@ export function buildReportMessage(
     }
   }
 
+  // Бухгалтеры без нарушений — компактным списком имён.
+  if (model.cleanAccountants.length > 0) {
+    lines.push("");
+    lines.push("Бухгалтеры без нарушений:");
+    lines.push(model.cleanAccountants.join(", "));
+  }
+
+  // Бухгалтеры с нарушениями — имя, затем нарушения (код — тип — штраф).
   if (model.rows.length > 0) {
     lines.push("");
-    lines.push("Кол-во запросов за день:");
-    for (const row of model.rows) {
-      lines.push("");
-      lines.push(`${row.accountant} — ${row.count}`);
-      if (row.violations.length === 0) {
-        lines.push("Нарушения: нет");
-      } else {
-        lines.push("Нарушения:");
-        for (const item of row.violations) {
-          lines.push(`- ${item.code} — ${item.type} — ${dailyFineLabel(item.fine)}`);
-        }
+    lines.push("Бухгалтеры с нарушениями:");
+    model.rows.forEach((row, i) => {
+      if (i > 0) lines.push("");
+      lines.push(row.accountant);
+      for (const item of row.violations) {
+        lines.push(`- ${item.code} — ${item.type} — ${dailyFineLabel(item.fine)}`);
       }
-    }
+    });
     if (model.totalFine > 0) {
       lines.push("");
       lines.push(`Итого штрафов: ${fmtDram(model.totalFine)} др`);

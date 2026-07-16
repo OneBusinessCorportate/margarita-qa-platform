@@ -45,7 +45,7 @@ test("report message stars honour the roster filter", () => {
   assert.doesNotMatch(msg, new RegExp(`⭐️ ${droppedStar}:`));
 });
 
-test("report message shows request counts (unique chats) in roster order with «Нарушения: нет»", () => {
+test("report message groups clean accountants into ONE compact list (no «Нарушения: нет»)", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report, {
     requests: [
@@ -55,14 +55,15 @@ test("report message shows request counts (unique chats) in roster order with «
     ],
     roster: ["Նաիրա", "Անի"],
   });
-  assert.match(msg, /Кол-во запросов за день:/);
-  // Roster order; counts are unique-chat figures (no per-day division).
-  assert.match(msg, /Նաիրա — 20\nНарушения: нет/);
-  assert.match(msg, /Անի — 16\nНарушения: нет/);
+  // All roster accountants (none with violations) → one compact names list,
+  // in roster order — no repeated «Нарушения: нет», no per-person counts.
+  assert.match(msg, /Бухгалтеры без нарушений:\nՆաիրա, Անի/);
+  assert.doesNotMatch(msg, /Нарушения: нет/);
+  assert.doesNotMatch(msg, /Кол-во запросов за день/);
   assert.doesNotMatch(msg, /- — 50/); // non-roster name is skipped
 });
 
-test("violations are merged under each accountant with the daily 0/1000 rule", () => {
+test("violators are detailed, clean accountants are a names list (daily 0/1000 rule)", () => {
   const report = buildReport(seedChats, seedEvaluations, {}, seedTasks, "2026-06-15");
   const msg = buildReportMessage(report, {
     requests: [
@@ -83,10 +84,11 @@ test("violations are merged under each accountant with the daily 0/1000 rule", (
       }),
     ],
   });
-  // Лилит: count line, then her two violations merged directly under it.
-  assert.match(msg, /Լիլիթ — 3\nНарушения:\n- B-1 — поздний ответ — предупреждение \/ 0 др\n- B-5678 — без ответа — 1 000 др/);
-  // Аваг has requests but no violations → «Нарушения: нет».
-  assert.match(msg, /Ավագ — 10\nНарушения: нет/);
+  // Лилит is a violator → name then her two нарушения listed directly under it.
+  assert.match(msg, /Бухгалтеры с нарушениями:\nԼիլիթ\n- B-1 — поздний ответ — предупреждение \/ 0 др\n- B-5678 — без ответа — 1 000 др/);
+  // Аваг has no violations → in the compact clean list, never «Нарушения: нет».
+  assert.match(msg, /Бухгалтеры без нарушений:\nԱվագ/);
+  assert.doesNotMatch(msg, /Нарушения: нет/);
   // No client/chat name leaks into the report.
   assert.doesNotMatch(msg, /Клиент/);
   assert.match(msg, /Итого штрафов: 1 000 др/);

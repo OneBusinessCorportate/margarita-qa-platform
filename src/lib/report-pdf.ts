@@ -3,9 +3,12 @@
 // messages so the PDF and the message always agree:
 //
 //   • mode "daily"  — a single-day report (portrait): «Общий уровень сервиса»,
-//     «Звезда дня» and «Кол-во запросов за день» with each accountant's
-//     нарушения underneath. Rendered from the SAME buildDailyReportModel the
-//     Telegram daily message uses, so the numbers are identical.
+//     «Звезда дня», the all-accountants trend grid (score per day + среднее + Δ
+//     — the «динамика/прогресс» the attachment was missing) and the compact
+//     two-group нарушения listing (clean accountants as a names list, violators
+//     detailed). The service/star/violation figures come from the SAME
+//     buildDailyReportModel the Telegram daily message uses, so they are
+//     identical; the trend grid is driven by the optional multi-day `trend`.
 //   • mode "weekly" — the day-by-day monitoring grid (landscape): one column
 //     group per day (% | ⚠ | N), summary rows on top and one row per
 //     accountant with colour-coded score cells, plus the detail sections.
@@ -36,6 +39,13 @@ export interface ReportPdfOptions {
    * (single day → daily, range → weekly).
    */
   mode?: "daily" | "weekly";
+  /**
+   * Multi-day report used ONLY by the daily PDF to render the «динамика оценок
+   * всех бухгалтеров» trend grid (score per day + среднее + Δ). Lets each person
+   * see not just today's mark but their progress over the recent days. Ignored
+   * for the weekly mode (that grid already shows day-by-day dynamics).
+   */
+  trend?: DailyReport;
 }
 
 const FONT_DIR = path.join(process.cwd(), "fonts");
@@ -263,6 +273,169 @@ function renderScoresTable(
   doc.y = y + 4;
 }
 
+/** One accountant's row in the daily trend grid. */
+interface TrendRow {
+  name: string;
+  /** date (ISO) → average score that day (only days with an evaluation). */
+  perDay: Map<string, number>;
+  /** Window average (−1 when the accountant has no evaluations). */
+  avg: number;
+}
+
+/**
+ * Таблица «динамика оценок всех бухгалтеров» для дневного PDF (п.: во вложении
+ * должна быть таблица с оценками ВСЕХ бухгалтеров, чтобы каждый видел не только
+ * свой сегодняшний результат, но и динамику/прогресс). Колонки: имя · оценка за
+ * каждый день окна · Ср. (среднее за период) · Δ (изменение: первый→последний
+ * день с оценкой). Цвет ячеек — как в спреадшите.
+ */
+function renderScoresTrendGrid(
+  doc: PDFKit.PDFDocument,
+  left: number,
+  contentW: number,
+  title: string,
+  dates: string[],
+  rows: TrendRow[]
+): void {
+  const shownDates = dates.slice(-7);
+  if (rows.length === 0 || shownDates.length === 0) return;
+  if (doc.y + 60 > doc.page.height - doc.page.margins.bottom) doc.addPage();
+  doc.moveDown(0.6);
+  doc.font("Bold").fontSize(11).fillColor(COLORS.text).text(title, left, doc.y);
+  doc.moveDown(0.2);
+
+  const rowH = 15;
+  const wName = 120,
+    wAvg = 42,
+    wDelta = 34;
+  const wDay = Math.floor((contentW - wName - wAvg - wDelta) / shownDates.length);
+  let y = doc.y;
+
+  const cell = (
+    x: number,
+    w: number,
+    text: string,
+    bg: string,
+    fg: string,
+    bold: boolean,
+    align: "left" | "center" = "center"
+  ) => {
+    doc.rect(x, y, w, rowH).fillAndStroke(bg, COLORS.border);
+    doc.font(bold ? "Bold" : "Regular").fontSize(7).fillColor(fg);
+    doc.text(text, x + 2, y + 4, { width: w - 4, align, lineBreak: false });
+  };
+
+  // Header.
+  let x = left;
+  cell(x, wName, "Бухгалтер", COLORS.headerBg, COLORS.text, true, "left");
+  x += wName;
+  for (const d of shownDates) {
+    cell(x, wDay, fmtShortDate(d), COLORS.headerBg, COLORS.text, true);
+    x += wDay;
+  }
+  cell(x, wAvg, "Ср.", COLORS.headerBg, COLORS.text, true);
+  x += wAvg;
+  cell(x, wDelta, "Δ", COLORS.headerBg, COLORS.text, true);
+  y += rowH;
+
+  // Rows.
+  for (const r of rows) {
+    if (y + rowH > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
+    x = left;
+    cell(x, wName, r.name, COLORS.labelBg, COLORS.text, true, "left");
+    x += wName;
+    const seq: number[] = [];
+    for (const d of shownDates) {
+      const s = r.perDay.get(d);
+      if (s === undefined || s < 0) {
+        cell(x, wDay, "—", "#ffffff", COLORS.muted, false);
+      } else {
+        seq.push(s);
+        const c = scoreColors(s);
+        cell(x, wDay, String(s), c.bg, c.fg, false);
+      }
+      x += wDay;
+    }
+    if (r.avg >= 0) {
+      const c = scoreColors(r.avg);
+      cell(x, wAvg, String(r.avg), c.bg, c.fg, true);
+    } else {
+      cell(x, wAvg, "—", "#ffffff", COLORS.muted, false);
+    }
+    x += wAvg;
+    // Δ — первый→последний день с оценкой в окне.
+    let deltaText = "—";
+    let deltaFg = COLORS.muted;
+    if (seq.length >= 2) {
+      const d = Math.round((seq[seq.length - 1] - seq[0]) * 10) / 10;
+      if (d > 0) {
+        deltaText = `▲${d}`;
+        deltaFg = COLORS.green.fg;
+      } else if (d < 0) {
+        deltaText = `▼${Math.abs(d)}`;
+        deltaFg = COLORS.red.fg;
+      } else {
+        deltaText = "=";
+        deltaFg = COLORS.text;
+      }
+    }
+    cell(x, wDelta, deltaText, "#ffffff", deltaFg, true);
+    y += rowH;
+  }
+  doc.y = y + 2;
+  doc.font("Regular").fontSize(6.5).fillColor(COLORS.muted).text(
+    "оценка за каждый день · Ср. — среднее за период · Δ — изменение (первый→последний день с оценкой)",
+    left,
+    doc.y,
+    { width: contentW }
+  );
+  doc.moveDown(0.2);
+}
+
+/** Build the trend rows for `roster` from a multi-day `trend` report. */
+function buildTrendRows(trend: DailyReport, roster: string[] | undefined): {
+  dates: string[];
+  rows: TrendRow[];
+} {
+  const from = trend.filters.from ?? trend.filters.to ?? "";
+  const to = trend.filters.to ?? trend.filters.from ?? "";
+  const dates = from && to ? rangeDates(from, to) : [];
+
+  // date|accountant → avg score for the day.
+  const dayAcc = new Map<string, number>();
+  if (trend.perDayPerAccountant && trend.perDayPerAccountant.length > 0) {
+    for (const d of trend.perDayPerAccountant) {
+      dayAcc.set(`${d.date}|${d.accountant}`, d.avgScore);
+    }
+  } else {
+    // Single-day trend degenerate case — key everything to `to`.
+    for (const a of trend.perAccountant) dayAcc.set(`${to}|${a.accountant}`, a.avgScore);
+  }
+  const avgMap = new Map(trend.perAccountant.map((a) => [a.accountant, a.avgScore]));
+
+  const names =
+    roster && roster.length > 0
+      ? roster.filter(isValidEmployee)
+      : [...new Set(trend.perAccountant.map((a) => a.accountant))].filter(isValidEmployee);
+
+  const rows: TrendRow[] = names
+    .map((name) => {
+      const perDay = new Map<string, number>();
+      for (const d of dates) {
+        const s = dayAcc.get(`${d}|${name}`);
+        if (s !== undefined && s >= 0) perDay.set(d, s);
+      }
+      return { name, perDay, avg: avgMap.get(name) ?? -1 };
+    })
+    // Only accountants with at least one evaluation in the window.
+    .filter((r) => r.perDay.size > 0 || r.avg >= 0);
+
+  return { dates, rows };
+}
+
 /** The single-day report — rendered from the shared daily model (matches msg). */
 function renderDaily(
   doc: PDFKit.PDFDocument,
@@ -286,16 +459,32 @@ function renderDaily(
   doc.font("Bold").fontSize(12).fillColor(svc.fg)
     .text(`Общий уровень сервиса: ${model.servicePct}% по отделу`, left, doc.y);
 
-  // Общая таблица оценок всех бухгалтеров (п.1) — то, чего в дневном PDF не было.
-  const accRows = report.perAccountant
-    .filter((a) => isValidEmployee(a.accountant))
-    .map((a) => ({
-      name: a.accountant,
-      pct: a.avgScore,
-      low: a.lowCount,
-      count: a.count,
-    }));
-  renderScoresTable(doc, left, contentW, "Оценки бухгалтеров", accRows);
+  // Таблица оценок ВСЕХ бухгалтеров с динамикой за период (во вложении должна
+  // быть таблица с оценками всех бухгалтеров, чтобы каждый видел не только свой
+  // сегодняшний результат, но и динамику/прогресс). Если передан trend —
+  // рисуем сетку «оценка за каждый день + среднее + Δ»; иначе (например, в
+  // тестах без trend) — компактную таблицу за текущий день.
+  if (options.trend) {
+    const { dates, rows } = buildTrendRows(options.trend, options.roster);
+    renderScoresTrendGrid(
+      doc,
+      left,
+      contentW,
+      "Оценки всех бухгалтеров (динамика за период)",
+      dates,
+      rows
+    );
+  } else {
+    const accRows = report.perAccountant
+      .filter((a) => isValidEmployee(a.accountant))
+      .map((a) => ({
+        name: a.accountant,
+        pct: a.avgScore,
+        low: a.lowCount,
+        count: a.count,
+      }));
+    renderScoresTable(doc, left, contentW, "Оценки бухгалтеров", accRows);
+  }
 
   // Оценки менеджеров (п.2) — показываем, когда менеджер отвечал в чатах и есть
   // оценки; иначе таблица опускается (не засоряем пустой строкой).
@@ -321,31 +510,37 @@ function renderDaily(
     }
   }
 
-  // Кол-во запросов за день + нарушения под каждым бухгалтером.
-  if (model.rows.length > 0) {
+  // Бухгалтеры без нарушений — компактным списком имён (матч с сообщением).
+  if (model.cleanAccountants.length > 0) {
+    if (doc.y + 40 > doc.page.height - doc.page.margins.bottom) doc.addPage();
     doc.moveDown(0.6);
-    doc.font("Bold").fontSize(11).fillColor(COLORS.text).text("Кол-во запросов за день", left, doc.y);
+    doc.font("Bold").fontSize(11).fillColor(COLORS.text)
+      .text("Бухгалтеры без нарушений", left, doc.y);
+    doc.moveDown(0.1);
+    doc.font("Regular").fontSize(9).fillColor(COLORS.text)
+      .text(model.cleanAccountants.join(", "), left, doc.y, { width: contentW });
+  }
+
+  // Бухгалтеры с нарушениями — имя, затем нарушения под ним (матч с сообщением).
+  if (model.rows.length > 0) {
+    if (doc.y + 40 > doc.page.height - doc.page.margins.bottom) doc.addPage();
+    doc.moveDown(0.6);
+    doc.font("Bold").fontSize(11).fillColor(COLORS.text)
+      .text("Бухгалтеры с нарушениями", left, doc.y);
     doc.moveDown(0.1);
     for (const row of model.rows) {
       if (doc.y + 28 > doc.page.height - doc.page.margins.bottom) doc.addPage();
       doc.moveDown(0.25);
       doc.font("Bold").fontSize(10).fillColor(COLORS.text)
-        .text(`${row.accountant} — ${row.count}`, left, doc.y, { width: contentW });
-      if (row.violations.length === 0) {
-        doc.font("Regular").fontSize(9).fillColor(COLORS.muted)
-          .text("Нарушения: нет", left, doc.y, { width: contentW });
-      } else {
-        doc.font("Regular").fontSize(9).fillColor(COLORS.text)
-          .text("Нарушения:", left, doc.y, { width: contentW });
-        for (const item of row.violations) {
-          const fg = item.fine > 0 ? COLORS.red.fg : COLORS.text;
-          doc.fillColor(fg).text(
-            `- ${item.code} — ${item.type} — ${dailyFineLabel(item.fine)}`,
-            left + 8,
-            doc.y,
-            { width: contentW - 8 }
-          );
-        }
+        .text(row.accountant, left, doc.y, { width: contentW });
+      for (const item of row.violations) {
+        const fg = item.fine > 0 ? COLORS.red.fg : COLORS.text;
+        doc.font("Regular").fontSize(9).fillColor(fg).text(
+          `- ${item.code} — ${item.type} — ${dailyFineLabel(item.fine)}`,
+          left + 8,
+          doc.y,
+          { width: contentW - 8 }
+        );
       }
     }
     if (model.totalFine > 0) {
