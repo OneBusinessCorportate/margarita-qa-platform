@@ -1,5 +1,5 @@
 import { getWorkReport } from "@/lib/appeals-data";
-import { listAccountants } from "@/lib/repo";
+import { getViolationWorkflowReport, listAccountants } from "@/lib/repo";
 import AutoRefresh from "@/components/AutoRefresh";
 
 export const dynamic = "force-dynamic";
@@ -13,24 +13,31 @@ export default async function WorkReportPage({
   const to = searchParams.to || undefined;
   const accountant = searchParams.accountant || undefined;
 
-  const [report, accountants] = await Promise.all([
-    getWorkReport({ from, to, accountant }),
+  const [flow, fines, accountants] = await Promise.all([
+    getViolationWorkflowReport({ from, to, accountant }),
+    // Fines / оценки live in the existing report; kept as a secondary block.
+    getWorkReport({ from, to, accountant }).catch(() => null),
     listAccountants(),
   ]);
 
-  const drams = (n: number) => `${n.toLocaleString("ru-RU")} др.`;
-  const stats = [
-    { label: "Чатов проверено", value: report.chatsChecked },
-    { label: "Оценок", value: report.evaluations },
-    { label: "Нарушений", value: report.violations },
-    { label: "Предупреждений", value: report.warnings },
-    { label: "Штрафов", value: report.penalties },
-    { label: "Сумма штрафов", value: drams(report.fineTotal) },
-    { label: "Апелляций", value: report.appeals.total },
-    { label: "Ожидают решения", value: report.appeals.pending, alert: report.appeals.pending > 0 },
-    { label: "Апелляций одобрено", value: report.appeals.approved },
-    { label: "Апелляций отклонено", value: report.appeals.rejected },
+  const stats: { label: string; value: number | string; alert?: boolean }[] = [
+    { label: "Чатов проверено", value: flow.chatsChecked },
+    { label: "Оценок создано", value: flow.evaluations },
+    { label: "Нарушений создано", value: flow.violationsCreated },
+    { label: "Бухгалтеров с нарушениями", value: flow.accountantsWithViolations },
+    { label: "Ознакомлено бухгалтерами", value: flow.acknowledged },
+    { label: "Подано апелляций", value: flow.appealsSubmitted },
+    { label: "Ожидают решения", value: flow.appealsPending, alert: flow.appealsPending > 0 },
+    { label: "Принято апелляций", value: flow.appealsApproved },
+    { label: "Отклонено апелляций", value: flow.appealsRejected },
+    { label: "Обработано апелляций", value: flow.appealsProcessed },
+    { label: "Не обработано бухгалтерами", value: flow.unprocessedViolations, alert: flow.unprocessedViolations > 0 },
+    { label: "Штрафов снято (апелляции)", value: flow.penaltiesCancelled },
+    { label: "% обработки апелляций", value: `${flow.appealProcessingPct}%` },
+    { label: "% реакции бухгалтеров", value: `${flow.acknowledgementPct}%` },
   ];
+
+  const drams = (n: number) => `${n.toLocaleString("ru-RU")} др.`;
 
   return (
     <div className="space-y-5">
@@ -40,9 +47,9 @@ export default async function WorkReportPage({
           <AutoRefresh />
         </div>
         <p className="text-sm text-gray-500">
-          Объём проверок Маргариты: сколько чатов проверено, сколько проблем и
-          нарушений создано, сколько апелляций и их решения — по периоду и
-          бухгалтерам. Данные обновляются автоматически, без перезагрузки.
+          Реальный объём работы Маргариты: проверки, нарушения, ознакомления
+          бухгалтеров и апелляции с решениями — по периоду и бухгалтеру. Данные из
+          сохранённых записей, обновляются автоматически.
         </p>
       </div>
 
@@ -60,18 +67,12 @@ export default async function WorkReportPage({
           <select className="input" name="accountant" defaultValue={accountant ?? ""}>
             <option value="">Все</option>
             {accountants.map((a) => (
-              <option key={a.name} value={a.name}>
-                {a.name}
-              </option>
+              <option key={a.name} value={a.name}>{a.name}</option>
             ))}
           </select>
         </label>
-        <button className="btn-primary" type="submit">
-          Применить
-        </button>
-        <a className="btn-secondary" href="/work-report">
-          Сбросить
-        </a>
+        <button className="btn-primary" type="submit">Применить</button>
+        <a className="btn-secondary" href="/work-report">Сбросить</a>
       </form>
 
       <div className="flex flex-wrap gap-3">
@@ -84,8 +85,8 @@ export default async function WorkReportPage({
       </div>
 
       <div>
-        <h2 className="font-semibold mb-2">По бухгалтерам</h2>
-        {report.byAccountant.length === 0 ? (
+        <h2 className="font-semibold mb-2">По бухгалтерам — нарушения и апелляции</h2>
+        {flow.byAccountant.length === 0 ? (
           <div className="card p-6 text-center text-sm text-gray-500">Нет данных за период.</div>
         ) : (
           <div className="card overflow-x-auto">
@@ -94,26 +95,26 @@ export default async function WorkReportPage({
                 <tr>
                   <th>Бухгалтер</th>
                   <th>Чатов проверено</th>
+                  <th>Оценок</th>
                   <th>Нарушений</th>
-                  <th>Предупр.</th>
-                  <th>Штрафов</th>
-                  <th>Сумма</th>
+                  <th>Ознакомлено</th>
+                  <th>Не обработано</th>
                   <th>Апелляций</th>
-                  <th>Одобрено</th>
+                  <th>Принято</th>
                   <th>Отклонено</th>
                   <th>Ожидают</th>
                 </tr>
               </thead>
               <tbody>
-                {report.byAccountant.map((r) => (
+                {flow.byAccountant.map((r) => (
                   <tr key={r.name}>
                     <td className="font-medium">{r.name}</td>
                     <td>{r.chatsChecked}</td>
+                    <td>{r.evaluations}</td>
                     <td>{r.violations}</td>
-                    <td>{r.warnings}</td>
-                    <td>{r.penalties}</td>
-                    <td className="tabular-nums">{drams(r.fineTotal)}</td>
-                    <td>{r.appeals}</td>
+                    <td>{r.acknowledgements}</td>
+                    <td className={r.unprocessed > 0 ? "text-amber-600 font-medium" : ""}>{r.unprocessed}</td>
+                    <td>{r.appealsSubmitted}</td>
                     <td>{r.approved}</td>
                     <td>{r.rejected}</td>
                     <td>{r.pending}</td>
@@ -125,39 +126,37 @@ export default async function WorkReportPage({
         )}
       </div>
 
-      <div>
-        <h2 className="font-semibold mb-2">По датам</h2>
-        {report.byDate.length === 0 ? (
-          <div className="card p-6 text-center text-sm text-gray-500">Нет данных за период.</div>
-        ) : (
+      {fines && fines.byAccountant.length > 0 && (
+        <div>
+          <h2 className="font-semibold mb-2">Штрафы за период</h2>
           <div className="card overflow-x-auto">
             <table className="qa">
               <thead>
                 <tr>
-                  <th>Дата</th>
-                  <th>Чатов проверено</th>
+                  <th>Бухгалтер</th>
                   <th>Нарушений</th>
                   <th>Предупр.</th>
                   <th>Штрафов</th>
-                  <th>Апелляций</th>
+                  <th>Сумма</th>
                 </tr>
               </thead>
               <tbody>
-                {report.byDate.map((d) => (
-                  <tr key={d.date}>
-                    <td>{d.date}</td>
-                    <td>{d.chatsChecked}</td>
-                    <td>{d.violations}</td>
-                    <td>{d.warnings}</td>
-                    <td>{d.penalties}</td>
-                    <td>{d.appeals}</td>
-                  </tr>
-                ))}
+                {fines.byAccountant
+                  .filter((r) => r.violations > 0)
+                  .map((r) => (
+                    <tr key={r.name}>
+                      <td className="font-medium">{r.name}</td>
+                      <td>{r.violations}</td>
+                      <td>{r.warnings}</td>
+                      <td>{r.penalties}</td>
+                      <td className="tabular-nums">{drams(r.fineTotal)}</td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

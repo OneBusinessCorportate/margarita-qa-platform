@@ -22,24 +22,37 @@ import {
   type ReportSnapshot,
 } from "./report";
 import { telegramChatId } from "./chat-list";
+import { buildViolationWorkflowReport } from "./appeals-report";
 import type { DebtTotals } from "./debts";
 import { debtsCellValue } from "./debts";
 import type {
   Accountant,
   ActiveExclusion,
   ActiveInclusion,
+  AppealStatus,
   Chat,
   ChatMailing,
   Evaluation,
   NewEvaluationInput,
   NewScoreOverrideInput,
   NewTaskInput,
+  NewViolationAppealInput,
   NewViolationInput,
   ScoreOverride,
   Task,
   TaskPatch,
   Violation,
+  ViolationAppeal,
+  ViolationStatus,
 } from "./types";
+import {
+  WorkflowError,
+  appealStatusFor,
+  assertCanAppeal,
+  assertCanResolve,
+  canAcknowledge,
+  violationStatusForDecision,
+} from "./violation-workflow";
 
 function overallFor(input: NewEvaluationInput): number {
   if (typeof input.total_override === "number") return input.total_override;
@@ -852,6 +865,7 @@ export async function listViolations(filters: {
 export async function createViolation(
   input: NewViolationInput
 ): Promise<Violation> {
+  const status: ViolationStatus = input.status ?? "new";
   const row: Violation = {
     id: randomUUID(),
     vdate: input.vdate,
@@ -866,7 +880,11 @@ export async function createViolation(
     // Margarita's manual entries are confirmed by her by default. Auto-imported
     // rows pass confirmed:false so they never masquerade as confirmed penalties.
     confirmed: input.confirmed ?? true,
-    appeal_status: input.appeal_status ?? null,
+    status,
+    acknowledged_at: null,
+    acknowledged_by: null,
+    // Keep the legacy appeal_status mirror in sync with the workflow status.
+    appeal_status: input.appeal_status ?? appealStatusFor(status),
     created_at: new Date().toISOString(),
   };
   const sb = getServiceClient();
@@ -881,6 +899,297 @@ export async function createViolation(
   }
   store().violations.unshift(row);
   return row;
+}
+
+/** Fetch one violation by id (both backends). Null when absent. */
+export async function getViolation(id: string): Promise<Violation | null> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.violations)
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+    return { ...data, sanction: data.sanction == null ? null : Number(data.sanction) } as Violation;
+  }
+  return store().violations.find((v) => v.id === id) ?? null;
+}
+
+// --- Violation workflow: acknowledgement + appeals -------------------------
+
+/**
+ * Accountant «Ознакомлен»: mark a violation acknowledged. Idempotent — a
+ * violation that is already acknowledged / appealed / resolved is returned
+ * unchanged (repeated requests never create duplicates or overwrite an appeal).
+ * On Supabase the update is guarded by `status = 'new'`, so two concurrent
+ * acknowledgements can never both win.
+ */
+export async function acknowledgeViolation(
+  id: string,
+  by?: string | null
+): Promise<Violation> {
+  const existing = await getViolation(id);
+  if (!existing) throw new WorkflowError("Нарушение не найдено", 404);
+  if (!canAcknowledge(existing)) return existing; // idempotent no-op
+
+  const now = new Date().toISOString();
+  const patch = { status: "acknowledged" as const, acknowledged_at: now, acknowledged_by: by ?? existing.accountant ?? null };
+
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.violations)
+      .update(patch)
+      .eq("id", id)
+      .eq("status", "new") // concurrency guard
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    // Lost the race (someone acknowledged/appealed first) → return current row.
+    return (data as Violation) ?? (await getViolation(id))!;
+  }
+  const v = store().violations.find((x) => x.id === id)!;
+  Object.assign(v, patch);
+  return v;
+}
+
+/** Appeals for a violation (newest first). Both backends. */
+export async function listViolationAppealsFor(
+  violationId: string
+): Promise<ViolationAppeal[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.violationAppeals)
+      .select("*")
+      .eq("violation_id", violationId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as ViolationAppeal[];
+  }
+  return store()
+    .violationAppeals.filter((a) => a.violation_id === violationId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+/** All violation-appeals (newest first), optionally filtered. Both backends. */
+export async function listViolationAppeals(filters: {
+  status?: string;
+  accountant?: string;
+} = {}): Promise<ViolationAppeal[]> {
+  const sb = getServiceClient();
+  let rows: ViolationAppeal[];
+  if (sb) {
+    let q = sb.from(TABLES.violationAppeals).select("*");
+    if (filters.status) q = q.eq("status", filters.status);
+    if (filters.accountant) q = q.eq("accountant", filters.accountant);
+    const { data, error } = await q
+      .order("created_at", { ascending: false })
+      .limit(5000);
+    if (error) throw error;
+    rows = (data ?? []) as ViolationAppeal[];
+  } else {
+    rows = [...store().violationAppeals].sort((a, b) =>
+      b.created_at.localeCompare(a.created_at)
+    );
+    if (filters.status) rows = rows.filter((a) => a.status === filters.status);
+    if (filters.accountant) rows = rows.filter((a) => a.accountant === filters.accountant);
+  }
+  return rows;
+}
+
+/** A violation-appeal joined with its disputed violation, for the /appeals UI. */
+export interface ViolationAppealView extends ViolationAppeal {
+  violation: Violation | null;
+}
+
+/**
+ * All violation-appeals (filtered) enriched with their disputed violation, so
+ * the /appeals page can show every field (date, client/chat, category,
+ * description, Margarita's comment, penalty, status, decision). Both backends.
+ */
+export async function listViolationAppealViews(filters: {
+  status?: string;
+  accountant?: string;
+} = {}): Promise<ViolationAppealView[]> {
+  const appeals = await listViolationAppeals(filters);
+  const ids = [...new Set(appeals.map((a) => a.violation_id))];
+  const byId = new Map<string, Violation>();
+  const sb = getServiceClient();
+  if (sb && ids.length) {
+    const { data, error } = await sb
+      .from(TABLES.violations)
+      .select("*")
+      .in("id", ids);
+    if (error) throw error;
+    for (const v of (data ?? []) as any[]) {
+      byId.set(v.id, { ...v, sanction: v.sanction == null ? null : Number(v.sanction) } as Violation);
+    }
+  } else if (!sb) {
+    for (const v of store().violations) if (ids.includes(v.id)) byId.set(v.id, v);
+  }
+  return appeals.map((a) => ({ ...a, violation: byId.get(a.violation_id) ?? null }));
+}
+
+/**
+ * Accountant «Подать апелляцию»: file an appeal against a violation. Validates
+ * on the server (never trusts the client): text is required, the violation must
+ * exist and be actionable, ownership is enforced, and a violation cannot have
+ * two active pending appeals (checked in JS AND guaranteed by the DB partial
+ * unique index). On success the violation moves to `appealed`.
+ */
+export async function createViolationAppeal(
+  input: NewViolationAppealInput,
+  actorAccountant?: string | null
+): Promise<ViolationAppeal> {
+  const text = input.appeal_text.trim();
+  const violation = await getViolation(input.violation_id);
+  if (!violation) throw new WorkflowError("Нарушение не найдено", 404);
+  const existing = await listViolationAppealsFor(input.violation_id);
+  assertCanAppeal(violation, existing, actorAccountant);
+
+  const now = new Date().toISOString();
+  const appeal: ViolationAppeal = {
+    id: randomUUID(),
+    violation_id: input.violation_id,
+    accountant: input.accountant ?? violation.accountant ?? null,
+    appeal_text: text,
+    status: "pending",
+    decision_comment: null,
+    resolved_by: null,
+    created_at: now,
+    resolved_at: null,
+  };
+
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.violationAppeals)
+      .insert(appeal)
+      .select()
+      .single();
+    if (error) {
+      // Partial unique index (one pending appeal per violation) → race lost.
+      if ((error as any).code === "23505") {
+        throw new WorkflowError("По этому нарушению уже есть апелляция на рассмотрении", 409);
+      }
+      throw error;
+    }
+    await sb
+      .from(TABLES.violations)
+      .update({ status: "appealed", appeal_status: "appealed" })
+      .eq("id", input.violation_id);
+    return data as ViolationAppeal;
+  }
+
+  const s = store();
+  s.violationAppeals.unshift(appeal);
+  const v = s.violations.find((x) => x.id === input.violation_id);
+  if (v) {
+    v.status = "appealed";
+    v.appeal_status = "appealed";
+  }
+  return appeal;
+}
+
+/**
+ * Margarita's decision on an appeal — «Принять» / «Отклонить». Atomic and
+ * idempotent: the update is guarded by `status = 'pending'`, so a page refresh,
+ * duplicate submit or concurrent request can never resolve the same appeal
+ * twice. Approving moves the violation to `appeal_approved` (its penalty is then
+ * excluded from fine totals); rejecting to `appeal_rejected` (violation + fine
+ * stay in force). The original violation row is always preserved for history.
+ */
+export async function resolveViolationAppeal(
+  id: string,
+  {
+    decision,
+    resolvedBy,
+    decisionComment,
+  }: { decision: AppealStatus; resolvedBy?: string | null; decisionComment?: string | null }
+): Promise<ViolationAppeal> {
+  const now = new Date().toISOString();
+  const vStatus = violationStatusForDecision(decision);
+  const patch = {
+    status: decision,
+    resolved_by: resolvedBy ?? null,
+    decision_comment: decisionComment?.trim() ? decisionComment.trim() : null,
+    resolved_at: now,
+  };
+
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.violationAppeals)
+      .update(patch)
+      .eq("id", id)
+      .eq("status", "pending") // atomic gate: only an unresolved appeal updates
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      // Either not found, or already resolved.
+      const { data: cur } = await sb
+        .from(TABLES.violationAppeals)
+        .select("id")
+        .eq("id", id)
+        .maybeSingle();
+      throw new WorkflowError(cur ? "Апелляция уже рассмотрена" : "Апелляция не найдена", cur ? 409 : 404);
+    }
+    await sb
+      .from(TABLES.violations)
+      .update({ status: vStatus, appeal_status: appealStatusFor(vStatus) })
+      .eq("id", (data as ViolationAppeal).violation_id);
+    return data as ViolationAppeal;
+  }
+
+  const s = store();
+  const appeal = s.violationAppeals.find((a) => a.id === id);
+  if (!appeal) throw new WorkflowError("Апелляция не найдена", 404);
+  assertCanResolve(appeal);
+  Object.assign(appeal, patch);
+  const v = s.violations.find((x) => x.id === appeal.violation_id);
+  if (v) {
+    v.status = vStatus;
+    v.appeal_status = appealStatusFor(vStatus);
+  }
+  return appeal;
+}
+
+/**
+ * Assemble Margarita's violation-workflow report (acknowledgements + appeals)
+ * for a day/period, from stored records — works in BOTH Supabase and in-memory
+ * modes. The single source used by /work-report, /dashboard and the Telegram
+ * daily report so every metric agrees.
+ */
+export async function getViolationWorkflowReport(filters: {
+  from?: string;
+  to?: string;
+  accountant?: string;
+} = {}): Promise<ReturnType<typeof buildViolationWorkflowReport>> {
+  const [evaluations, violations, appeals] = await Promise.all([
+    listEvaluations({ from: filters.from, to: filters.to, accountant: filters.accountant }),
+    listViolations({ from: filters.from, to: filters.to, accountant: filters.accountant }),
+    listViolationAppeals({ accountant: filters.accountant }),
+  ]);
+  // Scope appeals to the window by submission date (created_at).
+  const scopedAppeals = appeals.filter((a) => {
+    const d = (a.created_at || "").slice(0, 10);
+    if (filters.from && d < filters.from) return false;
+    if (filters.to && d > filters.to) return false;
+    return true;
+  });
+  return buildViolationWorkflowReport({
+    evaluations: evaluations.map((e) => ({
+      chat_agr_no: e.chat_agr_no,
+      accountant: e.accountant,
+      checking_date: e.checking_date,
+    })),
+    violations,
+    appeals: scopedAppeals,
+  });
 }
 
 // --- Manual score overrides (п.8) ------------------------------------------

@@ -5,6 +5,7 @@ import {
   VIOLATION_SEVERITIES,
   violationTypeOptions,
 } from "@/lib/violations";
+import { violationStatus } from "@/lib/violation-workflow";
 import type { Chat, Violation } from "@/lib/types";
 
 const TG_WINDOW = "telegram_chat";
@@ -78,7 +79,67 @@ export default function ViolationsPanel({
   const [editDraft, setEditDraft] = useState<Draft>(blankDraft());
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // Workflow actions (Ознакомлен / Подать апелляцию) per violation row.
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [appealFor, setAppealFor] = useState<string | null>(null);
+  const [appealText, setAppealText] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
   const chatMap = useMemo(() => new Map(chats.map((c) => [c.agr_no, c])), [chats]);
+
+  async function acknowledge(v: Violation) {
+    setActionBusy(v.id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/violations/${v.id}/acknowledge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountant: v.accountant ?? null }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setActionError(d.error || "Не удалось сохранить");
+        return;
+      }
+      const updated: Violation = await res.json();
+      setRows((p) => p.map((r) => (r.id === v.id ? updated : r)));
+    } catch {
+      setActionError("Сетевая ошибка");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function submitAppeal(v: Violation) {
+    if (!appealText.trim()) {
+      setActionError("Текст апелляции обязателен");
+      return;
+    }
+    setActionBusy(v.id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/violations/${v.id}/appeal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountant: v.accountant ?? null, appeal_text: appealText }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setActionError(d.error || "Не удалось отправить апелляцию");
+        return;
+      }
+      setRows((p) =>
+        p.map((r) =>
+          r.id === v.id ? { ...r, status: "appealed", appeal_status: "appealed" } : r
+        )
+      );
+      setAppealFor(null);
+      setAppealText("");
+    } catch {
+      setActionError("Сетевая ошибка");
+    } finally {
+      setActionBusy(null);
+    }
+  }
 
   // Filters — default to today so the view shows current day by default
   const [fSeverity, setFSeverity] = useState("");
@@ -284,6 +345,9 @@ export default function ViolationsPanel({
       </div>
 
       {error && <div className="text-sm text-red-600 px-1">{error}</div>}
+      {actionError && appealFor === null && (
+        <div className="text-sm text-red-600 px-1">{actionError}</div>
+      )}
       <div className="card overflow-x-auto">
         <table className="qa">
           <thead>
@@ -463,10 +527,93 @@ export default function ViolationsPanel({
                   <td className="text-xs">{v.violation_type ?? "—"}</td>
                   <td className="tabular-nums">{v.sanction != null ? `${v.sanction} ֏` : "—"}</td>
                   <td className="text-xs text-gray-600">{v.note ?? ""}</td>
-                  <td>
-                    <span className="inline-block rounded bg-red-100 text-red-700 font-medium text-xs px-2 py-0.5 whitespace-nowrap">
-                      🔴 Требует действия бухгалтера
-                    </span>
+                  <td className="min-w-[220px]">
+                    {(() => {
+                      const st = violationStatus(v);
+                      if (st === "acknowledged") {
+                        return (
+                          <span className="inline-block rounded bg-gray-100 text-gray-700 text-xs px-2 py-0.5">
+                            ✓ Ознакомлен{v.acknowledged_at ? ` · ${String(v.acknowledged_at).slice(0, 10)}` : ""}
+                          </span>
+                        );
+                      }
+                      if (st === "appealed") {
+                        return (
+                          <span className="inline-block rounded bg-blue-100 text-blue-700 text-xs px-2 py-0.5">
+                            Апелляция отправлена и ожидает решения Маргариты
+                          </span>
+                        );
+                      }
+                      if (st === "appeal_approved") {
+                        return (
+                          <span className="inline-block rounded bg-green-100 text-green-700 text-xs px-2 py-0.5">
+                            ✓ Апелляция принята — штраф снят
+                          </span>
+                        );
+                      }
+                      if (st === "appeal_rejected") {
+                        return (
+                          <span className="inline-block rounded bg-gray-100 text-gray-600 text-xs px-2 py-0.5">
+                            Апелляция отклонена
+                          </span>
+                        );
+                      }
+                      // status === "new" → two actions
+                      if (appealFor === v.id) {
+                        return (
+                          <div className="space-y-1">
+                            <textarea
+                              className="input w-full text-xs"
+                              rows={2}
+                              placeholder="Объясните, почему не согласны…"
+                              value={appealText}
+                              onChange={(e) => setAppealText(e.target.value)}
+                            />
+                            <div className="space-x-1">
+                              <button
+                                className="btn-primary !py-1 !px-2 text-xs"
+                                disabled={actionBusy === v.id}
+                                onClick={() => submitAppeal(v)}
+                              >
+                                {actionBusy === v.id ? "…" : "Отправить"}
+                              </button>
+                              <button
+                                className="btn-secondary !py-1 !px-2 text-xs"
+                                onClick={() => {
+                                  setAppealFor(null);
+                                  setAppealText("");
+                                  setActionError(null);
+                                }}
+                              >
+                                Отмена
+                              </button>
+                            </div>
+                            {actionError && <div className="text-xs text-red-600">{actionError}</div>}
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="space-x-1 whitespace-nowrap">
+                          <button
+                            className="btn-secondary !py-1 !px-2 text-xs"
+                            disabled={actionBusy === v.id}
+                            onClick={() => acknowledge(v)}
+                          >
+                            Ознакомлен
+                          </button>
+                          <button
+                            className="btn-secondary !py-1 !px-2 text-xs"
+                            onClick={() => {
+                              setAppealFor(v.id);
+                              setAppealText("");
+                              setActionError(null);
+                            }}
+                          >
+                            Подать апелляцию
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="whitespace-nowrap space-x-1">
                     <button

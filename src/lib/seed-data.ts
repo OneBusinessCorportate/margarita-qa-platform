@@ -5,7 +5,14 @@
 // scripts/import-xlsx.ts when migrating the real history.
 // ---------------------------------------------------------------------------
 
-import type { Accountant, Chat, Evaluation, Task } from "./types";
+import type {
+  Accountant,
+  Chat,
+  Evaluation,
+  Task,
+  Violation,
+  ViolationAppeal,
+} from "./types";
 import { bandFor, computeOverall } from "./scoring";
 
 // Действующие бухгалтеры — строго 14 из утверждённого списка (valid-employees).
@@ -187,4 +194,68 @@ export const seedTasks: Task[] = [
   task("t3", "11", "Նաիրա", "Call", "2026-06-07", "Completed (Late)", "2026-06-08", "2026-06-08"),
   task("t4", "220", "Ավագ", "call/no update", "2026-06-17", "Overdue", null, "2026-06-20"),
   task("t5", "368", "Նաիրա", "Встреча", "2026-06-16", "Cancelled", null, null, "Cancelled"),
+];
+
+// --- Нарушения + апелляции (демо рабочего цикла) ----------------------------
+// Показывают все три состояния бухгалтера: новое (ждёт действия), «ознакомлен»
+// и «апелляция подана» (с активной pending-апелляцией). Только для in-memory
+// режима / локальной разработки — в проде данные приходят из mqa_violations.
+function viol(
+  id: string,
+  vdate: string,
+  accountant: string,
+  chat_agr_no: string,
+  client: string,
+  severity: string,
+  violation_type: string,
+  status: NonNullable<Violation["status"]>,
+  note = ""
+): Violation {
+  const appeal_status =
+    status === "appealed"
+      ? "appealed"
+      : status === "appeal_approved"
+        ? "approved"
+        : status === "appeal_rejected"
+          ? "rejected"
+          : null;
+  return {
+    id,
+    vdate,
+    accountant,
+    chat_agr_no,
+    client,
+    severity,
+    violation_type,
+    gross: null,
+    sanction: null,
+    note: note || null,
+    confirmed: true,
+    status,
+    acknowledged_at: status === "acknowledged" ? `${vdate}T10:00:00.000Z` : null,
+    acknowledged_by: status === "acknowledged" ? accountant : null,
+    appeal_status,
+    created_at: `${vdate}T09:30:00.000Z`,
+  };
+}
+
+export const seedViolations: Violation[] = [
+  viol("v1", "2026-06-15", seedAccountants[0].name, "59", "ИП Фролкин Владимир", "Среднее", "Долгий ответ", "new", "Клиент ждал ответа больше суток."),
+  viol("v2", "2026-06-14", seedAccountants[9].name, "100", "ИП Кирилл Оболдин", "Среднее", "Односложные ответы без пояснений", "acknowledged", "Ответ без пояснений."),
+  viol("v3", "2026-06-13", seedAccountants[6].name, "180", "ООО Пар Груп", "Критичное", "Нет расс. по ЗП", "appealed", "Не отправлена рассылка по зарплате."),
+];
+
+export const seedViolationAppeals: ViolationAppeal[] = [
+  {
+    id: "va1",
+    violation_id: "v3",
+    accountant: seedAccountants[6].name,
+    appeal_text:
+      "Рассылка по ЗП была отправлена клиенту в личные сообщения, а не в чат — прикладываю подтверждение.",
+    status: "pending",
+    decision_comment: null,
+    resolved_by: null,
+    created_at: "2026-06-13T12:00:00.000Z",
+    resolved_at: null,
+  },
 ];

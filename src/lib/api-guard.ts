@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
+import { WorkflowError } from "@/lib/violation-workflow";
 
 // ---------------------------------------------------------------------------
 // Shared guards for write API routes.
@@ -38,6 +39,11 @@ export function storageGuard(): NextResponse | null {
  * becomes a 404 so the client can tell "not found" from "server broke".
  */
 export function dbErrorResponse(e: unknown): NextResponse {
+  // Domain workflow errors carry their own intended HTTP status + safe message
+  // (validation 400, ownership 403, not-found 404, conflict 409).
+  if (e instanceof WorkflowError) {
+    return NextResponse.json({ error: e.message }, { status: e.httpStatus });
+  }
   const msg = e instanceof Error ? e.message : String(e ?? "Ошибка базы данных");
   const notFound = /PGRST116|Results contain 0 rows|0 rows/i.test(msg);
   return NextResponse.json(

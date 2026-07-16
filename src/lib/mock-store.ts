@@ -9,6 +9,7 @@ import type {
   ScoreOverride,
   Task,
   Violation,
+  ViolationAppeal,
 } from "./types";
 import type { ReportSnapshot } from "./report";
 import {
@@ -16,6 +17,8 @@ import {
   seedChats,
   seedEvaluations,
   seedTasks,
+  seedViolations,
+  seedViolationAppeals,
 } from "./seed-data";
 
 interface StoredUser {
@@ -30,6 +33,7 @@ interface Store {
   tasks: Task[];
   users: StoredUser[];
   violations: Violation[];
+  violationAppeals: ViolationAppeal[];
   activeExclusions: ActiveExclusion[];
   activeInclusions: ActiveInclusion[];
   reportSnapshots: ReportSnapshot[];
@@ -47,7 +51,8 @@ export function store(): Store {
       evaluations: structuredClone(seedEvaluations),
       tasks: structuredClone(seedTasks),
       users: [],
-      violations: [],
+      violations: structuredClone(seedViolations),
+      violationAppeals: structuredClone(seedViolationAppeals),
       activeExclusions: [],
       activeInclusions: [],
       reportSnapshots: [],

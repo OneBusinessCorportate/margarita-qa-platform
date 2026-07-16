@@ -164,8 +164,49 @@ create table if not exists mqa_violations (
   gross          text,
   sanction       numeric,
   note           text,
+  -- Подтверждено Маргаритой (по умолчанию true). См.
+  -- db/migrations/20260713_mqa_violations_confirmed_appeal_status.sql.
+  confirmed       boolean not null default true,
+  appeal_status   text,   -- легаси: null | 'appealed' | 'approved' | 'rejected'
+  -- Рабочий цикл «бухгалтер → апелляция → решение» (Phase 11). См.
+  -- db/migrations/20260716_mqa_violation_workflow_appeals.sql.
+  status          text not null default 'new'
+                  check (status in ('new','acknowledged','appealed','appeal_approved','appeal_rejected')),
+  acknowledged_at timestamptz,   -- когда бухгалтер нажал «Ознакомлен»
+  acknowledged_by text,          -- кто ознакомился
   created_at     timestamptz not null default now()
 );
+alter table mqa_violations add column if not exists confirmed       boolean not null default true;
+alter table mqa_violations add column if not exists appeal_status    text;
+alter table mqa_violations add column if not exists status           text not null default 'new';
+alter table mqa_violations add column if not exists acknowledged_at  timestamptz;
+alter table mqa_violations add column if not exists acknowledged_by  text;
+create index if not exists mqa_violations_status_idx     on mqa_violations (status);
+create index if not exists mqa_violations_accountant_idx on mqa_violations (accountant);
+create index if not exists mqa_violations_vdate_idx      on mqa_violations (vdate);
+
+-- Апелляции бухгалтеров на конкретные нарушения (mqa_violation_appeals).
+-- Связаны с нарушением по violation_id (FK). Одно нарушение — максимум одна
+-- активная (pending) апелляция (частичный уникальный индекс). См.
+-- db/migrations/20260716_mqa_violation_workflow_appeals.sql.
+create table if not exists mqa_violation_appeals (
+  id               text primary key default gen_random_uuid()::text,
+  violation_id     text not null references mqa_violations(id) on delete cascade,
+  accountant       text,
+  appeal_text      text not null,
+  status           text not null default 'pending'
+                   check (status in ('pending','approved','rejected')),
+  decision_comment text,
+  resolved_by      text,
+  created_at       timestamptz not null default now(),
+  resolved_at      timestamptz
+);
+create index if not exists mqa_violation_appeals_violation_idx   on mqa_violation_appeals (violation_id);
+create index if not exists mqa_violation_appeals_status_idx      on mqa_violation_appeals (status);
+create index if not exists mqa_violation_appeals_accountant_idx  on mqa_violation_appeals (accountant);
+create index if not exists mqa_violation_appeals_created_idx     on mqa_violation_appeals (created_at desc);
+create unique index if not exists mqa_violation_appeals_one_pending
+  on mqa_violation_appeals (violation_id) where status = 'pending';
 
 -- Chats manually hidden from the scoring "Активные за день" list, per (chat,
 -- day). See db/migrations/20260617_mqa_active_exclusions.sql.
@@ -217,6 +258,7 @@ create index if not exists mqa_chat_score_overrides_lookup_idx
 -- Lock down to service-role access only.
 alter table mqa_accountants         enable row level security;
 alter table mqa_violations          enable row level security;
+alter table mqa_violation_appeals   enable row level security;
 alter table mqa_active_exclusions   enable row level security;
 alter table mqa_active_inclusions   enable row level security;
 alter table mqa_report_snapshots    enable row level security;

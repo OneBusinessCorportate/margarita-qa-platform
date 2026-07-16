@@ -2,6 +2,7 @@ import {
   countClientRequests,
   getDailyAnalytics,
   getReport,
+  getViolationWorkflowReport,
   listAccountants,
   listViolations,
 } from "@/lib/repo";
@@ -12,6 +13,7 @@ import {
   buildAccountantMessage,
   buildFridayFinesMessage,
   buildMonthlyFinesMessage,
+  buildMargaritaWorkReportMessage,
   buildReportMessage,
   buildWeeklyReportMessage,
   buildWeeklyViolationHistory,
@@ -212,6 +214,23 @@ export default async function MessagesPage({
       ? fmtDay(resolved.from)
       : `${fmtDay(resolved.from)} — ${fmtDay(resolved.to)}`;
 
+  // «Работа Маргариты за день» — appeals + acknowledgement section of the daily
+  // Telegram report (Phase 6). Same aggregation as /work-report & /dashboard.
+  // On a load failure we DO NOT fall back to a zero-filled message (that would
+  // send misleading zeros) — we surface the error and disable the send button.
+  let margaritaWorkMessage: string | null = null;
+  let margaritaWorkError: string | null = null;
+  try {
+    const flow = await getViolationWorkflowReport({
+      from: resolved.from,
+      to: resolved.to,
+      accountant: filters.accountant,
+    });
+    margaritaWorkMessage = buildMargaritaWorkReportMessage(flow, { date: resolved.to });
+  } catch (e) {
+    margaritaWorkError = e instanceof Error ? e.message : "Не удалось загрузить данные";
+  }
+
   const perAccountantMsgs = accountantsToMessage(report).map((name) => ({
     name,
     text: buildAccountantMessage(report, name, { date: resolved.to }),
@@ -305,6 +324,34 @@ export default async function MessagesPage({
         <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
 {reportMessage}
         </pre>
+      </div>
+
+      {/* Работа Маргариты за день — апелляции и ознакомления (Phase 6). */}
+      <div className="card p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">🧾 Работа Маргариты за день</div>
+          {margaritaWorkMessage && (
+            <div className="flex gap-2">
+              <CopyButton label="Копировать" className="btn-primary" text={margaritaWorkMessage} />
+              <SendTelegramButton
+                text={margaritaWorkMessage}
+                configured={botReady}
+                label="Отправить в Telegram"
+              />
+            </div>
+          )}
+        </div>
+        {margaritaWorkError ? (
+          <div className="text-sm text-red-700 bg-red-50 rounded p-3 border border-red-100">
+            Не удалось загрузить данные по работе за день ({margaritaWorkError}). Отчёт
+            не отправляется, чтобы не показать ложные нули — обновите страницу или
+            попробуйте позже.
+          </div>
+        ) : (
+          <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
+{margaritaWorkMessage}
+          </pre>
+        )}
       </div>
 
       {/* Пятничный отчёт — the Armenian weekly summary (service %, movers,
