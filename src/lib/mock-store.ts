@@ -2,6 +2,7 @@
 // of the server process (resets on restart). Seeded from seed-data.ts.
 import type {
   Accountant,
+  AccountantSystemTask,
   ActiveExclusion,
   ActiveInclusion,
   Chat,
@@ -34,6 +35,7 @@ interface Store {
   users: StoredUser[];
   violations: Violation[];
   violationAppeals: ViolationAppeal[];
+  accountantSystemTasks: AccountantSystemTask[];
   activeExclusions: ActiveExclusion[];
   activeInclusions: ActiveInclusion[];
   reportSnapshots: ReportSnapshot[];
@@ -53,6 +55,7 @@ export function store(): Store {
       users: [],
       violations: structuredClone(seedViolations),
       violationAppeals: structuredClone(seedViolationAppeals),
+      accountantSystemTasks: [],
       activeExclusions: [],
       activeInclusions: [],
       reportSnapshots: [],

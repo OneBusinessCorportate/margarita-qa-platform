@@ -13,6 +13,7 @@ export const TABLES = {
   evaluations: `${PREFIX}evaluations`,
   managerEvaluations: `${PREFIX}manager_evaluations`,
   tasks: `${PREFIX}tasks`,
+  accountantSystemTasks: `${PREFIX}accountant_system_tasks`,
   users: `${PREFIX}users`,
   violations: `${PREFIX}violations`,
   violationAppeals: `${PREFIX}violation_appeals`,

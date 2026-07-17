@@ -141,6 +141,33 @@ alter table mqa_tasks add column if not exists qa_confirmed_by text;
 
 create index if not exists mqa_tasks_chat_idx on mqa_tasks (chat_agr_no);
 
+-- Отдельный трекер «Системные задачи бухгалтеров» (п.6). НЕ смешивается с
+-- апелляциями и с общими задачами по чатам. Опциональная мягкая связь с
+-- QA-тикетом (mqa_violations). Полное определение — в
+-- db/migrations/20260717_mqa_accountant_system_tasks.sql.
+create table if not exists mqa_accountant_system_tasks (
+  id                 text primary key default gen_random_uuid()::text,
+  ticket_id          text references mqa_violations(id) on delete set null,
+  accountant_name    text,
+  client_name        text,
+  chat_id            text,
+  title              text not null,
+  description        text,
+  priority           text not null default 'Medium'
+                     check (priority in ('Low','Medium','High')),
+  status             text not null default 'new'
+                     check (status in ('new','in_progress','postponed','completed','cancelled')),
+  due_date_original  date,
+  due_date_postponed date,
+  completed_at       timestamptz,
+  created_by         text,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now()
+);
+create index if not exists mqa_ast_ticket_idx     on mqa_accountant_system_tasks (ticket_id);
+create index if not exists mqa_ast_accountant_idx on mqa_accountant_system_tasks (accountant_name);
+create index if not exists mqa_ast_status_idx      on mqa_accountant_system_tasks (status);
+
 -- Registration-department weekly QA — graded per MANAGER, per WEEK on the
 -- `registration` scheme (start 100, minus penalty points). Separate from the
 -- chat-bound mqa_evaluations table.

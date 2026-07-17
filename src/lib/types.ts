@@ -305,6 +305,66 @@ export interface TaskPatch {
 }
 
 /**
+ * Отдельный трекер «Системные задачи бухгалтеров» (п.6). НЕ смешивается с
+ * апелляциями (ViolationAppeal) и с общими задачами по чатам (Task). Может быть
+ * мягко связана с QA-тикетом (ticket_id → mqa_violations.id).
+ */
+export type SystemTaskStatus =
+  | "new"
+  | "in_progress"
+  | "postponed"
+  | "completed"
+  | "cancelled";
+
+export type SystemTaskPriority = "Low" | "Medium" | "High";
+
+export interface AccountantSystemTask {
+  id: string;
+  ticket_id: string | null;
+  accountant_name: string | null;
+  client_name: string | null;
+  chat_id: string | null;
+  title: string;
+  description: string | null;
+  priority: SystemTaskPriority;
+  status: SystemTaskStatus;
+  due_date_original: string | null;
+  due_date_postponed: string | null;
+  completed_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NewSystemTaskInput {
+  ticket_id?: string | null;
+  accountant_name?: string | null;
+  client_name?: string | null;
+  chat_id?: string | null;
+  title: string;
+  description?: string | null;
+  priority?: SystemTaskPriority;
+  status?: SystemTaskStatus;
+  due_date_original?: string | null;
+  due_date_postponed?: string | null;
+  created_by?: string | null;
+}
+
+export interface SystemTaskPatch {
+  status?: SystemTaskStatus;
+  priority?: SystemTaskPriority;
+  title?: string;
+  description?: string | null;
+  accountant_name?: string | null;
+  client_name?: string | null;
+  chat_id?: string | null;
+  ticket_id?: string | null;
+  due_date_original?: string | null;
+  due_date_postponed?: string | null;
+  completed_at?: string | null;
+}
+
+/**
  * A chat manually hidden from the scoring page's "Активные за день" list for a
  * specific day (QA decided it isn't worth reviewing). Per-(chat, day): hiding a
  * chat one day never affects another day.

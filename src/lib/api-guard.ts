@@ -66,9 +66,16 @@ function errorMessage(e: unknown): string {
  */
 export function dbErrorResponse(e: unknown): NextResponse {
   // Domain workflow errors carry their own intended HTTP status + safe message
-  // (validation 400, ownership 403, not-found 404, conflict 409).
+  // (validation 400, ownership 403, not-found 404, conflict 409). WorkflowError
+  // and SystemTaskError both expose a numeric `httpStatus`; honor any such error.
   if (e instanceof WorkflowError) {
     return NextResponse.json({ error: e.message }, { status: e.httpStatus });
+  }
+  if (e instanceof Error) {
+    const status = (e as unknown as { httpStatus?: unknown }).httpStatus;
+    if (typeof status === "number") {
+      return NextResponse.json({ error: e.message }, { status });
+    }
   }
   const msg = errorMessage(e);
   const notFound = /PGRST116|Results contain 0 rows|0 rows/i.test(msg);
