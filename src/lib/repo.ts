@@ -28,6 +28,7 @@ import type { DebtTotals } from "./debts";
 import { debtsCellValue } from "./debts";
 import type {
   Accountant,
+  AccountantSystemTask,
   ActiveExclusion,
   ActiveInclusion,
   AppealStatus,
@@ -37,11 +38,13 @@ import type {
   EvaluationScores,
   NewEvaluationInput,
   NewScoreOverrideInput,
+  NewSystemTaskInput,
   NewTaskInput,
   NewViolationAppealInput,
   NewViolationInput,
   ReviewStatus,
   ScoreOverride,
+  SystemTaskPatch,
   Task,
   TaskPatch,
   Violation,
@@ -56,6 +59,14 @@ import {
   canAcknowledge,
   violationStatusForDecision,
 } from "./violation-workflow";
+import {
+  SystemTaskError,
+  completedAtFor,
+  isSystemTaskPriority,
+  isSystemTaskStatus,
+  normalizeSystemTaskPatch,
+  validateTitle,
+} from "./system-tasks";
 
 function overallFor(input: NewEvaluationInput): number {
   if (typeof input.total_override === "number") return input.total_override;
@@ -852,6 +863,100 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {
   const idx = rows.findIndex((t) => t.id === id);
   if (idx === -1) throw new Error(`Task ${id} not found`);
   rows[idx] = { ...rows[idx], ...(fields as Partial<Task>) };
+  return rows[idx];
+}
+
+// --- Системные задачи бухгалтеров (п.6) ------------------------------------
+// Отдельный трекер, НЕ смешанный с апелляциями. Both backends (Supabase + mock).
+
+export async function listAccountantSystemTasks(filters: {
+  accountant?: string;
+  status?: string;
+  ticketId?: string;
+} = {}): Promise<AccountantSystemTask[]> {
+  const sb = getServiceClient();
+  if (sb) {
+    let q = sb
+      .from(TABLES.accountantSystemTasks)
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(20000);
+    if (filters.accountant) q = q.eq("accountant_name", filters.accountant);
+    if (filters.status) q = q.eq("status", filters.status);
+    if (filters.ticketId) q = q.eq("ticket_id", filters.ticketId);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []) as AccountantSystemTask[];
+  }
+  let rows = [...store().accountantSystemTasks].sort((a, b) =>
+    b.created_at.localeCompare(a.created_at)
+  );
+  if (filters.accountant) rows = rows.filter((t) => t.accountant_name === filters.accountant);
+  if (filters.status) rows = rows.filter((t) => t.status === filters.status);
+  if (filters.ticketId) rows = rows.filter((t) => t.ticket_id === filters.ticketId);
+  return rows;
+}
+
+export async function createAccountantSystemTask(
+  input: NewSystemTaskInput
+): Promise<AccountantSystemTask> {
+  const now = new Date().toISOString();
+  const status = input.status && isSystemTaskStatus(input.status) ? input.status : "new";
+  const row: AccountantSystemTask = {
+    id: randomUUID(),
+    ticket_id: input.ticket_id ?? null,
+    accountant_name: input.accountant_name ?? null,
+    client_name: input.client_name ?? null,
+    chat_id: input.chat_id ?? null,
+    title: validateTitle(input.title),
+    description: input.description ?? null,
+    priority:
+      input.priority && isSystemTaskPriority(input.priority) ? input.priority : "Medium",
+    status,
+    due_date_original: input.due_date_original ?? null,
+    due_date_postponed: input.due_date_postponed ?? null,
+    completed_at: completedAtFor(status, now),
+    created_by: input.created_by ?? null,
+    created_at: now,
+    updated_at: now,
+  };
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.accountantSystemTasks)
+      .insert(row)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as AccountantSystemTask;
+  }
+  store().accountantSystemTasks.unshift(row);
+  return row;
+}
+
+export async function updateAccountantSystemTask(
+  id: string,
+  patch: SystemTaskPatch
+): Promise<AccountantSystemTask> {
+  const now = new Date().toISOString();
+  const fields = normalizeSystemTaskPatch(patch, now);
+  fields.updated_at = now;
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.accountantSystemTasks)
+      .update(fields)
+      .eq("id", id)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new SystemTaskError("Задача не найдена", 404);
+    return data as AccountantSystemTask;
+  }
+  const rows = store().accountantSystemTasks;
+  const idx = rows.findIndex((t) => t.id === id);
+  if (idx === -1) throw new SystemTaskError("Задача не найдена", 404);
+  rows[idx] = { ...rows[idx], ...(fields as Partial<AccountantSystemTask>) };
   return rows[idx];
 }
 
