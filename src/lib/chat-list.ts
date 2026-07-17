@@ -137,6 +137,8 @@ export function telegramChatId(link?: string | null): string | null {
 export function matchesChatQuery(chat: Chat, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
+  const haystack = `${chat.agr_no} ${chat.chat_name} ${chat.name_agr ?? ""} ${chat.chat_link ?? ""}`.toLowerCase();
+  // Fast path: the whole query is a substring of one of the fields.
   if (
     chat.agr_no.toLowerCase().includes(q) ||
     chat.chat_name.toLowerCase().includes(q) ||
@@ -144,6 +146,15 @@ export function matchesChatQuery(chat: Chat, query: string): boolean {
     (chat.chat_link ?? "").toLowerCase().includes(q)
   )
     return true;
+  // Forgiving path: EVERY word/number in the query appears in the chat's data.
+  // Маргарита пастит полное название из таблицы, а оно чуть отличается от
+  // сохранённого пунктуацией/пробелами («B-4809 «ՍՊԸ …», AM» vs «ՍՊԸ …, AM»,
+  // «Александр/ 4345» vs «Александр / 4345») — из-за этого точный substring не
+  // находил чат и список был пуст. Нормализуем пунктуацию и сверяем по словам.
+  const normalize = (s: string) => s.replace(/[«»"',()/\\.:;–—-]+/g, " ").replace(/\s+/g, " ").trim();
+  const hay = normalize(haystack);
+  const tokens = normalize(q).split(" ").filter((t) => t.length >= 2);
+  if (tokens.length > 0 && tokens.every((t) => hay.includes(t))) return true;
   // Telegram-link paste: compare by the chat id so A/K/t.me variants all match.
   const qid = telegramChatId(query);
   const cid = telegramChatId(chat.chat_link);
