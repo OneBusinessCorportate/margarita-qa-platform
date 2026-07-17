@@ -361,11 +361,11 @@ export function predictionConfidence(
   };
   const raw = predictionConfidenceRaw(factors);
   const cal = calibrateConfidence(raw, model.calibration);
-  return {
-    value: cal.value ?? raw,
-    raw,
-    preliminary: cal.preliminary,
-  };
+  // Keep the «никогда не 100%» invariant AFTER calibration too: a bucket that
+  // historically ran at 100% accuracy must not push the shown confidence past
+  // the ceiling (calibrateConfidence clamps to 0..100; we re-apply CONF_CEIL).
+  const value = Math.min(CONF_CEIL, cal.value ?? raw);
+  return { value, raw, preliminary: cal.preliminary };
 }
 
 /** Concise, evidence-based uncertainty indicators (RU) — never chain-of-thought. */

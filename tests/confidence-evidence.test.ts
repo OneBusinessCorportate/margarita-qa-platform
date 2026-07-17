@@ -117,6 +117,25 @@ test("integration: predictEvaluation is NOT clustered at 90-96 across chats", ()
   assert.ok(unknown.uncertainty.some((u) => u.includes("Бухгалтер не определён")));
 });
 
+test("calibration never pushes displayed confidence past the 97% ceiling", () => {
+  // A 90-100 bucket that historically ran at 100% accuracy must not yield 98-100.
+  const history: Evaluation[] = [];
+  for (let i = 0; i < 30; i++)
+    history.push(
+      evalRow({
+        accountant: "Steady",
+        scores: { criteria: { accuracy: 5, sla: 5 }, ai: { criteria: {}, monthly: {}, total: 96, confidence: 96 } },
+        total_score: 96,
+        ai_confidence: 96,
+        ai_total: 96,
+        review_status: "accepted",
+      })
+    );
+  const model = trainAiModel(history);
+  const p = predictEvaluation("Steady", {}, model, { status: "Active", debtStatus: "Нет долга", date: "2026-06-18" });
+  assert.ok(p.confidence <= 97, `confidence ${p.confidence} must respect the 97% ceiling`);
+});
+
 test("predictEvaluation surfaces evidence-based uncertainty notes", () => {
   const p = predictEvaluation("New", {}, trainAiModel([]));
   assert.ok(p.uncertainty.length > 0);

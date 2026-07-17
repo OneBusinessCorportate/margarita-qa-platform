@@ -140,8 +140,8 @@ export function telegramChatId(link?: string | null): string | null {
  * Normalization (order matters):
  *   • unwrap the `c<digits>` form produced by telegramChatId() for t.me/c/ links;
  *   • drop a leading sign;
- *   • collapse the supergroup/channel `-100…` bot-API prefix — only when what
- *     remains is still a plausible id (≥ 9 digits after dropping "100"), so a
+ *   • collapse the supergroup/channel `-100…` bot-API prefix — only when the id
+ *     is ≥ 13 digits (i.e. ≥ 10 digits remain after dropping "100"), so a
  *     genuine short group id that merely starts with "100" is never over-stripped.
  * A non-numeric handle / invite slug is returned lower-cased, unchanged.
  * Returns null for an empty / unusable id.
