@@ -19,7 +19,7 @@ import {
   type EvalRole,
 } from "@/lib/scoring";
 import { predictEvaluation, toSnapshot, type AiModel } from "@/lib/ai";
-import { reviewStatusFor } from "@/lib/confidence";
+import { reviewStatusFor, confidenceDisplay, type ConfidenceTone } from "@/lib/confidence";
 import {
   SORT_OPTIONS,
   autoDebtStatus,
@@ -1519,15 +1519,28 @@ function ChatScoreRow({
       : reviewStatus === "corrected"
         ? { text: "✎ Исправлено Маргаритой", cls: "bg-amber-100 text-amber-800" }
         : { text: "⏳ Не проверено", cls: "bg-gray-100 text-gray-500" };
-  // Цвет плашки уверенности: ≥90 — зелёная, ≥70 — синяя, ≥50 — янтарная, иначе красная.
-  const confColor =
-    ai.confidence >= 90
-      ? "bg-emerald-100 text-emerald-700"
-      : ai.confidence >= 70
-        ? "bg-blue-100 text-blue-700"
-        : ai.confidence >= 50
-          ? "bg-amber-100 text-amber-800"
-          : "bg-red-100 text-red-700";
+  // Честная плашка уверенности: ярлык + тон из confidenceDisplay. Низкая
+  // уверенность / неполные данные / предварительная калибровка → предупреждающий
+  // стиль (не «всё зелёное»). «Недостаточно данных» вместо подмены на 90%.
+  const conf = confidenceDisplay(ai.confidence, {
+    preliminary: ai.calibrationPreliminary,
+    incompleteData: ai.uncertainty.some((u) => u.includes("не хватает") || u.includes("Не хватает")),
+  });
+  const CONF_TONE_CLS: Record<ConfidenceTone, string> = {
+    low: "bg-red-100 text-red-700",
+    medium: "bg-amber-100 text-amber-800",
+    high: "bg-blue-100 text-blue-700",
+    veryHigh: "bg-emerald-100 text-emerald-700",
+    none: "bg-gray-100 text-gray-500",
+  };
+  const confColor = conf.warn && conf.tone === "veryHigh"
+    ? "bg-amber-100 text-amber-800"
+    : CONF_TONE_CLS[conf.tone];
+  const confTitle = [
+    `Уверенность модели: ${conf.text}`,
+    conf.label,
+    ...ai.uncertainty,
+  ].join(" • ");
 
   const touched =
     Boolean(savedId) ||
@@ -2194,9 +2207,9 @@ function ChatScoreRow({
             </span>
             <span
               className={`inline-block rounded ${confColor} font-semibold text-[10px] px-1.5 py-0.5 whitespace-nowrap`}
-              title={`Уверенность модели: ${ai.confidence}%`}
+              title={confTitle}
             >
-              {ai.confidence}%
+              {conf.warn && conf.tone !== "none" ? "⚠ " : ""}{conf.text}
             </span>
           </div>
         </td>

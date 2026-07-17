@@ -42,6 +42,7 @@ import {
   type QualityBand,
 } from "./scoring";
 import { autoMonthlyStatus } from "./chat-list";
+import { buildCalibration, calibrateConfidence, type Calibration } from "./confidence-calibration";
 import type { Evaluation } from "./types";
 
 export interface AiPrediction {
@@ -56,8 +57,18 @@ export interface AiPrediction {
    * даёт высокую уверенность (это жёсткое правило, а не суждение модели).
    */
   confidence: number;
+  /** Raw evidence-based confidence BEFORE historical calibration (for debugging). */
+  rawConfidence: number;
+  /** True when calibration was preliminary (thin history) — value == raw. */
+  calibrationPreliminary: boolean;
   /** Short human explanation of where the numbers came from. */
   note: string;
+  /**
+   * Concise, evidence-based uncertainty indicators (RU) for THIS prediction —
+   * never private chain-of-thought, only what limits certainty («мало истории»,
+   * «не хватает данных по статусам рассылок», …). Empty when nothing stands out.
+   */
+  uncertainty: string[];
 }
 
 /** Snapshot persisted in scores.ai when Margarita saves — the training pair. */
@@ -77,10 +88,15 @@ export interface ChatFacts {
   date?: string | null;
 }
 
-/** Weighted accumulator: `sum` = Σ(weight·value), `count` = Σ(weight). */
+/**
+ * Weighted accumulator: `sum` = Σ(weight·value), `count` = Σ(weight),
+ * `sumSq` = Σ(weight·value²) so we can recover the weighted variance (spread) of
+ * an accountant's scores — high spread ⇒ a point prediction is less certain.
+ */
 interface CriterionStats {
   sum: number;
   count: number;
+  sumSq: number;
 }
 
 export interface AiModel {
@@ -92,6 +108,13 @@ export interface AiModel {
   globalBias: CriterionStats;
   /** Number of (AI, Margarita) pairs the model has learned from. */
   trainedPairs: number;
+  /**
+   * Historical calibration table (confidence bucket → observed accuracy from
+   * Margarita's corrections). Built from the SAME evaluation list; used to map
+   * the raw evidence confidence to the historically-observed value. Null when
+   * there's no reviewed history yet.
+   */
+  calibration: Calibration | null;
 }
 
 const GLOBAL = "__global__";
@@ -107,8 +130,9 @@ function emptyModel(): AiModel {
     criteria: {},
     global: {},
     bias: {},
-    globalBias: { sum: 0, count: 0 },
+    globalBias: { sum: 0, count: 0, sumSq: 0 },
     trainedPairs: 0,
+    calibration: null,
   };
 }
 
@@ -118,9 +142,10 @@ function addStat(
   value: number,
   weight: number
 ) {
-  const s = rec[id] ?? { sum: 0, count: 0 };
+  const s = rec[id] ?? { sum: 0, count: 0, sumSq: 0 };
   s.sum += value * weight;
   s.count += weight;
+  s.sumSq += value * value * weight;
   rec[id] = s;
 }
 
@@ -160,15 +185,21 @@ export function trainAiModel(evaluations: Evaluation[]): AiModel {
     const ai = (ev.scores as { ai?: AiSnapshot }).ai;
     if (ai && typeof ai.total === "number" && ev.total_score > 1 && ai.total > 1) {
       const delta = ev.total_score - ai.total;
-      const b = m.bias[acc] ?? { sum: 0, count: 0 };
+      const b = m.bias[acc] ?? { sum: 0, count: 0, sumSq: 0 };
       b.sum += delta * w;
       b.count += w;
+      b.sumSq += delta * delta * w;
       m.bias[acc] = b;
       m.globalBias.sum += delta * w;
       m.globalBias.count += w;
+      m.globalBias.sumSq += delta * delta * w;
       m.trainedPairs += 1;
     }
   }
+  // Feedback loop: learn how often each confidence bucket was actually corrected
+  // by Margarita, so predictionConfidence can map raw → observed accuracy. All
+  // rows are in the past relative to any NEW prediction ⇒ no data leakage.
+  m.calibration = buildCalibration(evaluations);
   return m;
 }
 
@@ -205,15 +236,39 @@ function learnedBias(model: AiModel, accountant: string | null): number {
   return stats.sum / stats.count;
 }
 
-// Confidence tuning constants (documented so the analytics читаются осмысленно).
-const CONFIDENCE_GATED = 95; // жёсткое правило «рассылка не выполнена» → высокая уверенность
-const CONFIDENCE_BASE = 45; // старт при полном отсутствии истории
-const CONFIDENCE_ACC_MAX = 40; // максимальная прибавка за историю по бухгалтеру
-const CONFIDENCE_GLOBAL_MAX = 12; // максимальная прибавка за общий объём обучения
-const CONFIDENCE_ACC_SCALE = 6; // «половинное насыщение» по эффективному числу оценок бухгалтера
-const CONFIDENCE_GLOBAL_SCALE = 30; // то же по общему числу обученных пар
-const CONFIDENCE_BIAS_PENALTY_MAX = 25; // штраф за большую историческую ошибку модели
-const CONFIDENCE_CEIL = 99; // модель никогда не заявляет 100% — оставляем «зазор»
+// ---------------------------------------------------------------------------
+// Confidence: honest, EVIDENCE-based (not volume-based).
+//
+// The old formula was `45 + up to 52 for the amount of history − bias`, so any
+// accountant with a normal history saturated at ~90–97 % and a gated row was a
+// flat 95 %. That measured "how much data we have", NOT "how certain THIS
+// evaluation is", which is exactly why almost every value sat in the 90–96 band.
+//
+// The new score is built from the evidence actually available for the specific
+// prediction and starts LOW, so >90 % is earned, not the default:
+//   • is the accountant identified at all (else the model can't personalise);
+//   • how much REAL per-accountant history backs the criteria (saturating);
+//   • how CONSISTENT her past scores are (high spread ⇒ a point guess is shaky),
+//     trusted only in proportion to how much data we have;
+//   • how COMPLETE the chat facts are that drive the mailing statuses/gate;
+//   • a penalty for large historical model error (learned bias);
+//   • a gated hard-rule row is genuinely high-confidence (direct evidence), but
+//     scaled by fact completeness, not a flat constant.
+// The value is then run through the historical CALIBRATION layer.
+// ---------------------------------------------------------------------------
+
+const CONF_CEIL = 97; // модель никогда не заявляет 100% — всегда оставляем «зазор»
+const CONF_PRIOR = 20; // старт: без данных мы почти ничего не знаем
+const CONF_ACC_MAX = 40; // максимум за реальную историю по бухгалтеру
+const CONF_ACC_SCALE = 8; // «половинное насыщение» по эффективному числу оценок
+const CONF_CONSISTENCY_MAX = 25; // максимум за согласованность её оценок (низкий разброс)
+const CONF_CONSISTENCY_DATA_SCALE = 4; // разбросу верим лишь при достаточной истории
+const CONF_FACTS_MAX = 15; // максимум за полноту фактов (статусы рассылок)
+const CONF_BIAS_PENALTY_MAX = 22; // штраф за большую историческую ошибку модели
+
+function clamp01(x: number): number {
+  return Math.max(0, Math.min(1, x));
+}
 
 /** Эффективное число оценок бухгалтера (recency-weighted) по критериям. */
 function accountantEffectiveN(model: AiModel, accountant: string | null): number {
@@ -228,24 +283,112 @@ function accountantEffectiveN(model: AiModel, accountant: string | null): number
 }
 
 /**
- * Детерминированная уверенность модели (0..100) для одного прогноза. Чистая
- * функция от обученной модели, бухгалтера и признака «gated» — одинаковый вход
- * даёт одинаковый выход (важно для тестов и для привязки уверенности к версии).
+ * Нормированный разброс (0..1) оценок бухгалтера по критериям: средневзвешенное
+ * стандартное отклонение, делённое на шкалу критерия. 0 — оценки всегда
+ * одинаковы (уверенно), ближе к 1 — сильно «прыгают» (неуверенно).
+ */
+function accountantDispersion(model: AiModel, accountant: string | null): number {
+  const rec = model.criteria[accountant ?? GLOBAL];
+  if (!rec) return 1; // нет данных — считаем максимально неопределённым
+  const ratios: number[] = [];
+  for (const c of CRITERIA) {
+    const s = rec[c.id];
+    if (!s || s.count <= 0) continue;
+    const mean = s.sum / s.count;
+    const variance = Math.max(0, s.sumSq / s.count - mean * mean);
+    const std = Math.sqrt(variance);
+    ratios.push(clamp01(std / (c.scaleMax || 5)));
+  }
+  if (ratios.length === 0) return 1;
+  return ratios.reduce((a, b) => a + b, 0) / ratios.length;
+}
+
+export interface ConfidenceFactors {
+  accountantIdentified: boolean;
+  effectiveHistory: number;
+  dispersion: number;
+  biasMagnitude: number;
+  gated: boolean;
+  /** 0..1 completeness of the facts that drive the mailing statuses/gate. */
+  factCompleteness: number;
+}
+
+/**
+ * Детерминированная СЫРАЯ уверенность (0..100) до калибровки. Чистая функция от
+ * факторов доказательности — одинаковый вход даёт одинаковый выход.
+ */
+export function predictionConfidenceRaw(f: ConfidenceFactors): number {
+  const bias = Math.min(CONF_BIAS_PENALTY_MAX, Math.abs(f.biasMagnitude));
+
+  if (f.gated) {
+    // Жёсткое правило «рассылка не выполнена» — прямое доказательство, поэтому
+    // уверенность высокая, НО масштабируется полнотой фактов, а не константой.
+    const base = 78 + CONF_FACTS_MAX * f.factCompleteness - bias * 0.5;
+    return Math.max(0, Math.min(CONF_CEIL, Math.round(base)));
+  }
+
+  let conf = CONF_PRIOR;
+  if (f.accountantIdentified) {
+    const dataTrust = 1 - Math.exp(-f.effectiveHistory / CONF_ACC_SCALE);
+    conf += CONF_ACC_MAX * dataTrust;
+    // Согласованности верим только в меру накопленной истории.
+    const consistency = CONF_CONSISTENCY_MAX * (1 - clamp01(f.dispersion));
+    conf += consistency * (1 - Math.exp(-f.effectiveHistory / CONF_CONSISTENCY_DATA_SCALE));
+  }
+  conf += CONF_FACTS_MAX * clamp01(f.factCompleteness);
+  conf -= bias;
+  return Math.max(0, Math.min(CONF_CEIL, Math.round(conf)));
+}
+
+/**
+ * Полная уверенность прогноза: сырая доказательная оценка, пропущенная через
+ * историческую калибровку (наблюдаемая точность по бакету). Возвращает и сырое,
+ * и калиброванное значение + флаг «калибровка предварительна».
  */
 export function predictionConfidence(
   model: AiModel,
   accountant: string | null,
-  gated: boolean
-): number {
-  if (gated) return CONFIDENCE_GATED;
-  const nAcc = accountantEffectiveN(model, accountant);
-  const nGlob = model.trainedPairs;
-  const bias = Math.abs(learnedBias(model, accountant));
-  let conf = CONFIDENCE_BASE;
-  conf += CONFIDENCE_ACC_MAX * (1 - Math.exp(-nAcc / CONFIDENCE_ACC_SCALE));
-  conf += CONFIDENCE_GLOBAL_MAX * (1 - Math.exp(-nGlob / CONFIDENCE_GLOBAL_SCALE));
-  conf -= Math.min(CONFIDENCE_BIAS_PENALTY_MAX, bias);
-  return Math.max(0, Math.min(CONFIDENCE_CEIL, Math.round(conf)));
+  gated: boolean,
+  factCompleteness: number
+): { value: number; raw: number; preliminary: boolean } {
+  const factors: ConfidenceFactors = {
+    accountantIdentified: Boolean(accountant),
+    effectiveHistory: accountantEffectiveN(model, accountant),
+    dispersion: accountantDispersion(model, accountant),
+    biasMagnitude: learnedBias(model, accountant),
+    gated,
+    factCompleteness,
+  };
+  const raw = predictionConfidenceRaw(factors);
+  const cal = calibrateConfidence(raw, model.calibration);
+  return {
+    value: cal.value ?? raw,
+    raw,
+    preliminary: cal.preliminary,
+  };
+}
+
+/** Concise, evidence-based uncertainty indicators (RU) — never chain-of-thought. */
+function uncertaintyNotes(
+  model: AiModel,
+  accountant: string | null,
+  gated: boolean,
+  factCompleteness: number
+): string[] {
+  const out: string[] = [];
+  if (gated) out.push("Рассылка не выполнена — применено жёсткое правило (оценка 1)");
+  if (!accountant) out.push("Бухгалтер не определён — прогноз обобщённый");
+  else {
+    const effN = accountantEffectiveN(model, accountant);
+    if (effN < 3) out.push("Мало истории по этому бухгалтеру — прогноз опирается на общий шаблон");
+    else if (accountantDispersion(model, accountant) > 0.3)
+      out.push("Оценки бухгалтера заметно варьируются — точный балл менее предсказуем");
+  }
+  if (!gated && factCompleteness < 0.5)
+    out.push("Не хватает данных по статусам рассылок");
+  if (Math.abs(learnedBias(model, accountant)) > 5)
+    out.push("Модель исторически расходится с итогом Маргариты по этому бухгалтеру");
+  return out;
 }
 
 /**
@@ -314,9 +457,44 @@ export function predictEvaluation(
       ? `прогноз обучен на ${model.trainedPairs} ${pluralEval(model.trainedPairs)} Маргариты`
       : "прогноз по статусам прошлой проверки";
 
-  const confidence = predictionConfidence(model, accountant, gated);
+  const factCompleteness = factCompletenessOf(prevStatuses, facts);
+  const conf = predictionConfidence(model, accountant, gated, factCompleteness);
+  const uncertainty = uncertaintyNotes(model, accountant, gated, factCompleteness);
+  if (conf.preliminary && model.calibration && model.calibration.totalReviewed > 0) {
+    uncertainty.push("Калибровка предварительная — мало проверенных оценок в этом диапазоне");
+  }
 
-  return { criteria, monthly, total, band: bandFor(total), confidence, note };
+  return {
+    criteria,
+    monthly,
+    total,
+    band: bandFor(total),
+    confidence: conf.value,
+    rawConfidence: conf.raw,
+    calibrationPreliminary: conf.preliminary,
+    note,
+    uncertainty,
+  };
+}
+
+/**
+ * How complete are the facts backing this prediction (0..1)? Facts drive the
+ * mailing statuses and therefore the gate/total, so their completeness is a
+ * direct evidence signal. Combines: any facts at all, a real debt status, and
+ * how many monthly categories carry a known previous status.
+ */
+function factCompletenessOf(
+  prevStatuses: Record<string, string>,
+  facts?: ChatFacts
+): number {
+  let fc = 0;
+  if (facts) fc += 0.4;
+  if (facts?.debtStatus && facts.debtStatus.trim()) fc += 0.3;
+  const knownPrev =
+    MONTHLY_CATEGORIES.filter((c) => (prevStatuses[c.id] ?? "").trim()).length /
+    Math.max(1, MONTHLY_CATEGORIES.length);
+  fc += 0.3 * knownPrev;
+  return Math.max(0, Math.min(1, fc));
 }
 
 function pluralEval(n: number): string {

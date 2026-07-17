@@ -20,10 +20,18 @@ interface Filters {
   from: string;
   to: string;
   accountant: string;
+  chat: string;
   category: string;
   confidenceRange: string;
   status: string;
+  matchStatus: string;
 }
+
+const MATCH_OPTIONS = [
+  { id: "exact", label: "Точное совпадение" },
+  { id: "partial", label: "Частичное совпадение" },
+  { id: "mismatch", label: "Несовпадение" },
+];
 
 const RANGE_OPTIONS = [
   { id: "0-49", label: "0–49%" },
@@ -46,9 +54,11 @@ function emptyFilters(): Filters {
     from: from ?? "",
     to: to ?? "",
     accountant: "",
+    chat: "",
     category: "",
     confidenceRange: "",
     status: "",
+    matchStatus: "",
   };
 }
 
@@ -70,9 +80,11 @@ export default function ConfidenceReportView({ accountants, categories }: Props)
     if (f.from) params.set("from", f.from);
     if (f.to) params.set("to", f.to);
     if (f.accountant) params.set("accountant", f.accountant);
+    if (f.chat) params.set("chat", f.chat.trim());
     if (f.category) params.set("category", f.category);
     if (f.confidenceRange) params.set("confidenceRange", f.confidenceRange);
     if (f.status) params.set("status", f.status);
+    if (f.matchStatus) params.set("matchStatus", f.matchStatus);
     try {
       const res = await fetch(`/api/confidence-report?${params.toString()}`, {
         cache: "no-store",
@@ -238,6 +250,16 @@ function Filters({
           </select>
         </label>
         <label className="text-xs text-gray-600">
+          Чат / клиент (№)
+          <input
+            type="text"
+            className="input block"
+            placeholder="напр. B-4809"
+            value={filters.chat}
+            onChange={(e) => onSet({ chat: e.target.value })}
+          />
+        </label>
+        <label className="text-xs text-gray-600">
           Категория
           <select
             className="input block"
@@ -282,6 +304,21 @@ function Filters({
             ))}
           </select>
         </label>
+        <label className="text-xs text-gray-600">
+          Совпадение
+          <select
+            className="input block"
+            value={filters.matchStatus}
+            onChange={(e) => onSet({ matchStatus: e.target.value })}
+          >
+            <option value="">Все</option>
+            {MATCH_OPTIONS.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="flex gap-2">
           <button className="btn-primary !px-3 !py-1 text-xs" onClick={onApply}>
             Применить
@@ -299,13 +336,44 @@ function Report({ report }: { report: ConfidenceReport }) {
   return (
     <div className="space-y-6">
       <SummaryCards report={report} />
+      <MatchCards report={report} />
       <HighlightMetric report={report} />
       <RangeTable report={report} />
       <div className="grid gap-6 lg:grid-cols-2">
         <CorrectionByRangeChart report={report} />
         <AcceptedVsCorrectedChart report={report} />
       </div>
-      <Correlation report={report} />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Correlation report={report} />
+        <CorrelationScoreDiff report={report} />
+      </div>
+      <AccountantTable report={report} />
+      <DetailedTable report={report} />
+    </div>
+  );
+}
+
+function MatchCards({ report: r }: { report: ConfidenceReport }) {
+  const m = r.matches;
+  return (
+    <div className="space-y-2">
+      <div className="text-sm font-semibold">
+        Совпадения AI ↔ Маргарита{" "}
+        <span className="font-normal text-gray-400">
+          (сравнимо {m.comparable}
+          {m.excludedNoBaseline > 0 && `; исключено без AI-снимка: ${m.excludedNoBaseline}`})
+        </span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Card title="Точное совпадение (exact)" value={String(m.exact)} sub={fmtNum(m.exactPct, "%")} color="#059669" />
+        <Card title="Частичное (partial)" value={String(m.partial)} sub="±5 баллов / правка критерия" color="#2563eb" />
+        <Card title="Несовпадение (mismatch)" value={String(m.mismatch)} sub={fmtNum(m.mismatchPct, "%")} color="#dc2626" />
+        <Card title="Приемлемо (exact+partial)" value={fmtNum(m.acceptablePct, "%")} sub="доля от сравнимых" color="#059669" />
+        <Card title="Средняя разница баллов" value={m.avgScoreDiff == null ? "Нет данных" : String(m.avgScoreDiff)} sub={`|разница| ${fmtNum(m.avgAbsScoreDiff)}`} />
+        <Card title="Медиана разницы баллов" value={m.medianScoreDiff == null ? "Нет данных" : String(m.medianScoreDiff)} />
+        <Card title="Ср. уверенность — совпало" value={fmtNum(m.avgConfidenceMatched, "%")} color="#059669" />
+        <Card title="Ср. уверенность — несовпало" value={fmtNum(m.avgConfidenceMismatched, "%")} color="#dc2626" />
+      </div>
     </div>
   );
 }
@@ -410,10 +478,14 @@ function RangeTable({ report: r }: { report: ConfidenceReport }) {
           <tr className="text-left text-gray-500 border-b">
             <th className="px-3 py-2">Диапазон</th>
             <th className="px-3 py-2 text-right">Всего</th>
+            <th className="px-3 py-2 text-right" title="Точное совпадение">Совп.</th>
+            <th className="px-3 py-2 text-right" title="Частичное совпадение">Частич.</th>
+            <th className="px-3 py-2 text-right" title="Несовпадение">Несовп.</th>
             <th className="px-3 py-2 text-right">Принято</th>
             <th className="px-3 py-2 text-right">Исправлено</th>
-            <th className="px-3 py-2 text-right">Не проверено</th>
+            <th className="px-3 py-2 text-right">Не пров.</th>
             <th className="px-3 py-2 text-right">% исправлений</th>
+            <th className="px-3 py-2 text-right" title="Средний модуль разницы баллов">Ср. Δ</th>
           </tr>
         </thead>
         <tbody>
@@ -421,11 +493,17 @@ function RangeTable({ report: r }: { report: ConfidenceReport }) {
             <tr key={row.id} className="border-b last:border-0">
               <td className="px-3 py-2 font-medium">{row.label}</td>
               <td className="px-3 py-2 text-right tabular-nums">{row.total}</td>
+              <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{row.exact}</td>
+              <td className="px-3 py-2 text-right tabular-nums text-blue-700">{row.partial}</td>
+              <td className="px-3 py-2 text-right tabular-nums text-red-700">{row.mismatch}</td>
               <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{row.accepted}</td>
               <td className="px-3 py-2 text-right tabular-nums text-amber-700">{row.corrected}</td>
               <td className="px-3 py-2 text-right tabular-nums text-gray-400">{row.notReviewed}</td>
               <td className="px-3 py-2 text-right tabular-nums font-semibold">
                 {row.correctionPct == null ? "—" : `${row.correctionPct}%`}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">
+                {row.avgScoreDiff == null ? "—" : row.avgScoreDiff}
               </td>
             </tr>
           ))}
@@ -434,11 +512,17 @@ function RangeTable({ report: r }: { report: ConfidenceReport }) {
           <tr className="font-semibold">
             <td className="px-3 py-2">Итого</td>
             <td className="px-3 py-2 text-right tabular-nums">{r.total}</td>
+            <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{r.matches.exact}</td>
+            <td className="px-3 py-2 text-right tabular-nums text-blue-700">{r.matches.partial}</td>
+            <td className="px-3 py-2 text-right tabular-nums text-red-700">{r.matches.mismatch}</td>
             <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{r.accepted}</td>
             <td className="px-3 py-2 text-right tabular-nums text-amber-700">{r.corrected}</td>
             <td className="px-3 py-2 text-right tabular-nums text-gray-400">{r.notReviewed}</td>
             <td className="px-3 py-2 text-right tabular-nums">
               {r.overallCorrectionPct == null ? "—" : `${r.overallCorrectionPct}%`}
+            </td>
+            <td className="px-3 py-2 text-right tabular-nums">
+              {r.matches.avgAbsScoreDiff == null ? "—" : r.matches.avgAbsScoreDiff}
             </td>
           </tr>
         </tfoot>
@@ -568,6 +652,138 @@ function Correlation({ report: r }: { report: ConfidenceReport }) {
         </div>
       )}
       <p className="text-sm text-gray-600">{c.interpretation}</p>
+      <p className="text-xs text-gray-400">
+        Метод: корреляция Пирсона между уверенностью и бинарным признаком
+        исправления (0/1) — точечно-бисериальная. Корреляция ≠ причинность.
+      </p>
+    </div>
+  );
+}
+
+function CorrelationScoreDiff({ report: r }: { report: ConfidenceReport }) {
+  const c = r.correlationScoreDiff;
+  return (
+    <div className="card p-4 space-y-2">
+      <div className="font-semibold text-sm">Корреляция уверенности и величины правки</div>
+      <div className="flex flex-wrap gap-6">
+        <div>
+          <div className="text-xs text-gray-500">Коэффициент (уверенность ↔ |Δ баллов|)</div>
+          <div className="text-3xl font-bold tabular-nums">
+            {c.r == null ? "—" : c.r.toFixed(3)}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-gray-500">Пар в расчёте</div>
+          <div className="text-3xl font-bold tabular-nums">{c.n}</div>
+        </div>
+      </div>
+      {c.warning && (
+        <div className="rounded bg-amber-50 border border-amber-200 text-amber-800 text-sm px-3 py-2">
+          ⚠ {c.warning}
+        </div>
+      )}
+      <p className="text-sm text-gray-600">{c.interpretation}</p>
+    </div>
+  );
+}
+
+function AccountantTable({ report: r }: { report: ConfidenceReport }) {
+  if (r.byAccountant.length === 0) return null;
+  return (
+    <div className="card overflow-x-auto">
+      <div className="p-3 font-semibold text-sm">По бухгалтерам</div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-gray-500 border-b">
+            <th className="px-3 py-2">Бухгалтер</th>
+            <th className="px-3 py-2 text-right">Проверено</th>
+            <th className="px-3 py-2 text-right">Без изменений</th>
+            <th className="px-3 py-2 text-right">Исправлено</th>
+            <th className="px-3 py-2 text-right">% исправлений</th>
+            <th className="px-3 py-2 text-right">Ср. уверенность</th>
+            <th className="px-3 py-2 text-right">Ср. |Δ баллов|</th>
+            <th className="px-3 py-2 text-right" title="Оценки с уверенностью 90%+, исправленные Маргаритой">90%+ испр.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {r.byAccountant.map((a) => (
+            <tr key={a.accountant} className="border-b last:border-0">
+              <td className="px-3 py-2 font-medium">{a.accountant}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{a.reviewed}</td>
+              <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{a.accepted}</td>
+              <td className="px-3 py-2 text-right tabular-nums text-amber-700">{a.corrected}</td>
+              <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                {a.correctionPct == null ? "—" : `${a.correctionPct}%`}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">{fmtNum(a.avgConfidence, "%")}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{a.avgAbsScoreDiff ?? "—"}</td>
+              <td className="px-3 py-2 text-right tabular-nums text-red-700">{a.high90Corrected}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const MATCH_LABEL: Record<string, { text: string; cls: string }> = {
+  exact: { text: "Точное", cls: "bg-emerald-100 text-emerald-700" },
+  partial: { text: "Частичное", cls: "bg-blue-100 text-blue-700" },
+  mismatch: { text: "Несовпадение", cls: "bg-red-100 text-red-700" },
+};
+
+function DetailedTable({ report: r }: { report: ConfidenceReport }) {
+  if (r.detailed.length === 0) return null;
+  const rows = r.detailed.slice(0, 200);
+  return (
+    <div className="card overflow-x-auto">
+      <div className="p-3 font-semibold text-sm">
+        Исправленные оценки{" "}
+        <span className="font-normal text-gray-400">
+          (показано {rows.length} из {r.detailed.length})
+        </span>
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-gray-500 border-b">
+            <th className="px-2 py-2">Дата</th>
+            <th className="px-2 py-2">Бухгалтер</th>
+            <th className="px-2 py-2">Чат</th>
+            <th className="px-2 py-2 text-right">AI</th>
+            <th className="px-2 py-2 text-right">Маргарита</th>
+            <th className="px-2 py-2 text-right">Δ</th>
+            <th className="px-2 py-2">Категория AI</th>
+            <th className="px-2 py-2">Категория М.</th>
+            <th className="px-2 py-2 text-right">Увер.</th>
+            <th className="px-2 py-2">Совпадение</th>
+            <th className="px-2 py-2">Что изменено</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((d) => {
+            const m = d.matchStatus ? MATCH_LABEL[d.matchStatus] : null;
+            return (
+              <tr key={d.id} className="border-b last:border-0">
+                <td className="px-2 py-1.5 whitespace-nowrap">{d.date}</td>
+                <td className="px-2 py-1.5">{d.accountant ?? "—"}</td>
+                <td className="px-2 py-1.5">{d.chat}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{d.aiScore ?? "—"}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{d.finalScore}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums font-semibold">
+                  {d.scoreDiff == null ? "—" : `${d.scoreDiff > 0 ? "+" : ""}${d.scoreDiff}`}
+                </td>
+                <td className="px-2 py-1.5">{d.aiBand ?? "—"}</td>
+                <td className="px-2 py-1.5">{d.finalBand}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{d.confidence == null ? "н/д" : `${d.confidence}%`}</td>
+                <td className="px-2 py-1.5">
+                  {m && <span className={`inline-block rounded px-1.5 py-0.5 ${m.cls}`}>{m.text}</span>}
+                </td>
+                <td className="px-2 py-1.5 text-gray-600">{d.changedFields.join(", ") || "—"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

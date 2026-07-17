@@ -19,6 +19,8 @@ import {
   splitContractQuery,
   splitQueryTokens,
   telegramChatId,
+  normalizeTelegramId,
+  telegramChatKey,
   waitingLabel,
 } from "../src/lib/chat-list";
 import type { Chat } from "../src/lib/types";
@@ -371,4 +373,57 @@ test("splitContractQuery: pulls the contract № out of a pasted label", () => {
   assert.equal(splitContractQuery("B 4859 Терракор").agr_no, "B-4859");
   // No number-like prefix → whole query is the key.
   assert.deepEqual(splitContractQuery("Ромашка"), { agr_no: "Ромашка", name: "Ромашка" });
+});
+
+// ---------------------------------------------------------------------------
+// Telegram chat-id normalization — the mailing-sync join fix.
+// ---------------------------------------------------------------------------
+
+test("normalizeTelegramId collapses supergroup -100 prefix, sign and string/number", () => {
+  // The example chat: web-client id vs Bot-API supergroup id are the SAME chat.
+  assert.equal(normalizeTelegramId("-4978043895"), "4978043895");
+  assert.equal(normalizeTelegramId("-1004978043895"), "4978043895");
+  assert.equal(normalizeTelegramId(-1004978043895), "4978043895");
+  assert.equal(normalizeTelegramId("1004978043895"), "4978043895");
+  // Manual verification case: web link and bot-API id resolve to one key.
+  assert.equal(
+    normalizeTelegramId(telegramChatId("https://web.telegram.org/a/#-4978043895")),
+    normalizeTelegramId("-1004978043895")
+  );
+});
+
+test("normalizeTelegramId does NOT over-strip a short id that merely starts with 100", () => {
+  // 10-digit id starting with 100 is a real basic-group id, keep it whole.
+  assert.equal(normalizeTelegramId("-1004978043"), "1004978043");
+});
+
+test("normalizeTelegramId keeps non-numeric handles / invite slugs", () => {
+  assert.equal(normalizeTelegramId("c1234567"), "1234567");
+  assert.equal(normalizeTelegramId("joinchat_ABC"), "joinchat_abc");
+  assert.equal(normalizeTelegramId(null), null);
+  assert.equal(normalizeTelegramId(""), null);
+});
+
+test("telegramChatKey normalizes the stored chat link", () => {
+  assert.equal(telegramChatKey("https://web.telegram.org/a/#-4978043895"), "4978043895");
+  assert.equal(telegramChatKey(null), null);
+});
+
+test("matchesChatQuery matches a supergroup link against a basic-group-id chat", () => {
+  const chat: Chat = {
+    agr_no: "B-1",
+    hvhh: null,
+    name_agr: "Тест",
+    name_tax: null,
+    status: "Active",
+    tax_activation_date: null,
+    chat_name: "Тест",
+    chat_link: "https://web.telegram.org/a/#-4978043895",
+    accountant: null,
+    manager: null,
+    debts: null,
+    created_date: null,
+  };
+  // Pasting the bot-API / k-client supergroup form still finds the chat.
+  assert.equal(matchesChatQuery(chat, "https://web.telegram.org/k/#-1004978043895"), true);
 });

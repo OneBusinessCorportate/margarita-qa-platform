@@ -229,12 +229,17 @@ const RULES: Rule[] = [
     category: "debts",
     type: "req",
     // Рассылка по долгам обычно звучит как «НАПОМИНАЕМ о задолженности»,
-    // «ПРОСИМ/ПРОСЬБА оплатить», «ОПЛАТИТЕ до…» — раньше эти формы не ловились
-    // (стем «напоминани» не совпадает с «напоминаем»), поэтому долг-рассылка
-    // часто не подтягивалась. Расширяем набор глаголов-обращений.
+    // «ПРОСИМ/ПРОСЬБА оплатить», «ОПЛАТИТЕ до…», «УВЕДОМЛЯЕМ о наличии
+    // задолженности», «РАЗОСЛАЛИ напоминание по долгам» — раньше многие формы не
+    // ловились (стем «напоминани» не совпадал с «напоминаем», «уведомил» не
+    // совпадал с «уведомляем»), поэтому долг-рассылка часто не подтягивалась.
+    // Переходим на СТЕМЫ (напомн/напомин/уведом/сообщ/…), покрывающие все склонения
+    // и формы обращения. `оплатит`/`погасит` — только инфинитив/повелит. просьбы;
+    // совершённая оплата («оплачен»/«погашен») ловится отдельным `paid`-правилом,
+    // которое в deriveStatus всё равно перебивает `req`.
     all: [
-      /(долг|задолженност)/i,
-      /(написал|написала|напомина|уведомил|сообщил|написали|напомнил|прос(?:им|ьб)|оплатит[ьеё]|к\s+оплате)/i,
+      /(долг|задолженност|задолж)/i,
+      /(напис|напомн|напомин|уведом|сообщ|информир|прос(?:им|ьб|ит)|оплатит|оплатите|погасит|к\s+оплате|рассыл|разосл|разошл)/i,
     ],
   },
   // --- debts (Armenian) — iu = Unicode case-fold handles sentence-start capitals
@@ -291,6 +296,15 @@ export function isOnboardingMessage(text: string): boolean {
   let hits = 0;
   for (const re of ONBOARDING_MARKERS) if (re.test(text)) hits += 1;
   return hits >= 2;
+}
+
+/**
+ * Text content of a message for detection: the body PLUS any media caption.
+ * A debt/tax/salary рассылка is often a photo/PDF with the wording in the
+ * CAPTION and an empty `text`; scanning `text` alone missed those entirely.
+ */
+export function messageContent(msg: { text?: string | null; caption?: string | null }): string {
+  return [msg.text, msg.caption].filter((s): s is string => Boolean(s)).join("\n");
 }
 
 /** All signals fired by a single message (may be several categories). */

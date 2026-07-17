@@ -34,6 +34,55 @@ export const CONFIDENCE_RANGES: ConfidenceRange[] = [
 /** Порог «высокой уверенности» из бизнес-гипотезы (≥90% ⇒ редкие правки). */
 export const HIGH_CONFIDENCE_THRESHOLD = 90;
 
+// --- Ярлык и тон уверенности для UI ----------------------------------------
+// Пояснительные ярлыки (главным значением остаётся ПРОЦЕНТ). Отдельно от
+// статистических бакетов (CONFIDENCE_RANGES) — у тех своя, более дробная сетка.
+
+export type ConfidenceTone = "low" | "medium" | "high" | "veryHigh" | "none";
+
+export interface ConfidenceDisplay {
+  /** Точный процент как строка, либо «Недостаточно данных». */
+  text: string;
+  /** Пояснительный ярлык («Средняя уверенность») либо «Нет данных». */
+  label: string;
+  tone: ConfidenceTone;
+  /** true, когда уверенность низкая / отсутствует — нужна ручная проверка. */
+  warn: boolean;
+}
+
+/**
+ * Ярлык и тон для показа уверенности. Пороги из ТЗ:
+ *   0–49 — Низкая; 50–74 — Средняя; 75–89 — Высокая; 90–100 — Очень высокая.
+ * `null`/невалидное значение ⇒ «Недостаточно данных» (НЕ 0% и НЕ 90%).
+ * Низкая уверенность и «нет данных» помечаются warn=true (предупреждающий стиль).
+ */
+export function confidenceDisplay(
+  confidence: number | null | undefined,
+  opts?: { preliminary?: boolean; incompleteData?: boolean }
+): ConfidenceDisplay {
+  const c = validConfidence(confidence);
+  if (c == null) {
+    return { text: "Недостаточно данных", label: "Нет данных", tone: "none", warn: true };
+  }
+  let tone: ConfidenceTone;
+  let label: string;
+  if (c < 50) {
+    tone = "low";
+    label = "Низкая уверенность";
+  } else if (c < 75) {
+    tone = "medium";
+    label = "Средняя уверенность";
+  } else if (c < 90) {
+    tone = "high";
+    label = "Высокая уверенность";
+  } else {
+    tone = "veryHigh";
+    label = "Очень высокая уверенность";
+  }
+  const warn = tone === "low" || Boolean(opts?.incompleteData) || Boolean(opts?.preliminary && c >= 75);
+  return { text: `${Math.round(c)}%`, label, tone, warn };
+}
+
 /** Диапазон, которому принадлежит значение уверенности, либо null (нет данных). */
 export function rangeOf(confidence: number | null | undefined): ConfidenceRange | null {
   if (confidence == null || Number.isNaN(confidence)) return null;
