@@ -10,6 +10,7 @@
     "seed": "tsx scripts/seed.ts",
     "import": "tsx scripts/import-xlsx.ts",
     "sync:sheet": "tsx scripts/sync-sheet.ts",
+    "report:margarita": "tsx scripts/send-margarita-report.ts",
     "reconcile:live": "tsx scripts/reconcile-live.ts",
     "test": "node --import tsx --test tests/*.test.ts"
   },

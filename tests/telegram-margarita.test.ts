@@ -53,13 +53,13 @@ test("header and totals are rendered", () => {
     }),
     { date: "2026-07-16" }
   );
-  assert.match(msg, /Работа Маргариты за день/);
+  assert.match(msg, /Апелляции и QA Маргариты/);
   assert.match(msg, /Проверено чатов: 12/);
-  assert.match(msg, /Создано нарушений: 5/);
+  assert.match(msg, /Создано тикетов: 5/);
   assert.match(msg, /Ознакомлено бухгалтерами: 2/);
   assert.match(msg, /Подано апелляций: 3/);
-  assert.match(msg, /Принято апелляций: 1/);
-  assert.match(msg, /Отклонено апелляций: 1/);
+  assert.match(msg, /Подтверждено Маргаритой: 1/);
+  assert.match(msg, /Отклонено Маргаритой: 1/);
   assert.match(msg, /Ожидают решения: 1/);
   assert.match(msg, /Не обработано бухгалтерами: 1/);
 });
@@ -84,7 +84,7 @@ test("per-accountant breakdown is formatted", () => {
       ],
     })
   );
-  assert.match(msg, /\nГаяне\nНарушений: 3\nОзнакомлено: 1\nАпелляций: 2\nПринято: 1\nОтклонено: 0\nОжидают решения: 1/);
+  assert.match(msg, /\nГаяне:\n- тикетов: 3\n- ознакомлен: 1\n- апелляций: 2\n- подтверждено: 1\n- отклонено: 0\n- pending: 1/);
 });
 
 test("a quiet day says so instead of a bare zero wall", () => {
@@ -112,8 +112,9 @@ test("special characters in a name do not break the layout", () => {
       ],
     })
   );
-  // Name is preserved verbatim (plain text) and stays on its own single line.
+  // Name is preserved verbatim (plain text) and stays on its own single line
+  // (a trailing colon heads the per-accountant block).
   const nameLines = msg.split("\n").filter((l) => l.includes("О'Брайен"));
   assert.equal(nameLines.length, 1);
-  assert.equal(nameLines[0], "Աни <О'Брайен> & Co. _*[x]");
+  assert.equal(nameLines[0], "Աни <О'Брайен> & Co. _*[x]:");
 });

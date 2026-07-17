@@ -64,19 +64,19 @@ test("accountant acknowledge + appeal surface in the day report and Telegram, an
   assert.equal(row!.pending, 1);
   assert.equal(row!.unprocessed, 0, "both violations were reacted to");
 
-  // The Telegram «Работа Маргариты за день» message reflects the same numbers.
+  // The Telegram «Апелляции и QA Маргариты» message reflects the same numbers.
   // (The in-memory store is seeded, so totals include seed rows — assert on this
   // accountant's own block, which is deterministic.)
   const msg = buildMargaritaWorkReportMessage(report);
-  assert.match(msg, /Работа Маргариты за день/);
+  assert.match(msg, /Апелляции и QA Маргариты/);
   const block = [
-    ACC,
-    "Нарушений: 2",
-    "Ознакомлено: 1",
-    "Апелляций: 1",
-    "Принято: 0",
-    "Отклонено: 0",
-    "Ожидают решения: 1",
+    `${ACC}:`,
+    "- тикетов: 2",
+    "- ознакомлен: 1",
+    "- апелляций: 1",
+    "- подтверждено: 0",
+    "- отклонено: 0",
+    "- pending: 1",
   ].join("\n");
   assert.ok(msg.includes(block), `per-accountant block present:\n${msg}`);
 

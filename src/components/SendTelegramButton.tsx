@@ -7,12 +7,15 @@ export default function SendTelegramButton({
   configured,
   label = "Отправить в Telegram",
   pdfPeriod,
+  chat,
 }: {
   text: string;
   configured: boolean;
   label?: string;
   /** When set, the report PDF for this window is attached after the message. */
   pdfPeriod?: { from: string; to: string; period?: "daily" | "weekly" };
+  /** "margarita" routes the message to MARGARITA_QA_TELEGRAM_CHAT_ID when set. */
+  chat?: "margarita";
 }) {
   const [state, setState] = useState<"idle" | "sending" | "ok" | "err">("idle");
   const [msg, setMsg] = useState<string | null>(null);
@@ -24,7 +27,11 @@ export default function SendTelegramButton({
       const res = await fetch("/api/telegram/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, ...(pdfPeriod ? { pdf: pdfPeriod } : {}) }),
+        body: JSON.stringify({
+          text,
+          ...(chat ? { chat } : {}),
+          ...(pdfPeriod ? { pdf: pdfPeriod } : {}),
+        }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
