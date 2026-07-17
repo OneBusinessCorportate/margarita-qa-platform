@@ -26,6 +26,7 @@ export interface AccountantScore {
   avgScore: number; // 0..100, -1 means "no evaluations"
   count: number;
   lowCount: number; // Плохо + Критично
+  critCount: number; // только Критично — чтобы критичный чат не терялся за средним
 }
 
 export interface AccountantTasks {
@@ -123,6 +124,7 @@ export interface DayAccountantScore {
   avgScore: number;   // 0..100
   count: number;
   lowCount: number;   // Плохо + Критично
+  critCount: number;  // только Критично
 }
 
 export interface DailyReport {
@@ -272,14 +274,15 @@ function criticalReasons(ev: Evaluation): string[] {
  * in the report (item 3).
  */
 export function perPersonScores(evals: Evaluation[]): AccountantScore[] {
-  const byPerson = new Map<string, { sum: number; count: number; low: number }>();
+  const byPerson = new Map<string, { sum: number; count: number; low: number; crit: number }>();
   for (const e of evals) {
     const key = e.accountant ?? "—";
-    const agg = byPerson.get(key) ?? { sum: 0, count: 0, low: 0 };
+    const agg = byPerson.get(key) ?? { sum: 0, count: 0, low: 0, crit: 0 };
     agg.sum += e.total_score;
     agg.count += 1;
     const band = bandFor(e.total_score);
     if (band === "Плохо" || band === "Критично") agg.low += 1;
+    if (band === "Критично") agg.crit += 1;
     byPerson.set(key, agg);
   }
   return [...byPerson.entries()]
@@ -288,6 +291,7 @@ export function perPersonScores(evals: Evaluation[]): AccountantScore[] {
       avgScore: a.count ? Math.round((a.sum / a.count) * 10) / 10 : -1,
       count: a.count,
       lowCount: a.low,
+      critCount: a.crit,
     }))
     .sort((x, y) => y.avgScore - x.avgScore);
 }
@@ -389,6 +393,7 @@ export function buildReport(
       avgScore: a.count ? Math.round((a.sum / a.count) * 10) / 10 : -1,
       count: a.count,
       lowCount: a.low,
+      critCount: a.crit,
     }))
     .sort((x, y) => y.avgScore - x.avgScore);
 
@@ -593,18 +598,19 @@ export function buildReport(
   let perDayPerAccountant: DayAccountantScore[] | undefined;
   let perDay: DaySummary[] | undefined;
   if (from !== to) {
-    const dayAccMap = new Map<string, Map<string, { sum: number; count: number; low: number }>>();
+    const dayAccMap = new Map<string, Map<string, { sum: number; count: number; low: number; crit: number }>>();
     const dayMap = new Map<string, { sum: number; count: number; dist: Record<QualityBand, number> }>();
     for (const e of evals) {
       const date = e.checking_date.slice(0, 10);
       const acc = e.accountant ?? "—";
       if (!dayAccMap.has(date)) dayAccMap.set(date, new Map());
       const accMap = dayAccMap.get(date)!;
-      const accAgg = accMap.get(acc) ?? { sum: 0, count: 0, low: 0 };
+      const accAgg = accMap.get(acc) ?? { sum: 0, count: 0, low: 0, crit: 0 };
       accAgg.sum += e.total_score;
       accAgg.count += 1;
       const dayBand = bandFor(e.total_score);
       if (dayBand === "Плохо" || dayBand === "Критично") accAgg.low += 1;
+      if (dayBand === "Критично") accAgg.crit += 1;
       accMap.set(acc, accAgg);
       if (!dayMap.has(date)) {
         dayMap.set(date, { sum: 0, count: 0, dist: { Отлично: 0, Хорошо: 0, Плохо: 0, Критично: 0 } });
@@ -623,6 +629,7 @@ export function buildReport(
           avgScore: Math.round((a.sum / a.count) * 10) / 10,
           count: a.count,
           lowCount: a.low,
+          critCount: a.crit,
         });
       }
     }

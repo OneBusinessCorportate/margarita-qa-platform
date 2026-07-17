@@ -280,6 +280,9 @@ interface TrendRow {
   perDay: Map<string, number>;
   /** Window average (−1 when the accountant has no evaluations). */
   avg: number;
+  /** Кол-во КРИТИЧНЫХ чатов за период — чтобы критичный чат не терялся за
+   *  высоким средним (Маргарита: у Тагуи 1 критичный чат, а в PDF оценка 100). */
+  crit: number;
 }
 
 /**
@@ -307,8 +310,9 @@ function renderScoresTrendGrid(
   const rowH = 15;
   const wName = 120,
     wAvg = 42,
-    wDelta = 34;
-  const wDay = Math.floor((contentW - wName - wAvg - wDelta) / shownDates.length);
+    wDelta = 34,
+    wCrit = 34;
+  const wDay = Math.floor((contentW - wName - wAvg - wDelta - wCrit) / shownDates.length);
   let y = doc.y;
 
   const cell = (
@@ -336,6 +340,8 @@ function renderScoresTrendGrid(
   cell(x, wAvg, "Ср.", COLORS.headerBg, COLORS.text, true);
   x += wAvg;
   cell(x, wDelta, "Δ", COLORS.headerBg, COLORS.text, true);
+  x += wDelta;
+  cell(x, wCrit, "Крит.", COLORS.headerBg, COLORS.text, true);
   y += rowH;
 
   // Rows.
@@ -383,11 +389,19 @@ function renderScoresTrendGrid(
       }
     }
     cell(x, wDelta, deltaText, "#ffffff", deltaFg, true);
+    x += wDelta;
+    // «Крит.» — число критичных чатов за период. Красная ячейка, если >0, чтобы
+    // критичный чат был виден, даже когда среднее высокое (≈100).
+    if (r.crit > 0) {
+      cell(x, wCrit, String(r.crit), COLORS.red.bg, COLORS.red.fg, true);
+    } else {
+      cell(x, wCrit, "—", "#ffffff", COLORS.muted, false);
+    }
     y += rowH;
   }
   doc.y = y + 2;
   doc.font("Regular").fontSize(6.5).fillColor(COLORS.muted).text(
-    "оценка за каждый день · Ср. — среднее за период · Δ — изменение (первый→последний день с оценкой)",
+    "оценка за каждый день · Ср. — среднее за период · Δ — изменение (первый→последний день с оценкой) · Крит. — критичных чатов за период",
     left,
     doc.y,
     { width: contentW }
@@ -415,6 +429,8 @@ function buildTrendRows(trend: DailyReport, roster: string[] | undefined): {
     for (const a of trend.perAccountant) dayAcc.set(`${to}|${a.accountant}`, a.avgScore);
   }
   const avgMap = new Map(trend.perAccountant.map((a) => [a.accountant, a.avgScore]));
+  // Кол-во критичных чатов за период на бухгалтера (из perAccountant.critCount).
+  const critMap = new Map(trend.perAccountant.map((a) => [a.accountant, a.critCount ?? 0]));
 
   const names =
     roster && roster.length > 0
@@ -428,7 +444,7 @@ function buildTrendRows(trend: DailyReport, roster: string[] | undefined): {
         const s = dayAcc.get(`${d}|${name}`);
         if (s !== undefined && s >= 0) perDay.set(d, s);
       }
-      return { name, perDay, avg: avgMap.get(name) ?? -1 };
+      return { name, perDay, avg: avgMap.get(name) ?? -1, crit: critMap.get(name) ?? 0 };
     })
     // Only accountants with at least one evaluation in the window.
     .filter((r) => r.perDay.size > 0 || r.avg >= 0);

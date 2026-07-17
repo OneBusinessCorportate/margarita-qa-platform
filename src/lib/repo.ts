@@ -1185,7 +1185,15 @@ export async function listViolationAppealViews(filters: {
   } else if (!sb) {
     for (const v of store().violations) if (ids.includes(v.id)) byId.set(v.id, v);
   }
-  return appeals.map((a) => ({ ...a, violation: byId.get(a.violation_id) ?? null }));
+  // Скрываем апелляции, привязанные к мягко-удалённым нарушениям
+  // (confirmed=false — например, авто-нарушения «авто из оценки», снятые из
+  // подсчёта). Иначе в «Апелляциях» чат продолжал показываться как
+  // «Критичное», хотя нарушение уже снято и по факту чат не критичный
+  // (Маргарита: бухгалтеры видят чат критичным, а нарушений нет / оценка 100).
+  // Соответствует фильтрам в ViolationsPanel / appeals-report / work-report.
+  return appeals
+    .map((a) => ({ ...a, violation: byId.get(a.violation_id) ?? null }))
+    .filter((a) => a.violation === null || a.violation.confirmed !== false);
 }
 
 /**

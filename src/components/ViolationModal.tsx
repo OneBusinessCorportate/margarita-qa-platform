@@ -89,8 +89,9 @@ export default function ViolationModal({
       const saved: Violation = await res.json();
       onSaved?.(saved);
       setDone(true);
-      // Brief confirmation, then close — keeps QA in the flow.
-      setTimeout(onClose, 900);
+      // Confirmation (incl. the saved comment), then close — keeps QA in the
+      // flow. A touch longer so the comment is actually readable.
+      setTimeout(onClose, 1600);
     } catch {
       setError("Сетевая ошибка");
     } finally {
@@ -144,8 +145,19 @@ export default function ViolationModal({
         </div>
 
         {done ? (
-          <div className="py-6 text-center text-green-700 font-medium">
-            ✓ Добавлено в «Нарушения»
+          <div className="py-6 text-center space-y-2">
+            <div className="text-green-700 font-medium">✓ Добавлено в «Нарушения»</div>
+            {/* Показываем сохранённый комментарий прямо в подтверждении, чтобы
+                было видно, что он записался (Маргарита: «при добавлении
+                нарушения комментарий не отображается»). */}
+            {note.trim() ? (
+              <div className="text-sm text-gray-700">
+                <span className="text-gray-500">Комментарий: </span>
+                {note}
+              </div>
+            ) : (
+              <div className="text-xs text-gray-400">Без комментария</div>
+            )}
           </div>
         ) : (
           <>
