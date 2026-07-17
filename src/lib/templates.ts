@@ -1067,7 +1067,7 @@ export interface MargaritaWorkReportOptions {
 }
 
 /**
- * «Работа Маргариты за день» — the acknowledgement + appeals section of the
+ * «Апелляции и QA Маргариты» — the acknowledgement + appeals section of the
  * daily Telegram report (Phase 6). Rendered from the SAME aggregation
  * (buildViolationWorkflowReport) as the web /work-report and /dashboard, so the
  * figures always agree.
@@ -1088,16 +1088,16 @@ export function buildMargaritaWorkReportMessage(
 ): string {
   const dateISO = options.date ?? new Date().toISOString().slice(0, 10);
   const lines: string[] = [];
-  lines.push("Работа Маргариты за день");
+  lines.push("Апелляции и QA Маргариты");
   lines.push("");
   lines.push(`Дата: ${fmtFullDay(dateISO)}`);
   lines.push("");
   lines.push(`Проверено чатов: ${report.chatsChecked}`);
-  lines.push(`Создано нарушений: ${report.violationsCreated}`);
+  lines.push(`Создано тикетов: ${report.violationsCreated}`);
   lines.push(`Ознакомлено бухгалтерами: ${report.acknowledged}`);
   lines.push(`Подано апелляций: ${report.appealsSubmitted}`);
-  lines.push(`Принято апелляций: ${report.appealsApproved}`);
-  lines.push(`Отклонено апелляций: ${report.appealsRejected}`);
+  lines.push(`Подтверждено Маргаритой: ${report.appealsApproved}`);
+  lines.push(`Отклонено Маргаритой: ${report.appealsRejected}`);
   lines.push(`Ожидают решения: ${report.appealsPending}`);
   lines.push(`Не обработано бухгалтерами: ${report.unprocessedViolations}`);
 
@@ -1115,13 +1115,13 @@ export function buildMargaritaWorkReportMessage(
   );
   for (const r of rows) {
     lines.push("");
-    lines.push(r.name);
-    lines.push(`Нарушений: ${r.violations}`);
-    lines.push(`Ознакомлено: ${r.acknowledgements}`);
-    lines.push(`Апелляций: ${r.appealsSubmitted}`);
-    lines.push(`Принято: ${r.approved}`);
-    lines.push(`Отклонено: ${r.rejected}`);
-    lines.push(`Ожидают решения: ${r.pending}`);
+    lines.push(`${r.name}:`);
+    lines.push(`- тикетов: ${r.violations}`);
+    lines.push(`- ознакомлен: ${r.acknowledgements}`);
+    lines.push(`- апелляций: ${r.appealsSubmitted}`);
+    lines.push(`- подтверждено: ${r.approved}`);
+    lines.push(`- отклонено: ${r.rejected}`);
+    lines.push(`- pending: ${r.pending}`);
   }
 
   return lines.join("\n");

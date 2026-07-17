@@ -214,7 +214,7 @@ export default async function MessagesPage({
       ? fmtDay(resolved.from)
       : `${fmtDay(resolved.from)} — ${fmtDay(resolved.to)}`;
 
-  // «Работа Маргариты за день» — appeals + acknowledgement section of the daily
+  // «Апелляции и QA Маргариты» — appeals + acknowledgement section of the daily
   // Telegram report (Phase 6). Same aggregation as /work-report & /dashboard.
   // On a load failure we DO NOT fall back to a zero-filled message (that would
   // send misleading zeros) — we surface the error and disable the send button.
@@ -326,10 +326,10 @@ export default async function MessagesPage({
         </pre>
       </div>
 
-      {/* Работа Маргариты за день — апелляции и ознакомления (Phase 6). */}
+      {/* Апелляции и QA Маргариты — апелляции и ознакомления (Phase 6). */}
       <div className="card p-3 space-y-2">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">🧾 Работа Маргариты за день</div>
+          <div className="text-sm font-medium">🧾 Апелляции и QA Маргариты</div>
           {margaritaWorkMessage && (
             <div className="flex gap-2">
               <CopyButton label="Копировать" className="btn-primary" text={margaritaWorkMessage} />
@@ -337,6 +337,7 @@ export default async function MessagesPage({
                 text={margaritaWorkMessage}
                 configured={botReady}
                 label="Отправить в Telegram"
+                chat="margarita"
               />
             </div>
           )}

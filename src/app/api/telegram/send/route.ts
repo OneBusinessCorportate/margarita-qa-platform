@@ -2,13 +2,18 @@ import { NextResponse } from "next/server";
 import { sendDocumentToTelegram, sendToTelegram } from "@/lib/telegram";
 import { assemblePdfReport, type ReportPeriod } from "@/lib/report-data";
 import { buildReportPdf } from "@/lib/report-pdf";
+import { pickMargaritaChatId } from "@/lib/margarita-report";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
  * POST /api/telegram/send
- * Body: { text, pdf?: { from?: "YYYY-MM-DD", to?: "YYYY-MM-DD", period?: "daily"|"weekly" } }
+ * Body: {
+ *   text,
+ *   chat?: "default" | "margarita",   // "margarita" → MARGARITA_QA_TELEGRAM_CHAT_ID (or TELEGRAM_CHAT_ID)
+ *   pdf?: { from?: "YYYY-MM-DD", to?: "YYYY-MM-DD", period?: "daily"|"weekly" }
+ * }
  *
  * Sends the message; when `pdf` is present, also builds the report PDF for that
  * window (daily or weekly, matching the message) and sends it as a document
@@ -17,10 +22,12 @@ export const maxDuration = 60;
  */
 export async function POST(req: Request) {
   let text = "";
+  let chat: "default" | "margarita" = "default";
   let pdf: { from?: string; to?: string; period?: ReportPeriod } | null = null;
   try {
     const body = await req.json();
     text = String(body.text ?? "");
+    if (body.chat === "margarita") chat = "margarita";
     if (body.pdf && typeof body.pdf === "object") {
       pdf = {
         from: typeof body.pdf.from === "string" ? body.pdf.from : undefined,
@@ -34,7 +41,10 @@ export async function POST(req: Request) {
   if (!text.trim()) {
     return NextResponse.json({ error: "Пустое сообщение" }, { status: 400 });
   }
-  const result = await sendToTelegram(text);
+  // The Margarita QA/appeals report may go to its own chat when
+  // MARGARITA_QA_TELEGRAM_CHAT_ID is set; otherwise it shares TELEGRAM_CHAT_ID.
+  const chatOverride = chat === "margarita" ? pickMargaritaChatId() : undefined;
+  const result = await sendToTelegram(text, chatOverride);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 502 });
   }

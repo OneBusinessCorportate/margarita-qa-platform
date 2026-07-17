@@ -1,6 +1,9 @@
 // Server-only Telegram sender. Activates when TELEGRAM_BOT_TOKEN +
 // TELEGRAM_CHAT_ID are set; otherwise returns a friendly "not configured".
+// The raw fetch senders live in telegram-core.ts (no server-only guard) so the
+// daily cron script can reuse the SAME logic without pulling in "server-only".
 import "server-only";
+import { postTelegramMessage, postTelegramDocument } from "./telegram-core";
 
 export async function sendToTelegram(
   text: string,
@@ -11,24 +14,7 @@ export async function sendToTelegram(
   if (!token || !chatId) {
     return { ok: false, error: "Telegram бот не настроен (нет токена / chat id)" };
   }
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        disable_web_page_preview: true,
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}` };
-    }
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? "Сетевая ошибка" };
-  }
+  return postTelegramMessage(token, chatId, text);
 }
 
 /**
@@ -47,25 +33,5 @@ export async function sendDocumentToTelegram(
   if (!token || !chatId) {
     return { ok: false, error: "Telegram бот не настроен (нет токена / chat id)" };
   }
-  try {
-    const form = new FormData();
-    form.append("chat_id", chatId);
-    form.append(
-      "document",
-      new Blob([new Uint8Array(data)], { type: "application/pdf" }),
-      filename
-    );
-    if (caption) form.append("caption", caption.slice(0, 1024));
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
-      method: "POST",
-      body: form,
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}` };
-    }
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? "Сетевая ошибка" };
-  }
+  return postTelegramDocument(token, chatId, filename, data, caption);
 }

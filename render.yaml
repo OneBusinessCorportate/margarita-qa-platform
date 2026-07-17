@@ -60,3 +60,33 @@ services:
       # Optional: override the source sheet (else the built-in default is used).
       - key: SOURCE_SHEET_URL
         sync: false
+
+  # --- Daily «Апелляции и QA Маргариты» Telegram report ----------------------
+  # Sends Margarita's QA + appeals workflow summary (chats checked, tickets
+  # created, acknowledged, appeals submitted/approved/rejected/pending, plus a
+  # per-accountant breakdown) once a day. Runs standalone (site need not be
+  # awake). No AI — only Margarita's own QA data (mqa_violations / appeals).
+  - type: cron
+    name: margarita-qa-report
+    runtime: node
+    region: frankfurt
+    plan: starter
+    # 15:00 UTC = 19:00 Yerevan — end of the workday, after Margarita's QA.
+    schedule: "0 15 * * *"
+    buildCommand: npm install --include=dev
+    startCommand: npm run report:margarita
+    envVars:
+      # Set on THIS cron service in the Render dashboard too (each service has
+      # its own env). Same values as the web service.
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      # Optional: a SEPARATE chat just for the Margarita QA report. When unset,
+      # the report goes to TELEGRAM_CHAT_ID (the shared report chat).
+      - key: MARGARITA_QA_TELEGRAM_CHAT_ID
+        sync: false
