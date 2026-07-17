@@ -448,3 +448,70 @@ describe("v8 — scoped negation applied to main_taxes (unrelated neg must not s
     assert.equal(statusOf("main_taxes", text), "Не отправил");
   });
 });
+
+// ---------------------------------------------------------------------------
+// v10 — broadened debt-reminder coverage + media-caption content.
+// ---------------------------------------------------------------------------
+import { messageContent } from "../src/lib/mailings-detect.js";
+
+describe("detectAllSignals — debt-reminder mailing wording variants (v10)", () => {
+  const reminders = [
+    "Напоминаем о задолженности за услуги.",
+    "Уведомляем клиента о наличии задолженности.",
+    "Разослали напоминание по долгам за период.",
+    "Просим оплатить задолженность до конца недели.",
+    "Просьба погасить долг.",
+    "Оплатите, пожалуйста, задолженность.",
+    "Написали клиенту по поводу долга.",
+    "Сообщаем о просроченной задолженности по договору.",
+    "Информируем вас о задолженности.",
+  ];
+  for (const text of reminders) {
+    it(`debts/req fires for «${text}»`, () => {
+      const sigs = detectAllSignals(text);
+      assert.ok(
+        sigs.some((s) => s.category === "debts" && s.type === "req"),
+        `expected debts/req for «${text}»`
+      );
+    });
+  }
+
+  it("graduated debt status from two reminders → «2-й написал»", () => {
+    assert.equal(deriveStatus("debts", { done: 0, req: 2, call: 0, paid: 0 }), "2-й написал");
+  });
+});
+
+describe("detectAllSignals — unrelated debt discussion is NOT a mailing", () => {
+  it("a passing mention of debt with no contact/reminder verb does not fire req", () => {
+    const sigs = detectAllSignals("У клиента большой долг перед поставщиком, это его проблема.");
+    assert.ok(!sigs.some((s) => s.category === "debts" && s.type === "req"));
+    assert.ok(!sigs.some((s) => s.category === "debts" && s.type === "paid"));
+  });
+
+  it("«долг не оплачен» stays not-paid (negation guard holds)", () => {
+    const sigs = detectAllSignals("Долг до сих пор не оплачен клиентом.");
+    assert.ok(!sigs.some((s) => s.category === "debts" && s.type === "paid"));
+  });
+});
+
+describe("messageContent — media caption is scanned too", () => {
+  it("combines body + caption", () => {
+    assert.equal(messageContent({ text: "См. вложение", caption: "Напоминаем о задолженности" }),
+      "См. вложение\nНапоминаем о задолженности");
+    assert.equal(messageContent({ text: null, caption: "Долг оплачен" }), "Долг оплачен");
+    assert.equal(messageContent({ text: "Привет", caption: null }), "Привет");
+    assert.equal(messageContent({}), "");
+  });
+
+  it("a debt reminder that lives ONLY in the caption is detected", () => {
+    const content = messageContent({ text: "", caption: "Напоминаем об оплате задолженности." });
+    assert.ok(detectAllSignals(content).some((s) => s.category === "debts" && s.type === "req"));
+  });
+});
+
+describe("detection is deterministic (idempotent re-sync yields identical signals)", () => {
+  it("same message → same signals every call", () => {
+    const text = "Напоминаем о задолженности, просим оплатить.";
+    assert.deepEqual(detectAllSignals(text), detectAllSignals(text));
+  });
+});

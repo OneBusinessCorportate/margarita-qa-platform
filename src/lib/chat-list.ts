@@ -128,6 +128,50 @@ export function telegramChatId(link?: string | null): string | null {
 }
 
 /**
+ * Canonical numeric key for a Telegram chat id, so the SAME conversation matches
+ * regardless of how the id is represented across sources. This is the fix for
+ * the mailing-sync miss ("рассылки не подтягиваются"): the web client stores the
+ * peer id as `-4978043895`, while the Bot API / message feed stores the SAME
+ * supergroup as `-1004978043895` (the `-100…` bot-API prefix), sometimes as a
+ * number, sometimes a string. Keyed on the raw id, the join in the mailing
+ * scanner silently missed every such chat → no signals counted → no mailing
+ * detected.
+ *
+ * Normalization (order matters):
+ *   • unwrap the `c<digits>` form produced by telegramChatId() for t.me/c/ links;
+ *   • drop a leading sign;
+ *   • collapse the supergroup/channel `-100…` bot-API prefix — only when the id
+ *     is ≥ 13 digits (i.e. ≥ 10 digits remain after dropping "100"), so a
+ *     genuine short group id that merely starts with "100" is never over-stripped.
+ * A non-numeric handle / invite slug is returned lower-cased, unchanged.
+ * Returns null for an empty / unusable id.
+ */
+export function normalizeTelegramId(idOrLink?: string | number | null): string | null {
+  if (idOrLink == null) return null;
+  let s = String(idOrLink).trim();
+  if (!s) return null;
+  const cMatch = s.match(/^c(\d+)$/i); // t.me/c/<id> form from telegramChatId
+  if (cMatch) s = cMatch[1];
+  s = s.replace(/^[-+]/, ""); // drop the sign — direction is not part of identity
+  if (!/^\d+$/.test(s)) return s.toLowerCase(); // handle / invite slug
+  // Supergroup / channel ids come through as `100` + a ≥10-digit internal id.
+  // Strip that prefix so the web-client id and the bot-API id collapse to one
+  // key. The length guard stops a real short id like "1004978043" from losing
+  // its leading "100".
+  if (s.startsWith("100") && s.length >= 13) s = s.slice(3);
+  return s;
+}
+
+/**
+ * Canonical id key for a chat's stored link. Convenience wrapper used by the
+ * mailing scanner and the search box so both sides of a join normalize the same
+ * way. Returns null for non-Telegram / linkless chats.
+ */
+export function telegramChatKey(link?: string | null): string | null {
+  return normalizeTelegramId(telegramChatId(link));
+}
+
+/**
  * Does a chat match a free-text query? Matches contract №, chat name, agreement
  * name, the raw chat link, OR — when a Telegram link is pasted — the chat's
  * Telegram id (so a "/a/" link finds a chat stored with a "/k/" or t.me link).
@@ -155,9 +199,11 @@ export function matchesChatQuery(chat: Chat, query: string): boolean {
   const hay = normalize(haystack);
   const tokens = normalize(q).split(" ").filter((t) => t.length >= 2);
   if (tokens.length > 0 && tokens.every((t) => hay.includes(t))) return true;
-  // Telegram-link paste: compare by the chat id so A/K/t.me variants all match.
-  const qid = telegramChatId(query);
-  const cid = telegramChatId(chat.chat_link);
+  // Telegram-link paste: compare by the NORMALIZED chat id so A/K/t.me variants
+  // — and the web-client (-4978043895) vs bot-API (-1004978043895) forms of the
+  // same supergroup — all match.
+  const qid = normalizeTelegramId(telegramChatId(query));
+  const cid = telegramChatKey(chat.chat_link);
   return Boolean(qid && cid && qid === cid);
 }
 

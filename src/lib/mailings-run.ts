@@ -8,8 +8,8 @@
 // ---------------------------------------------------------------------------
 
 import { getServiceClient } from "@/lib/supabase/server";
-import { detectAllSignals, deriveStatus, type MailingSignal } from "@/lib/mailings-detect";
-import { telegramChatId } from "@/lib/chat-list";
+import { detectAllSignals, deriveStatus, messageContent, type MailingSignal } from "@/lib/mailings-detect";
+import { telegramChatKey, normalizeTelegramId } from "@/lib/chat-list";
 import { getAnthropic, CLAUDE_MODEL } from "@/lib/anthropic";
 import { MAILING_CYCLE_START_DAY, mailingPeriodOf } from "@/lib/scoring";
 
@@ -21,6 +21,10 @@ export interface DetectRunResult {
   upserted: number;
   skipped_manual?: number;
   ai_classified?: number;
+  /** How many distinct chats actually had ≥1 accountant message in the window. */
+  chats_with_messages?: number;
+  /** Messages whose chat_id matched no known chat (diagnostic, non-secret). */
+  unmatched_messages?: number;
   error?: string;
   status?: number;
 }
@@ -145,39 +149,56 @@ export async function runMailingsDetection(periodArg?: string): Promise<DetectRu
     return { period, messages_scanned: 0, upserted: 0, error: chatsErr.message, status: 502 };
   }
 
+  // Index every chat by its NORMALIZED Telegram id (see normalizeTelegramId):
+  // the message feed stores the bot-API supergroup id (-1004978043895) while the
+  // chat_link carries the web-client id (-4978043895). Keyed on the raw id these
+  // never matched, so those chats' messages were silently dropped and no mailing
+  // was ever detected. Normalizing BOTH sides is the general fix.
   const chatIdToAgr = new Map<string, string>();
   for (const c of chats ?? []) {
-    const cid = telegramChatId(c.chat_link as string | null);
-    if (cid) chatIdToAgr.set(cid, c.agr_no as string);
+    const key = telegramChatKey(c.chat_link as string | null);
+    if (key) chatIdToAgr.set(key, c.agr_no as string);
   }
   if (chatIdToAgr.size === 0) {
     await recordRun(period, 0, 0);
     return { period, messages_scanned: 0, upserted: 0 };
   }
 
-  // Fetch accountant messages in the period (Yerevan-timezone-bounded).
+  // Fetch accountant messages in the period (Yerevan-timezone-bounded). We try
+  // to also pull the media `caption` (a рассылка is often a photo/PDF whose
+  // wording lives in the caption, with an empty text). If that column doesn't
+  // exist in this deployment's schema, transparently fall back to text-only.
   const PAGE = 1000;
-  const allMessages: { chat_id: string | number; text: string; created_at: string }[] = [];
+  type MsgRow = { chat_id: string | number; text: string | null; caption?: string | null; created_at: string };
+  const allMessages: MsgRow[] = [];
   let pageError: string | null = null;
+  let withCaption = true;
   for (let from = 0; ; from += PAGE) {
+    const cols = withCaption ? "chat_id, text, caption, created_at" : "chat_id, text, created_at";
     const { data, error } = await sb
       .from("messages")
-      .select("chat_id, text, created_at")
+      .select(cols)
       .eq("sender_role", "accountant")
       .gte("created_at", periodStart)
       .lt("created_at", periodEnd)
-      .not("text", "is", null)
       // Explicit order — .range() pagination is only stable with one, and the
       // AI-fallback cap below relies on newest-first to protect recent (e.g.
       // "yesterday's") messages from being crowded out by older backlog.
       .order("created_at", { ascending: false })
       .range(from, from + PAGE - 1);
     if (error) {
+      // Unknown column → retry once without caption, then surface real errors.
+      if (withCaption && /caption/i.test(error.message)) {
+        withCaption = false;
+        from -= PAGE; // redo this page with the narrower select
+        continue;
+      }
       pageError = error.message;
       break;
     }
-    const batch = (data ?? []) as typeof allMessages;
-    allMessages.push(...batch);
+    const batch = (data ?? []) as unknown as MsgRow[];
+    // Keep rows that carry ANY content (text or caption).
+    for (const m of batch) if (messageContent(m).trim()) allMessages.push(m);
     if (batch.length < PAGE) break;
   }
   if (pageError) {
@@ -192,16 +213,24 @@ export async function runMailingsDetection(periodArg?: string): Promise<DetectRu
   >();
 
   // Track unmatched messages for AI fallback (only if Anthropic is configured).
-  const aiCandidates: { chat_id: string; text: string; created_at: string }[] = [];
+  const aiCandidates: { key: string; text: string; created_at: string }[] = [];
+  const matchedChats = new Set<string>(); // agr_no with ≥1 message this window
+  let unmatchedMessages = 0; // messages whose chat_id maps to no known chat
 
   for (const msg of allMessages) {
-    const agr_no = chatIdToAgr.get(String(msg.chat_id));
-    if (!agr_no) continue;
+    const key = normalizeTelegramId(msg.chat_id);
+    const agr_no = key ? chatIdToAgr.get(key) : undefined;
+    if (!key || !agr_no) {
+      unmatchedMessages += 1;
+      continue;
+    }
+    matchedChats.add(agr_no);
 
-    const signals = detectAllSignals(msg.text);
-    if (signals.length === 0 && msg.text.length >= 20) {
+    const content = messageContent(msg);
+    const signals = detectAllSignals(content);
+    if (signals.length === 0 && content.length >= 20) {
       // No keyword match — candidate for AI classification
-      aiCandidates.push({ chat_id: String(msg.chat_id), text: msg.text, created_at: msg.created_at });
+      aiCandidates.push({ key, text: content, created_at: msg.created_at });
       continue;
     }
 
@@ -226,7 +255,7 @@ export async function runMailingsDetection(periodArg?: string): Promise<DetectRu
     const aiSignalsList = await classifyWithAI(aiCapped.map((m) => ({ text: m.text })));
     for (let i = 0; i < aiCapped.length; i++) {
       const msg = aiCapped[i];
-      const agr_no = chatIdToAgr.get(msg.chat_id);
+      const agr_no = chatIdToAgr.get(msg.key);
       if (!agr_no) continue;
       const msgSignals = aiSignalsList[i] ?? [];
       if (msgSignals.length > 0) aiCount++;
@@ -250,9 +279,27 @@ export async function runMailingsDetection(periodArg?: string): Promise<DetectRu
     if (status) derived.push({ agr_no: c.agr_no, category: c.category, status, detected_at: c.latestAt });
   }
 
+  // Non-secret diagnostics — tell "chat sync failed" (0 messages / unmatched)
+  // apart from "scanned, no mailing found" (messages present, no signals).
+  if (unmatchedMessages > 0) {
+    console.warn(
+      `runMailingsDetection(${period}): ${unmatchedMessages} messages had no matching chat (id normalization)`
+    );
+  }
+  console.info(
+    `runMailingsDetection(${period}): scanned=${allMessages.length} chats=${matchedChats.size} signals=${counters.size} ai=${aiCount}`
+  );
+
   if (derived.length === 0) {
     await recordRun(period, allMessages.length, aiCount);
-    return { period, messages_scanned: allMessages.length, upserted: 0, ai_classified: aiCount };
+    return {
+      period,
+      messages_scanned: allMessages.length,
+      upserted: 0,
+      ai_classified: aiCount,
+      chats_with_messages: matchedChats.size,
+      unmatched_messages: unmatchedMessages,
+    };
   }
 
   // Load manual rows so we never overwrite them.
@@ -297,6 +344,8 @@ export async function runMailingsDetection(periodArg?: string): Promise<DetectRu
     upserted: upsertRows.length,
     skipped_manual: manualSet.size,
     ai_classified: aiCount,
+    chats_with_messages: matchedChats.size,
+    unmatched_messages: unmatchedMessages,
   };
 }
 

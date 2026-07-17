@@ -180,3 +180,130 @@ test("empty input yields a zeroed report, no crash", () => {
   assert.equal(r.correlation.r, null);
   assert.equal(r.correlation.n, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Extended metrics: exact/partial/mismatch, score diffs, per-accountant,
+// detailed table, second correlation, chat & match-status filters.
+// ---------------------------------------------------------------------------
+
+let mseq = 0;
+function mkMatch(o: {
+  aiTotal: number;
+  finalTotal: number;
+  aiCriteria?: Record<string, number>;
+  finalCriteria?: Record<string, number>;
+  confidence?: number;
+  status?: ReviewStatus;
+  accountant?: string;
+  chat?: string;
+}): Evaluation {
+  mseq += 1;
+  const aiCrit = o.aiCriteria ?? { accuracy: 4, sla: 5 };
+  const finalCrit = o.finalCriteria ?? aiCrit;
+  return {
+    id: `m${mseq}`,
+    chat_agr_no: o.chat ?? `chat${mseq}`,
+    period: "202607",
+    checking_date: "2026-07-10",
+    role: "accountant",
+    accountant: o.accountant ?? "Աննա",
+    scores: {
+      scheme: "accounting",
+      criteria: finalCrit,
+      monthly: {},
+      ai: { criteria: aiCrit, monthly: {}, total: o.aiTotal, confidence: o.confidence ?? 80 },
+    },
+    total_score: o.finalTotal,
+    quality_band: "Хорошо",
+    comment: null,
+    created_at: "2026-07-10T09:00:00.000Z",
+    ai_confidence: o.confidence ?? 80,
+    ai_total: o.aiTotal,
+    review_status: o.status ?? "accepted",
+  };
+}
+
+test("match metrics classify exact / partial / mismatch", () => {
+  const evals = [
+    mkMatch({ aiTotal: 88, finalTotal: 88, status: "accepted" }), // exact
+    mkMatch({ aiTotal: 88, finalTotal: 85, finalCriteria: { accuracy: 3, sla: 5 }, status: "corrected" }), // partial (Δ3, same band)
+    mkMatch({ aiTotal: 88, finalTotal: 60, status: "corrected" }), // mismatch (Δ28, band flips)
+  ];
+  const r = buildConfidenceReport(evals);
+  assert.equal(r.matches.comparable, 3);
+  assert.equal(r.matches.exact, 1);
+  assert.equal(r.matches.partial, 1);
+  assert.equal(r.matches.mismatch, 1);
+  assert.equal(r.matches.matched, 2);
+  assert.equal(r.matches.excludedNoBaseline, 0);
+});
+
+test("reviewed rows without an AI baseline are excluded from match stats", () => {
+  const noBaseline: Evaluation = {
+    ...mkMatch({ aiTotal: 88, finalTotal: 70, status: "corrected" }),
+    scores: { scheme: "accounting", criteria: { accuracy: 3 }, monthly: {} }, // no .ai
+    ai_total: null,
+  };
+  const r = buildConfidenceReport([noBaseline]);
+  assert.equal(r.matches.comparable, 0);
+  assert.equal(r.matches.excludedNoBaseline, 1);
+});
+
+test("average and median score difference", () => {
+  const evals = [
+    mkMatch({ aiTotal: 90, finalTotal: 85, status: "corrected" }), // -5
+    mkMatch({ aiTotal: 90, finalTotal: 80, status: "corrected" }), // -10
+    mkMatch({ aiTotal: 90, finalTotal: 90, status: "accepted" }), // 0
+  ];
+  const r = buildConfidenceReport(evals);
+  assert.equal(r.matches.avgScoreDiff, -5); // (-5-10+0)/3
+  assert.equal(r.matches.medianScoreDiff, -5);
+  assert.equal(r.matches.avgAbsScoreDiff, 5);
+});
+
+test("per-accountant table aggregates reviews, corrections and 90%+ corrections", () => {
+  const evals = [
+    mkMatch({ accountant: "A", aiTotal: 90, finalTotal: 90, confidence: 95, status: "accepted" }),
+    mkMatch({ accountant: "A", aiTotal: 90, finalTotal: 70, confidence: 95, status: "corrected" }), // 90%+ corrected
+    mkMatch({ accountant: "B", aiTotal: 88, finalTotal: 88, confidence: 60, status: "accepted" }),
+  ];
+  const r = buildConfidenceReport(evals);
+  const a = r.byAccountant.find((x) => x.accountant === "A")!;
+  assert.equal(a.reviewed, 2);
+  assert.equal(a.corrected, 1);
+  assert.equal(a.correctionPct, 50);
+  assert.equal(a.high90Corrected, 1);
+  const b = r.byAccountant.find((x) => x.accountant === "B")!;
+  assert.equal(b.corrected, 0);
+});
+
+test("detailed table lists corrected/non-exact rows with changed fields", () => {
+  const evals = [
+    mkMatch({ aiTotal: 88, finalTotal: 88, status: "accepted" }), // exact → not listed
+    mkMatch({ aiTotal: 88, finalTotal: 60, status: "corrected", chat: "B-42" }), // mismatch → listed
+  ];
+  const r = buildConfidenceReport(evals);
+  assert.equal(r.detailed.length, 1);
+  assert.equal(r.detailed[0].chat, "B-42");
+  assert.equal(r.detailed[0].matchStatus, "mismatch");
+  assert.ok(r.detailed[0].changedFields.length > 0);
+});
+
+test("second correlation: confidence ↔ |score diff|", () => {
+  const evals: Evaluation[] = [];
+  for (let i = 0; i < 15; i++) evals.push(mkMatch({ aiTotal: 90, finalTotal: 90, confidence: 95, status: "accepted" }));
+  for (let i = 0; i < 15; i++) evals.push(mkMatch({ aiTotal: 90, finalTotal: 70, confidence: 40, status: "corrected" }));
+  const r = buildConfidenceReport(evals);
+  assert.equal(r.correlationScoreDiff.n, 30);
+  assert.ok(r.correlationScoreDiff.r !== null && r.correlationScoreDiff.r < 0);
+});
+
+test("chat and matchStatus filters narrow the set", () => {
+  const evals = [
+    mkMatch({ aiTotal: 88, finalTotal: 88, status: "accepted", chat: "X" }), // exact
+    mkMatch({ aiTotal: 88, finalTotal: 60, status: "corrected", chat: "Y" }), // mismatch
+  ];
+  assert.equal(buildConfidenceReport(evals, { chat: "X" }).total, 1);
+  assert.equal(buildConfidenceReport(evals, { matchStatus: "mismatch" }).total, 1);
+  assert.equal(buildConfidenceReport(evals, { matchStatus: "exact" }).matches.exact, 1);
+});
