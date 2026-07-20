@@ -17,6 +17,7 @@ export default function TaskModal({
   chatAgrNo,
   client,
   accountant,
+  manager = null,
   defaultDate,
   onClose,
   onSaved,
@@ -24,6 +25,8 @@ export default function TaskModal({
   chatAgrNo: string;
   client: string | null;
   accountant: string | null;
+  /** Ответственный менеджер по клиенту (из mqa_chats.manager). */
+  manager?: string | null;
   defaultDate?: string;
   onClose: () => void;
   onSaved?: (t: Task) => void;
@@ -35,6 +38,8 @@ export default function TaskModal({
   const [priority, setPriority] = useState("Medium");
   const [status, setStatus] = useState<string>("-");
   const [acc, setAcc] = useState(accountant ?? "");
+  // Задачу можно назначить и менеджеру (запрос QA): предзаполняем из чата.
+  const [mgr, setMgr] = useState(manager ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -70,6 +75,7 @@ export default function TaskModal({
         body: JSON.stringify({
           chat_agr_no: chatAgrNo,
           accountant: acc || null,
+          manager: mgr || null,
           description: description || null,
           due_date_original: dueDate || null,
           due_date_postponed: duePostponed || null,
@@ -125,14 +131,24 @@ export default function TaskModal({
           </div>
         ) : (
           <>
-            <Field label="Бухгалтер">
-              <input
-                className="input w-full"
-                value={acc}
-                onChange={(e) => setAcc(e.target.value)}
-                placeholder="имя бухгалтера"
-              />
-            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Бухгалтер">
+                <input
+                  className="input w-full"
+                  value={acc}
+                  onChange={(e) => setAcc(e.target.value)}
+                  placeholder="имя бухгалтера"
+                />
+              </Field>
+              <Field label="Менеджер">
+                <input
+                  className="input w-full"
+                  value={mgr}
+                  onChange={(e) => setMgr(e.target.value)}
+                  placeholder="имя менеджера"
+                />
+              </Field>
+            </div>
 
             <Field label="Описание">
               <input

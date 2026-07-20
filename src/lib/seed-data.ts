@@ -183,6 +183,7 @@ function task(
     result,
     task_status: status,
     accountant,
+    manager: null,
     checking_date: D,
     period: "202606",
   };

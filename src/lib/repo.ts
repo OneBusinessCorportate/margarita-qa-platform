@@ -811,6 +811,7 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
     result: input.result ?? null,
     task_status: input.task_status ?? "-",
     accountant: input.accountant ?? null,
+    manager: input.manager ?? null,
     checking_date,
     period: checking_date.slice(0, 7).replace("-", ""),
     recurring: input.recurring ?? false,

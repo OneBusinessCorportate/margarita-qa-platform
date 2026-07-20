@@ -222,12 +222,42 @@ export default function ScoringPanel({
     }
   }
 
-  // Refresh the chat/eval data every 40 minutes. With the bot feed wired in,
-  // this is how the day view stays current through the day.
+  // Keep the day view current WITHOUT a manual reload. Next.js serves a stale
+  // (pre-fetched) copy from its client Router Cache on navigation, so we refresh
+  // IMMEDIATELY on mount — otherwise «правильные данные появлялись только после
+  // нескольких обновлений» (жалоба QA) — again whenever the tab regains focus
+  // (она отвечает клиенту в Telegram и возвращается на вкладку → статус «Ждёт
+  // ответа» и оценки подтягиваются сразу), and on a short background interval.
   useEffect(() => {
-    const id = setInterval(() => router.refresh(), 40 * 60 * 1000);
-    return () => clearInterval(id);
+    const refresh = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      router.refresh();
+    };
+    refresh(); // немедленно на монтировании — заменяем устаревший Router Cache
+    const id = setInterval(refresh, 5 * 60 * 1000);
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
   }, [router]);
+
+  // router.refresh() re-runs the (force-dynamic) server component and streams
+  // fresh props, but evaluations / overrides live in local state seeded ONCE, so
+  // without syncing them a refresh silently changed nothing — the root cause of
+  // «оценённые чаты снова показывают „Оценить"» и «данные видны только после
+  // нескольких обновлений». Sync from props so a refresh actually updates what
+  // QA sees. Local optimistic edits (onSaved) are already persisted to the DB,
+  // so the fresh server payload includes them — nothing is lost.
+  useEffect(() => {
+    setEvaluations(initialEvaluations);
+  }, [initialEvaluations]);
+  useEffect(() => {
+    setScoreOverrides(initialScoreOverrides);
+  }, [initialScoreOverrides]);
 
   // Several contracts can share ONE Telegram chat (a client with multiple
   // agreements all talk in one group). Merge them into a single representative
@@ -1197,7 +1227,14 @@ export default function ScoringPanel({
             )}
             {shownChats.map((chat) => (
               <ChatGroup
-                key={`${chat.agr_no}|${date}`}
+                // Include the saved-evaluation / override identity in the key so
+                // that when a refresh brings fresh data (a chat now evaluated, or
+                // a manual score override), the row REMOUNTS and re-seeds from it
+                // — otherwise a row that mounted before the save keeps showing
+                // «Оценить» and the old score («повторная проверка → снова
+                // „Оценить"» / «критический чат показывает 100»). A re-save keeps
+                // the same eval id, so it does not remount mid-edit.
+                key={`${chat.agr_no}|${date}|${evalByChatRole.get(`${chat.agr_no}|accountant`)?.id ?? "n"}|${evalByChatRole.get(`${chat.agr_no}|manager`)?.id ?? "n"}|${overrideByChatDate.get(chat.agr_no)?.id ?? "n"}`}
                 chat={chat}
                 accountants={accountants}
                 date={date}
@@ -1275,6 +1312,7 @@ export default function ScoringPanel({
           chatAgrNo={taskFor.agr_no}
           client={taskFor.chat_name}
           accountant={taskFor.accountant ?? null}
+          manager={taskFor.manager ?? null}
           defaultDate={date}
           onClose={() => setTaskFor(null)}
         />
@@ -1461,7 +1499,26 @@ function ChatScoreRow({
     return base;
   });
   const [comment, setComment] = useState(existing?.comment ?? prev?.comment ?? "");
-  const [override, setOverride] = useState("");
+  // Восстанавливаем СОХРАНЁННУЮ итоговую оценку. Сравниваем total_score строки с
+  // тем, что дают восстановленные критерии/рассылки по той же формуле, что на
+  // сервере (с greeting и жёстким гейтом рассылки). Если расходятся — значит
+  // оценка была задана вручную (поле «Общая») ИЛИ критический гейт рассылки с
+  // тех пор снялся (рассылку позже авто-подтянули как отправленную). В обоих
+  // случаях фиксируем сохранённую оценку в поле override, чтобы «критический»
+  // чат НЕ пересчитывался молча в 100 и НЕ перезаписывался при повторном
+  // сохранении (баг: «оценила чат как критический — показывает 100»).
+  const [override, setOverride] = useState(() => {
+    if (!existing || typeof existing.total_score !== "number") return "";
+    const recomputed = computeOverall(
+      criteria,
+      monthly,
+      DAILY_CRITERIA,
+      existing.scores.greeting
+    );
+    return Math.abs(recomputed - existing.total_score) > 0.01
+      ? String(existing.total_score)
+      : "";
+  });
   // Manual score override for the SELECTED day (п.8) — open form + fields.
   const [ovOpen, setOvOpen] = useState(false);
   const [ovScore, setOvScore] = useState("");
