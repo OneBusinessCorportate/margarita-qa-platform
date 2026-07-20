@@ -39,6 +39,7 @@ export async function POST(req: Request) {
     result: body.result ?? null,
     task_status: body.task_status ?? "-",
     accountant: body.accountant ?? null,
+    manager: body.manager ?? null,
     checking_date: body.checking_date ?? undefined,
     recurring: body.recurring === true,
   };

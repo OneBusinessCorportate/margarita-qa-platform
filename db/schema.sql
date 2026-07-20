@@ -124,6 +124,7 @@ create table if not exists mqa_tasks (
   result              text,
   task_status         text,                 -- Completed (On Time) / Completed (Late) / Overdue / Cancelled / -
   accountant          text,
+  manager             text,                 -- задачу можно назначить и менеджеру (доп. к accountant)
   checking_date       date,
   period              text,
   -- A recurring / non-closable task stays OPEN until the accountant does it AND
@@ -138,6 +139,7 @@ alter table mqa_tasks add column if not exists recurring      boolean not null d
 alter table mqa_tasks add column if not exists qa_confirmed    boolean not null default false;
 alter table mqa_tasks add column if not exists qa_confirmed_at timestamptz;
 alter table mqa_tasks add column if not exists qa_confirmed_by text;
+alter table mqa_tasks add column if not exists manager         text;
 
 create index if not exists mqa_tasks_chat_idx on mqa_tasks (chat_agr_no);
 

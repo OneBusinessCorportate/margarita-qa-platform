@@ -551,12 +551,21 @@ function renderDaily(
         .text(row.accountant, left, doc.y, { width: contentW });
       for (const item of row.violations) {
         const fg = item.fine > 0 ? COLORS.red.fg : COLORS.text;
+        const label = item.name ? `${item.code} (${item.name})` : item.code;
         doc.font("Regular").fontSize(9).fillColor(fg).text(
-          `- ${item.code} — ${item.type} — ${dailyFineLabel(item.fine)}`,
+          `- ${label} — ${item.type} — ${dailyFineLabel(item.fine)}`,
           left + 8,
           doc.y,
           { width: contentW - 8 }
         );
+        if (item.note) {
+          doc.font("Regular").fontSize(8).fillColor(COLORS.muted ?? fg).text(
+            `  💬 ${item.note}`,
+            left + 16,
+            doc.y,
+            { width: contentW - 16 }
+          );
+        }
       }
     }
     if (model.totalFine > 0) {

@@ -142,8 +142,16 @@ export interface DailyReportStar {
 /** One нарушение line under an accountant: chat code — problem — fine. */
 export interface DailyReportViolItem {
   code: string;
+  /**
+   * Название чата / имя клиента для этого нарушения — чтобы бухгалтер сразу узнал
+   * чат, а не только номер договора (запрос QA). Берётся из `client` нарушения
+   * (при добавлении из сетки оценки туда кладётся имя чата).
+   */
+  name: string | null;
   type: string;
   fine: number;
+  /** Комментарий Маргариты к нарушению — показываем в отчёте (запрос QA, 2-й раз). */
+  note: string | null;
 }
 
 /** One accountant WITH нарушения: name, their request count, and нарушения. */
@@ -243,10 +251,19 @@ export function buildDailyReportModel(
     const acc = n.accountant?.trim() || "-";
     totalFine += n.fine;
     const list = violByAcc.get(acc) ?? [];
+    const code = n.chat_agr_no?.trim() || n.client?.trim() || "-";
+    // Название чата / клиента рядом с номером договора. Не дублируем, если оно
+    // совпадает с тем, что уже показано как код.
+    const name = n.client?.trim() || null;
+    // Комментарий берём из исходной строки нарушения (репрезентативная — первая
+    // в группе), тем же приёмом, что и в остальных отчётах.
+    const note = violations[n.rowIndexes[0]]?.note?.trim() || null;
     list.push({
-      code: n.chat_agr_no?.trim() || n.client?.trim() || "-",
+      code,
+      name: name && name !== code ? name : null,
       type: n.types.join(", ") || "-",
       fine: n.fine,
+      note,
     });
     violByAcc.set(acc, list);
   }
@@ -353,7 +370,11 @@ export function buildReportMessage(
       if (i > 0) lines.push("");
       lines.push(row.accountant);
       for (const item of row.violations) {
-        lines.push(`- ${item.code} — ${item.type} — ${dailyFineLabel(item.fine)}`);
+        // Номер договора + НАЗВАНИЕ чата, чтобы бухгалтер сразу узнал чат.
+        const label = item.name ? `${item.code} (${item.name})` : item.code;
+        lines.push(`- ${label} — ${item.type} — ${dailyFineLabel(item.fine)}`);
+        // Комментарий Маргариты — отдельной строкой под нарушением, если есть.
+        if (item.note) lines.push(`  💬 ${item.note}`);
       }
     });
     if (model.totalFine > 0) {

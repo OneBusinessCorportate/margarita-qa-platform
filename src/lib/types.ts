@@ -148,6 +148,8 @@ export interface Task {
   result: string | null;
   task_status: TaskStatus | null;
   accountant: string | null;
+  /** Ответственный менеджер (доп. к accountant). Задачу можно назначить обоим. */
+  manager: string | null;
   checking_date: string | null;
   period: string | null;
   /** Recurring / non-closable: stays open until done AND QA-confirmed. */
@@ -288,6 +290,7 @@ export interface NewTaskInput {
   result?: string | null;
   task_status?: TaskStatus | null;
   accountant?: string | null;
+  manager?: string | null;
   checking_date?: string | null;
   recurring?: boolean | null;
 }

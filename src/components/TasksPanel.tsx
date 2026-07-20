@@ -15,6 +15,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 interface Draft {
   chat_agr_no: string;
   accountant: string;
+  manager: string;
   description: string;
   due_date_original: string;
   due_date_postponed: string;
@@ -28,6 +29,7 @@ function blankDraft(): Draft {
   return {
     chat_agr_no: "",
     accountant: "",
+    manager: "",
     description: "",
     due_date_original: today(),
     due_date_postponed: "",
@@ -70,6 +72,7 @@ export default function TasksPanel({
       return (
         t.chat_agr_no.toLowerCase().includes(q) ||
         (t.accountant ?? "").toLowerCase().includes(q) ||
+        (t.manager ?? "").toLowerCase().includes(q) ||
         (t.description ?? "").toLowerCase().includes(q)
       );
     };
@@ -109,6 +112,7 @@ export default function TasksPanel({
         body: JSON.stringify({
           chat_agr_no: draft.chat_agr_no,
           accountant: draft.accountant || null,
+          manager: draft.manager || null,
           description: draft.description || null,
           due_date_original: draft.due_date_original || null,
           due_date_postponed: draft.due_date_postponed || null,
@@ -161,7 +165,12 @@ export default function TasksPanel({
 
   function pickChat(agrNo: string) {
     const c = chatMap.get(agrNo);
-    setDraft({ ...draft, chat_agr_no: agrNo, accountant: c?.accountant ?? draft.accountant });
+    setDraft({
+      ...draft,
+      chat_agr_no: agrNo,
+      accountant: c?.accountant ?? draft.accountant,
+      manager: c?.manager ?? draft.manager,
+    });
   }
 
   return (
@@ -202,7 +211,7 @@ export default function TasksPanel({
         <table className="qa">
           <thead>
             <tr>
-              <th className="min-w-[200px]">№ / Чат / Бухгалтер</th>
+              <th className="min-w-[200px]">№ / Чат / Бухгалтер · Менеджер</th>
               <th className="min-w-[200px]">Описание</th>
               <th>Due Date (Original)</th>
               <th>Due Date (Postponed)</th>
@@ -222,7 +231,10 @@ export default function TasksPanel({
                   <td>
                     <div className="font-medium">№ {t.chat_agr_no}</div>
                     <div className="text-gray-500 text-xs">{chat?.chat_name ?? "—"}</div>
-                    <div className="text-gray-400 text-xs">{t.accountant ?? "—"}</div>
+                    <div className="text-gray-400 text-xs">
+                      Б: {t.accountant ?? "—"}
+                      {t.manager ? <> · М: {t.manager}</> : null}
+                    </div>
                   </td>
                   <td className="text-xs text-gray-700">{t.description}</td>
                   <td className={`whitespace-nowrap text-xs ${due ? "text-red-600 font-semibold" : ""}`}>
@@ -313,6 +325,19 @@ export default function TasksPanel({
                   onChange={(e) => setDraft({ ...draft, accountant: e.target.value })}
                 >
                   <option value="">— бухгалтер —</option>
+                  {accountants.map((a) => (
+                    <option key={a.name} value={a.name}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+                {/* Задачу можно назначить и менеджеру (тот же пул сотрудников). */}
+                <select
+                  className="input w-full"
+                  value={draft.manager}
+                  onChange={(e) => setDraft({ ...draft, manager: e.target.value })}
+                >
+                  <option value="">— менеджер —</option>
                   {accountants.map((a) => (
                     <option key={a.name} value={a.name}>
                       {a.name}
