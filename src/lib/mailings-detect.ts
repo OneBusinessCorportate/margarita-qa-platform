@@ -71,6 +71,11 @@ const REQ_EN = /\b(please\s+(?:provide|send|share|attach)|kindly\s+(?:provide|se
 const PAID_EN = /\b(paid|settled|cleared|no\s+debt|fully\s+paid|debt\s+(?:is\s+)?closed)\b/i;
 const CALL_EN = /\b(called|phoned|rang|call(?:ed)?\s+the\s+client)\b/i;
 const NEG_EN = /\b(not|no|haven'?t|hasn'?t|didn'?t|did\s+not|won'?t|never)\s+(?:\w+\s+){0,2}?(sent|submitted|filed|received|got|provided|prepared|paid|settled|done|completed)\b/i;
+// English notification / mailing stem — «we remind / notify / inform you …»,
+// «this is a reminder», «notice about taxes». Mirrors NOTIFY_RU / NOTIFY_HY so a
+// tax/salary рассылка written in English is detected the same way.
+const NOTIFY_EN =
+  /\b(remind(?:er|ing|s|ed)?|notif(?:y|ies|ied|ication)|inform(?:ing|ed|ation)?|notice|please\s+be\s+(?:informed|advised)|we\s+are\s+writing\s+to)\b/i;
 
 // --- Negation detectors ------------------------------------------------------
 // "не <опц. 1-2 слова> <глагол-выполнения>" — a completion that did NOT happen.
@@ -270,9 +275,14 @@ const RULES: Rule[] = [
 
   // --- main_taxes (English) — taxes are *sent* -----------------------------
   { category: "main_taxes", type: "done", all: [KW.taxes_en, DONE_SENT_EN], none: [NEG_EN] },
+  // English tax-notification mailing: «we remind you of the taxes due …»,
+  // «notification of taxes for the period» → sent = «Отправил». Parity with RU/HY.
+  { category: "main_taxes", type: "done", all: [KW.taxes_en, NOTIFY_EN], none: [NEG_EN] },
   { category: "main_taxes", type: "neg", all: [KW.taxes_en, NEG_EN] },
   // --- salary (English) -----------------------------------------------------
   { category: "salary", type: "done", all: [KW.salary_en, DONE_RECV_EN], none: [NEG_EN] },
+  // Salary-notification mailing in English → sent = «Получил». Parity with RU/HY.
+  { category: "salary", type: "done", all: [KW.salary_en, NOTIFY_EN], none: [NEG_EN] },
   { category: "salary", type: "req", all: [KW.salary_en, REQ_EN] },
   { category: "salary", type: "neg", all: [KW.salary_en, NEG_EN] },
   // --- primary_docs (English) ----------------------------------------------

@@ -12,8 +12,13 @@
 // Source sheet: --url, else $SOURCE_SHEET_URL, else the built-in default below.
 //
 // SAFE BY DESIGN:
-//   • Client fields are updated NON-DESTRUCTIVELY — chat_link / chat_name /
-//     manager are never written, so the Telegram links accountants use survive.
+//   • Client fields are updated NON-DESTRUCTIVELY — chat_link / chat_name are
+//     never written, so the Telegram links accountants use survive.
+//   • Manager is AUTO-DETECTED: if the «Основные данные» tab has a column whose
+//     header matches «Менеджер»/«Manager», its value is written to
+//     mqa_chats.manager — but ONLY for chats that don't already have one
+//     (fill-empty), so a manager set by hand in the app is never overwritten.
+//     When the column is absent, manager is left exactly as-is (no-op).
 //   • New clients are only added with --add-new (otherwise the sheet's full
 //     company list won't flood the QA app with chats Margarita doesn't score).
 //   • Debts write only the amount (mqa_chats.debts + mqa_debts totals); the
@@ -68,15 +73,42 @@ async function loadWorkbook(): Promise<XLSX.WorkBook> {
   return XLSX.read(buf, { cellDates: true });
 }
 
+/**
+ * Auto-detect a manager column in a tab by HEADER NAME (не по фикс-индексу, т.к.
+ * колонку могут добавить в любом месте) and build agr_no → manager. Returns an
+ * empty map when the tab has no «Менеджер»/«Manager» column — then the sync
+ * leaves manager untouched. Contract № is column 0 (as everywhere in the sheet).
+ */
+function managerByAgrFrom(rows: Cell[][]): Map<string, string> {
+  const out = new Map<string, string>();
+  if (rows.length === 0) return out;
+  const header = (rows[0] ?? []).map((c) => String(c ?? ""));
+  const mgrCol = header.findIndex((h) => /менедж|manager/i.test(h));
+  if (mgrCol < 0) return out;
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r) continue;
+    const agr = String(r[0] ?? "").trim();
+    const mgr = String(r[mgrCol] ?? "").trim();
+    if (agr && mgr) out.set(agr, mgr);
+  }
+  return out;
+}
+
 async function main() {
   const wb = await loadWorkbook();
   const asOf = arg("as-of") ?? new Date().toISOString().slice(0, 10);
 
   // --- parse clients ------------------------------------------------------
-  const clients: MasterClient[] = rowsOf(wb, CLIENTS_TAB)
+  const clientRows = rowsOf(wb, CLIENTS_TAB);
+  const clients: MasterClient[] = clientRows
     .slice(1)
     .map(parseMasterClientRow)
     .filter((c): c is MasterClient => c !== null);
+  // Ответственный менеджер по клиенту — авто-детект по заголовку колонки в
+  // «Основные данные» (п.: «задачу назначать и менеджеру, писать имя менеджера
+  // автоматически»). Пусто, если колонки нет — тогда manager не трогаем.
+  const sheetMgrByAgr = managerByAgrFrom(clientRows);
   // de-dupe by agr_no (keep first)
   const byAgr = new Map<string, MasterClient>();
   for (const c of clients) if (!byAgr.has(c.agr_no)) byAgr.set(c.agr_no, c);
@@ -114,11 +146,12 @@ async function main() {
     chat_name: string;
     accountant: string | null;
     accountant_pinned: boolean | null;
+    manager: string | null;
   }[] = [];
   if (sb) {
     const { data, error } = await sb
       .from(TABLES.chats)
-      .select("agr_no, hvhh, chat_name, accountant, accountant_pinned")
+      .select("agr_no, hvhh, chat_name, accountant, accountant_pinned, manager")
       .limit(20000);
     if (error) throw error;
     existing = (data ?? []) as typeof existing;
@@ -185,14 +218,33 @@ async function main() {
     existing.filter((c) => c.accountant_pinned).map((c) => [c.agr_no, c.accountant])
   );
 
+  // Existing manager per agr_no — a manager set by hand in the app wins and is
+  // carried back verbatim; only chats WITHOUT one are filled from the sheet
+  // (fill-empty). Preserves manual assignments, populates the rest automatically.
+  const existingMgrOf = new Map(
+    existing.map((c) => [c.agr_no, (c.manager ?? "").trim()])
+  );
+  let managersFilled = 0;
+  const managerFor = (agrNo: string): string | null => {
+    const current = existingMgrOf.get(agrNo);
+    if (current) return current; // manual / already set — never overwrite
+    const fromSheet = sheetMgrByAgr.get(agrNo);
+    if (fromSheet) {
+      managersFilled++;
+      return fromSheet;
+    }
+    return null; // unchanged (was null, stays null)
+  };
+
   // Debt total per client, looked up by its ՀՎՀՀ.
   const asOfStamp = new Date().toISOString();
   const totalsFor = (c: MasterClient): DebtTotals | undefined =>
     debtsByHvhh.get(normalizeHvhh(c.hvhh));
 
   // Build the chat rows in ONE batched upsert (fast — a few calls, not ~1300
-  // round-trips). We DON'T send chat_link / manager, so they're left untouched;
-  // chat_name is sent unchanged (existing value, or the agr_no for a new row).
+  // round-trips). We DON'T send chat_link, so it's left untouched; chat_name is
+  // sent unchanged (existing value, or the agr_no for a new row). manager is
+  // sent as the existing value (preserved) or auto-filled from the sheet.
   const consider = ADD_NEW ? [...byAgr.values()] : matched;
   const debtRows: any[] = [];
   let withOverdue = 0;
@@ -220,6 +272,7 @@ async function main() {
       created_date: c.created_date,
       debts: debtsCellValue(totals),
       chat_name: nameOf.get(c.agr_no) ?? c.agr_no, // preserve existing / seed new
+      manager: managerFor(c.agr_no), // existing wins; else auto-fill from sheet
     };
   });
 
@@ -236,7 +289,10 @@ async function main() {
   console.log(
     `\nDone. Clients updated: ${matched.length}` +
       (inserted ? `, inserted: ${inserted}` : "") +
-      `. Debts written for ${chatRows.length} chats (${withOverdue} with overdue).`
+      `. Debts written for ${chatRows.length} chats (${withOverdue} with overdue).` +
+      (sheetMgrByAgr.size > 0
+        ? ` Managers auto-filled: ${managersFilled} (from ${sheetMgrByAgr.size} in sheet; existing kept).`
+        : " Manager column not found in the sheet — managers left unchanged.")
   );
 }
 
