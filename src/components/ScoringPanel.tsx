@@ -1178,7 +1178,7 @@ export default function ScoringPanel({
         <table className="qa pairs sticky-head dense w-full">
           <thead>
             <tr>
-              <th className="corner bg-gray-100 min-w-[170px]">
+              <th className="corner bg-gray-100 min-w-[150px]">
                 № / Чат / Бухгалтер
               </th>
               <th className="text-center">Кто</th>
@@ -1861,7 +1861,7 @@ function ChatScoreRow({
       <tr className={`chat-start ${savedId ? "bg-green-100" : ""}`}>
         <td
           rowSpan={2}
-          className={`chat-info align-top min-w-[190px] max-w-[240px] ${
+          className={`chat-info align-top min-w-[150px] max-w-[210px] ${
             savedId ? "bg-green-100 border-l-8 border-green-600" : "bg-white"
           }`}
         >
@@ -2281,14 +2281,14 @@ function ChatScoreRow({
             <td key={c.id} className={`${aiCell} text-xs text-center`}>
               <div className="flex flex-col items-center gap-0.5">
                 <span
-                  className="block truncate w-[96px] mx-auto"
+                  className="block truncate w-[80px] mx-auto"
                   title={ai.monthly[c.id]?.status}
                 >
                   {ai.monthly[c.id]?.status || "—"}
                 </span>
                 {detected ? (
                   <span
-                    className="block h-[15px] w-[96px] truncate rounded px-1 text-[10px] leading-[15px] text-indigo-400"
+                    className="block h-[15px] w-[80px] truncate rounded px-1 text-[10px] leading-[15px] text-indigo-400"
                     title={`Авто-рассылка: ${detected}`}
                   >
                     🔍 {detected}
@@ -2305,7 +2305,7 @@ function ChatScoreRow({
           <BandChip band={ai.band} />
         </td>
         <td className={`${aiCell} text-xs italic text-gray-500`}>
-          <span className="block truncate max-w-[260px]" title={ai.note}>
+          <span className="block truncate max-w-[170px]" title={ai.note}>
             {ai.note}
           </span>
         </td>
@@ -2375,7 +2375,7 @@ function ChatScoreRow({
             <td key={c.id} className={`${youCell} text-center`}>
               <div className="flex flex-col items-center gap-0.5">
                 <select
-                  className="input w-[96px] text-xs"
+                  className="input w-[80px] text-xs"
                   value={monthly[c.id]?.status ?? ""}
                   onChange={(e) => changeMon(c.id, e.target.value)}
                   title={c.name}
@@ -2389,7 +2389,7 @@ function ChatScoreRow({
                 </select>
                 {savedManually ? (
                   <span
-                    className="block h-[15px] w-[96px] truncate rounded px-1 text-[10px] leading-[15px] text-green-700"
+                    className="block h-[15px] w-[80px] truncate rounded px-1 text-[10px] leading-[15px] text-green-700"
                     title="Сохранено вручную — действует каждый день до 28-го числа (сброс цикла рассылок)"
                   >
                     📌 сохранено
@@ -2403,7 +2403,7 @@ function ChatScoreRow({
                         ? `Авто-распознано из сообщений бухгалтера: «${detected}»`
                         : `Авто-распознано из сообщений: «${detected}». Нажмите, чтобы применить и сохранить до 28-го.`
                     }
-                    className={`block h-[15px] w-[96px] truncate rounded px-1 text-[10px] leading-[15px] ${
+                    className={`block h-[15px] w-[80px] truncate rounded px-1 text-[10px] leading-[15px] ${
                       matches
                         ? "text-green-600 cursor-default"
                         : "bg-amber-50 text-amber-700 hover:bg-amber-100"
@@ -2558,7 +2558,7 @@ function RoleQaRow({
   return (
     <tr className={savedId ? "bg-green-50/50" : "bg-violet-50/30"}>
       {/* Role + person — sits in the first column (scrolls with the grid). */}
-      <td className="bg-white align-top min-w-[170px]">
+      <td className="bg-white align-top min-w-[150px]">
         <div className="flex items-start gap-1.5">
           <span className="pt-1" title={info.label}>{info.icon}</span>
           <PersonPicker
