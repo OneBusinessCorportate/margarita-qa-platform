@@ -169,6 +169,24 @@ const NEG_SEND_RU =
 const NEG_SEND_HY =
   /չ(?:ուղարկ|ներկայաց|հանձն|տեղեկաց|հիշեց|առաք|ցր)|չ(?:ի|ե[մսնք]{1,2}|կա)\s+(?:[^\s]+\s+){0,2}?(?:ուղարկ|ներկայաց|հանձն|տեղեկաց|հիշեց|առաք|ցր)/u;
 
+// --- Generic mailing / notification marker (v12 — SOFT catch-all) ------------
+// The single, deliberately BROAD rule that guarantees every рассылка type is
+// identified even when no specific action verb matched: an explicit mailing /
+// notification word next to a category keyword IS that category's рассылка.
+// Маргарита: рассылка (по налогам / зарплате / документам / долгам) часто НЕ
+// подтягивается автоматически и приходится отмечать вручную — этот мягкий catch
+// закрывает пробел для формулировок-вариантов («оповещаем», «извещаем»,
+// «информационное письмо», «напоминание» и т.п.), которых нет в узких списках
+// глаголов. Негативные охранники ниже не дают «рассылку не отправил» засчитаться.
+//   RU: рассылка / уведомление / напоминание / информируем / оповещаем / извещаем
+//   HY: տեղեկացնում / հիշեցնում / ծանուցում / իրազեկում
+//   EN: mailing / newsletter / notification / notice / reminder / inform
+const MAILING_RU =
+  /(рассыл|разосл|разошл|уведомл|уведомил|уведомля|напоминани|напоминаем|напоминаю|напомнил|напомин|информир|информацион|оповещ|извещ|оповестил|известил)/i;
+const MAILING_HY = /(տեղեկացն|տեղեկացր|հիշեցն|ծանուց|իրազեկ)/iu;
+const MAILING_EN =
+  /\b(mailing|newsletter|notification|notify|notice|remind(?:er|ing|s|ed)?|inform(?:ing|ed|ation)?)\b/i;
+
 const RULES: Rule[] = [
   // --- main_taxes (Russian) -------------------------------------------------
   // Taxes are *sent*, never received → the negation guard is scoped to the
@@ -336,6 +354,28 @@ const RULES: Rule[] = [
   { category: "debts", type: "paid", all: [KW.debts_en, PAID_EN], none: [NEG_EN] },
   { category: "debts", type: "call", all: [KW.debts_en, CALL_EN] },
   { category: "debts", type: "req", all: [KW.debts_en, /\b(wrote|reminded|messaged|reminder|notified|sent\s+a\s+reminder)\b/i] },
+
+  // --- v12: SOFT catch-all — a category keyword + a generic mailing word is ---
+  // enough to identify the рассылка, so no type is ever missed for lack of a
+  // specific verb. Sent categories (taxes/salary) → done, guarded by the scoped
+  // send-negation; requested categories (docs/debts) → req. Onboarding welcome
+  // templates are still stripped of done/paid in classifyMessage, so a mailing
+  // word inside a welcome message can never become «Отправил»/«Получил».
+  // Russian:
+  { category: "main_taxes", type: "done", all: [KW.taxes_ru, MAILING_RU], none: [NEG_SEND_RU, SVC_PAY_REMINDER] },
+  { category: "salary", type: "done", all: [KW.salary_ru, MAILING_RU], none: [NEG_SEND_RU] },
+  { category: "primary_docs", type: "req", all: [KW.primary_ru, MAILING_RU], none: [NEG_DONE_RU] },
+  { category: "debts", type: "req", all: [KW.debts_ru, MAILING_RU] },
+  // Armenian:
+  { category: "main_taxes", type: "done", all: [KW.taxes_hy, MAILING_HY], none: [NEG_SEND_HY] },
+  { category: "salary", type: "done", all: [KW.salary_hy, MAILING_HY], none: [NEG_SEND_HY] },
+  { category: "primary_docs", type: "req", all: [KW.primary_hy, MAILING_HY] },
+  { category: "debts", type: "req", all: [KW.debts_hy, MAILING_HY] },
+  // English:
+  { category: "main_taxes", type: "done", all: [KW.taxes_en, MAILING_EN], none: [NEG_EN] },
+  { category: "salary", type: "done", all: [KW.salary_en, MAILING_EN], none: [NEG_EN] },
+  { category: "primary_docs", type: "req", all: [KW.primary_en, MAILING_EN] },
+  { category: "debts", type: "req", all: [KW.debts_en, MAILING_EN] },
 ];
 
 /**
