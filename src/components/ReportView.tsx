@@ -114,7 +114,7 @@ export default function ReportView({
           <div className="text-sm font-semibold text-gray-700">Сервис Бухгалтерии</div>
           <div className="flex items-baseline gap-3">
             <div className="text-5xl font-bold tabular-nums text-blue-700">
-              {report.serviceQualityPct}%
+              {report.totals.evaluatedChats > 0 ? `${report.serviceQualityPct}%` : "—"}
             </div>
             {trend && trend.arrow !== "flat" && (
               <span
@@ -161,7 +161,9 @@ export default function ReportView({
                 <th className="px-3 py-2 text-center font-medium">
                   <span title="Предупреждения / нарушения">⚠</span>
                 </th>
-                <th className="px-3 py-2 text-center font-medium">N</th>
+                <th className="px-3 py-2 text-center font-medium">
+                  <span title="Чатов прошло QA (проверено) у этого бухгалтера">Чатов</span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -199,7 +201,7 @@ export default function ReportView({
                         <span className="text-gray-300">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-center tabular-nums text-gray-500">{a.count}</td>
+                    <td className="px-3 py-2 text-center tabular-nums text-gray-500" title="Чатов прошло QA">{a.chatsChecked}</td>
                   </tr>
                 );
               })}

@@ -515,3 +515,82 @@ describe("detection is deterministic (idempotent re-sync yields identical signal
     assert.deepEqual(detectAllSignals(text), detectAllSignals(text));
   });
 });
+
+// ---------------------------------------------------------------------------
+// v11 — standard department mailing templates (Маргарита: рассылка по оплате
+// услуг/долгам + ЗП/документы часто не подтягивались автоматически).
+// ---------------------------------------------------------------------------
+describe("v11 — service-payment reminder (оплата услуг, до 5 числа) → debts", () => {
+  const svcPayReminders = [
+    "Оплатите бухгалтерские услуги до 5 числа — мы учтем их в расходах текущего периода и снизим налоговую нагрузку.",
+    "Напоминаем о необходимости произвести оплату для продолжения работы. Реквизиты: р/с 1930097970708600, банк Converse Bank, назначение: payment for accountant service.",
+    "Для соблюдения сроков просим оплатить услуги до 5 числа. Отчетность сдается только после оплаты услуг.",
+  ];
+  for (const text of svcPayReminders) {
+    it(`debts/req fires for service-payment reminder «${text.slice(0, 40)}…»`, () => {
+      assert.ok(
+        detectAllSignals(text).some((s) => s.category === "debts" && s.type === "req"),
+        `expected debts/req for «${text}»`
+      );
+    });
+    it(`service-payment reminder is NOT falsely counted as taxes sent «${text.slice(0, 40)}…»`, () => {
+      assert.notEqual(
+        statusOf("main_taxes", text),
+        "Отправил",
+        "payment-for-services reminder must not be classified as a tax mailing"
+      );
+    });
+  }
+
+  it("bank purpose line «payment for accountant service» alone fires debts/req", () => {
+    assert.equal(statusOf("debts", "payment for accountant service"), "1-й написал");
+  });
+
+  it("a genuine tax mailing with реквизиты is still «Отправил» (guard doesn't over-suppress)", () => {
+    const text = "Налоги за период необходимо оплатить на расчётные счета. Реквизиты во вложении.";
+    assert.equal(statusOf("main_taxes", text), "Отправил");
+  });
+
+  it("welcome template field «Срок оплаты услуг:» is NOT a debts reminder", () => {
+    const text =
+      "Здравствуйте! Меня зовут Анна, я ваш ведущий бухгалтер. Налоговая система: УСН. Срок оплаты услуг: до 5 числа. Спасибо вам за доверие и выбор бухгалтерского обслуживания.";
+    assert.ok(!detectAllSignals(text).some((s) => s.category === "debts" && s.type === "req"));
+  });
+});
+
+describe("v11 — salary send templates (до 10 числа) → «Получил»", () => {
+  const salaryDone = [
+    "Направляю таблицу по заработным платам, также сообщаю, что оплаты проставлены в банке.",
+    "Перечислил заработную плату сотрудникам за период.",
+    "Выплаты заработной платы произведены.",
+    "Сообщаем, что начисление заработной платы за текущий период не производится в связи с отсутствием сотрудников в компании.",
+  ];
+  for (const text of salaryDone) {
+    it(`salary «Получил» for «${text.slice(0, 40)}…»`, () => {
+      assert.equal(statusOf("salary", text), "Получил", `expected «Получил» for «${text}»`);
+    });
+  }
+
+  it("«зарплату не перечислил» stays not-done (negation guard holds)", () => {
+    assert.notEqual(statusOf("salary", "Зарплату за месяц ещё не перечислил."), "Получил");
+  });
+});
+
+describe("v11 — document request template (до 28 числа) → req", () => {
+  const docsRequest =
+    "Просим вас предоставить следующую информацию за июль: информация по выставляемым счетам (инвойс, акт, счет-фактура), банковская выписка, данные для расчета заработной платы.";
+  it("primary_docs/req fires for «Просим предоставить … инвойс, акт»", () => {
+    assert.ok(detectAllSignals(docsRequest).some((s) => s.category === "primary_docs" && s.type === "req"));
+  });
+  it("salary/req fires for «данные для расчета заработной платы»", () => {
+    assert.ok(detectAllSignals(docsRequest).some((s) => s.category === "salary" && s.type === "req"));
+  });
+});
+
+describe("v11 — report-submitted template (до 15 числа) → taxes «Отправил»", () => {
+  it("«Отчет подготовлен и сдан … Налоги выставлены в банке»", () => {
+    const text =
+      "Отчет подготовлен и сдан. Следующим сообщением направляю расчет налогов. Налоги выставлены в банке, прошу зайти и подтвердить оплаты.";
+    assert.equal(statusOf("main_taxes", text), "Отправил");
+  });
+});

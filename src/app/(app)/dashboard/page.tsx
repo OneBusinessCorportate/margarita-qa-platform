@@ -16,7 +16,6 @@ import DashboardFilters from "@/components/DashboardFilters";
 import ReportView from "@/components/ReportView";
 import WeeklyScores from "@/components/WeeklyScores";
 import SaveReportButton from "@/components/SaveReportButton";
-import ExportPdfButton from "@/components/ExportPdfButton";
 import AccountantViolationBreakdown from "@/components/AccountantViolationBreakdown";
 import MargaritaSummary from "@/components/MargaritaSummary";
 import EmployeeAuditSummary from "@/components/EmployeeAuditSummary";
@@ -200,7 +199,6 @@ export default async function DashboardPage({
       )}
 
       <div className="flex flex-wrap justify-end gap-2 no-print">
-        <ExportPdfButton />
         {!snapshot && <SaveReportButton filters={filters} />}
       </div>
 

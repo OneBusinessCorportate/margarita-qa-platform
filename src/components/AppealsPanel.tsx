@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Appeal } from "@/lib/appeals-data";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -22,6 +22,11 @@ function fmt(d: string | null): string {
 
 export default function AppealsPanel({ initialAppeals }: { initialAppeals: Appeal[] }) {
   const [appeals, setAppeals] = useState<Appeal[]>(initialAppeals);
+  // Re-sync when AutoRefresh streams fresh props (seeded once → resolved/new
+  // appeals only showed after a full reload). Mirrors ScoringPanel.
+  useEffect(() => {
+    setAppeals(initialAppeals);
+  }, [initialAppeals]);
   const [statusFilter, setStatusFilter] = useState<string>("pending");
   const [accountantFilter, setAccountantFilter] = useState<string>("");
   const [comments, setComments] = useState<Record<string, string>>({});

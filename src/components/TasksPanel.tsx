@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   SINGLE_TASK_STATUSES,
   TASK_PRIORITIES,
@@ -14,6 +14,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 interface Draft {
   chat_agr_no: string;
+  /** Кого назначаем/оцениваем — выбирается ПЕРВЫМ (бухгалтер или менеджер). */
+  subject: "accountant" | "manager";
   accountant: string;
   manager: string;
   description: string;
@@ -28,6 +30,7 @@ interface Draft {
 function blankDraft(): Draft {
   return {
     chat_agr_no: "",
+    subject: "accountant",
     accountant: "",
     manager: "",
     description: "",
@@ -50,6 +53,11 @@ export default function TasksPanel({
   initialTasks: Task[];
 }) {
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  // Re-sync when AutoRefresh streams fresh server props (state was seeded once →
+  // new/edited tasks only showed after a full reload). Mirrors ScoringPanel.
+  useEffect(() => {
+    setTasks(initialTasks);
+  }, [initialTasks]);
   const [draft, setDraft] = useState<Draft>(blankDraft());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -111,8 +119,10 @@ export default function TasksPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_agr_no: draft.chat_agr_no,
-          accountant: draft.accountant || null,
-          manager: draft.manager || null,
+          // Send ONLY the chosen subject — picking «Менеджер» no longer also
+          // submits an auto-filled accountant (QA complaint).
+          accountant: draft.subject === "accountant" ? draft.accountant || null : null,
+          manager: draft.subject === "manager" ? draft.manager || null : null,
           description: draft.description || null,
           due_date_original: draft.due_date_original || null,
           due_date_postponed: draft.due_date_postponed || null,
@@ -232,8 +242,10 @@ export default function TasksPanel({
                     <div className="font-medium">№ {t.chat_agr_no}</div>
                     <div className="text-gray-500 text-xs">{chat?.chat_name ?? "—"}</div>
                     <div className="text-gray-400 text-xs">
-                      Б: {t.accountant ?? "—"}
-                      {t.manager ? <> · М: {t.manager}</> : null}
+                      {t.accountant ? <>Б: {t.accountant}</> : null}
+                      {t.accountant && t.manager ? " · " : null}
+                      {t.manager ? <>М: {t.manager}</> : null}
+                      {!t.accountant && !t.manager ? "—" : null}
                     </div>
                   </td>
                   <td className="text-xs text-gray-700">{t.description}</td>
@@ -319,31 +331,59 @@ export default function TasksPanel({
                     </option>
                   ))}
                 </select>
-                <select
-                  className="input w-full"
-                  value={draft.accountant}
-                  onChange={(e) => setDraft({ ...draft, accountant: e.target.value })}
-                >
-                  <option value="">— бухгалтер —</option>
-                  {accountants.map((a) => (
-                    <option key={a.name} value={a.name}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-                {/* Задачу можно назначить и менеджеру (тот же пул сотрудников). */}
-                <select
-                  className="input w-full"
-                  value={draft.manager}
-                  onChange={(e) => setDraft({ ...draft, manager: e.target.value })}
-                >
-                  <option value="">— менеджер —</option>
-                  {accountants.map((a) => (
-                    <option key={a.name} value={a.name}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
+                {/* СНАЧАЛА выбираем субъект (QA: «сначала выбрать — Менеджер или
+                    конкретный бухгалтер»); ниже показываем ТОЛЬКО его селектор. */}
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setDraft({ ...draft, subject: "accountant" })}
+                    className={`flex-1 rounded border px-2 py-1 text-xs ${
+                      draft.subject === "accountant"
+                        ? "border-sky-500 bg-sky-50 text-sky-700 font-medium"
+                        : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    Бухгалтер
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDraft({ ...draft, subject: "manager" })}
+                    className={`flex-1 rounded border px-2 py-1 text-xs ${
+                      draft.subject === "manager"
+                        ? "border-sky-500 bg-sky-50 text-sky-700 font-medium"
+                        : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    Менеджер
+                  </button>
+                </div>
+                {draft.subject === "accountant" ? (
+                  <select
+                    className="input w-full"
+                    value={draft.accountant}
+                    onChange={(e) => setDraft({ ...draft, accountant: e.target.value })}
+                  >
+                    <option value="">— бухгалтер —</option>
+                    {accountants.map((a) => (
+                      <option key={a.name} value={a.name}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <select
+                    className="input w-full"
+                    value={draft.manager}
+                    onChange={(e) => setDraft({ ...draft, manager: e.target.value })}
+                  >
+                    <option value="">— менеджер —</option>
+                    {accountants.map((a) => (
+                      <option key={a.name} value={a.name}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </td>
               <td>
                 <input

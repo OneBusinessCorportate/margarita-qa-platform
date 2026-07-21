@@ -25,6 +25,7 @@ export interface AccountantScore {
   accountant: string;
   avgScore: number; // 0..100, -1 means "no evaluations"
   count: number;
+  chatsChecked: number; // distinct chats that passed QA for this accountant
   lowCount: number; // Плохо + Критично
   critCount: number; // только Критично — чтобы критичный чат не терялся за средним
 }
@@ -274,12 +275,17 @@ function criticalReasons(ev: Evaluation): string[] {
  * in the report (item 3).
  */
 export function perPersonScores(evals: Evaluation[]): AccountantScore[] {
-  const byPerson = new Map<string, { sum: number; count: number; low: number; crit: number }>();
+  const byPerson = new Map<
+    string,
+    { sum: number; count: number; low: number; crit: number; chats: Set<string> }
+  >();
   for (const e of evals) {
     const key = e.accountant ?? "—";
-    const agg = byPerson.get(key) ?? { sum: 0, count: 0, low: 0, crit: 0 };
+    const agg =
+      byPerson.get(key) ?? { sum: 0, count: 0, low: 0, crit: 0, chats: new Set<string>() };
     agg.sum += e.total_score;
     agg.count += 1;
+    if (e.chat_agr_no) agg.chats.add(e.chat_agr_no);
     const band = bandFor(e.total_score);
     if (band === "Плохо" || band === "Критично") agg.low += 1;
     if (band === "Критично") agg.crit += 1;
@@ -290,6 +296,7 @@ export function perPersonScores(evals: Evaluation[]): AccountantScore[] {
       accountant,
       avgScore: a.count ? Math.round((a.sum / a.count) * 10) / 10 : -1,
       count: a.count,
+      chatsChecked: a.chats.size,
       lowCount: a.low,
       critCount: a.crit,
     }))
@@ -375,13 +382,15 @@ export function buildReport(
   // Per-accountant chat scores.
   const byAcc = new Map<
     string,
-    { sum: number; count: number; low: number; crit: number }
+    { sum: number; count: number; low: number; crit: number; chats: Set<string> }
   >();
   for (const e of evals) {
     const key = e.accountant ?? "—";
-    const agg = byAcc.get(key) ?? { sum: 0, count: 0, low: 0, crit: 0 };
+    const agg =
+      byAcc.get(key) ?? { sum: 0, count: 0, low: 0, crit: 0, chats: new Set<string>() };
     agg.sum += e.total_score;
     agg.count += 1;
+    if (e.chat_agr_no) agg.chats.add(e.chat_agr_no);
     const band = bandFor(e.total_score);
     if (band === "Плохо" || band === "Критично") agg.low += 1;
     if (band === "Критично") agg.crit += 1;
@@ -392,6 +401,7 @@ export function buildReport(
       accountant: name,
       avgScore: a.count ? Math.round((a.sum / a.count) * 10) / 10 : -1,
       count: a.count,
+      chatsChecked: a.chats.size,
       lowCount: a.low,
       critCount: a.crit,
     }))

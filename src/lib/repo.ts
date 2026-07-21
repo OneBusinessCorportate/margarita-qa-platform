@@ -37,11 +37,13 @@ import type {
   Evaluation,
   EvaluationScores,
   NewEvaluationInput,
+  NewPublishedReportInput,
   NewScoreOverrideInput,
   NewSystemTaskInput,
   NewTaskInput,
   NewViolationAppealInput,
   NewViolationInput,
+  PublishedReport,
   ReviewStatus,
   ScoreOverride,
   SystemTaskPatch,
@@ -1692,6 +1694,53 @@ export async function createReportSnapshot(
     return data as ReportSnapshot;
   }
   store().reportSnapshots.unshift(row);
+  return row;
+}
+
+// --- Published reports (Margarita-approved daily report for accountants) -----
+
+/** The latest report Margarita approved / published (shown to accountants). */
+export async function getLatestPublishedReport(): Promise<PublishedReport | null> {
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.publishedReports)
+      .select("*")
+      .order("published_at", { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    return (data?.[0] ?? null) as PublishedReport | null;
+  }
+  return store().publishedReports[0] ?? null;
+}
+
+/** Publish (approve) a report — inserts a new append-only row. */
+export async function publishReport(
+  input: NewPublishedReportInput,
+  publishedBy: string | null
+): Promise<PublishedReport> {
+  const now = new Date().toISOString();
+  const row: PublishedReport = {
+    id: randomUUID(),
+    title: input.title.trim() || "Ежедневный отчёт бухгалтерии",
+    body: input.body,
+    report_date: input.report_date ?? null,
+    period_label: input.period_label ?? null,
+    published_by: publishedBy,
+    published_at: now,
+    created_at: now,
+  };
+  const sb = getServiceClient();
+  if (sb) {
+    const { data, error } = await sb
+      .from(TABLES.publishedReports)
+      .insert(row)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as PublishedReport;
+  }
+  store().publishedReports.unshift(row);
   return row;
 }
 

@@ -7,6 +7,7 @@ import type {
   ActiveInclusion,
   Chat,
   Evaluation,
+  PublishedReport,
   ScoreOverride,
   Task,
   Violation,
@@ -39,6 +40,7 @@ interface Store {
   activeExclusions: ActiveExclusion[];
   activeInclusions: ActiveInclusion[];
   reportSnapshots: ReportSnapshot[];
+  publishedReports: PublishedReport[];
   scoreOverrides: ScoreOverride[];
 }
 
@@ -59,6 +61,7 @@ export function store(): Store {
       activeExclusions: [],
       activeInclusions: [],
       reportSnapshots: [],
+      publishedReports: [],
       scoreOverrides: [],
     };
   }

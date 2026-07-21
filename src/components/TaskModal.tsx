@@ -37,8 +37,12 @@ export default function TaskModal({
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState("Medium");
   const [status, setStatus] = useState<string>("-");
+  // Кого оцениваем/назначаем — СНАЧАЛА выбираем субъект (QA: «Логичнее сделать
+  // так, чтобы сначала можно было выбрать, кого я оцениваю — Менеджер или
+  // конкретного бухгалтера»). Раньше поля бухгалтер+менеджер были всегда оба и
+  // бухгалтер подставлялся из чата, даже когда задача про менеджера.
+  const [subject, setSubject] = useState<"accountant" | "manager">("accountant");
   const [acc, setAcc] = useState(accountant ?? "");
-  // Задачу можно назначить и менеджеру (запрос QA): предзаполняем из чата.
   const [mgr, setMgr] = useState(manager ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,8 +78,10 @@ export default function TaskModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_agr_no: chatAgrNo,
-          accountant: acc || null,
-          manager: mgr || null,
+          // Assign ONLY the chosen subject — a manager task no longer drags an
+          // auto-filled accountant along (and vice-versa).
+          accountant: subject === "accountant" ? acc || null : null,
+          manager: subject === "manager" ? mgr || null : null,
           description: description || null,
           due_date_original: dueDate || null,
           due_date_postponed: duePostponed || null,
@@ -131,7 +137,34 @@ export default function TaskModal({
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3">
+            <Field label="Кого оцениваем">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSubject("accountant")}
+                  className={`flex-1 rounded border px-3 py-1.5 text-sm ${
+                    subject === "accountant"
+                      ? "border-sky-500 bg-sky-50 text-sky-700 font-medium"
+                      : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  Бухгалтер
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubject("manager")}
+                  className={`flex-1 rounded border px-3 py-1.5 text-sm ${
+                    subject === "manager"
+                      ? "border-sky-500 bg-sky-50 text-sky-700 font-medium"
+                      : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  Менеджер
+                </button>
+              </div>
+            </Field>
+
+            {subject === "accountant" ? (
               <Field label="Бухгалтер">
                 <input
                   className="input w-full"
@@ -140,6 +173,7 @@ export default function TaskModal({
                   placeholder="имя бухгалтера"
                 />
               </Field>
+            ) : (
               <Field label="Менеджер">
                 <input
                   className="input w-full"
@@ -148,7 +182,7 @@ export default function TaskModal({
                   placeholder="имя менеджера"
                 />
               </Field>
-            </div>
+            )}
 
             <Field label="Описание">
               <input
