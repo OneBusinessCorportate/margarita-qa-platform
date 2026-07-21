@@ -226,7 +226,10 @@ export default async function MessagesPage({
       to: resolved.to,
       accountant: filters.accountant,
     });
-    margaritaWorkMessage = buildMargaritaWorkReportMessage(flow, { date: resolved.to });
+    margaritaWorkMessage = buildMargaritaWorkReportMessage(flow, {
+      date: resolved.to,
+      activeChats: report.totals.activeChats,
+    });
   } catch (e) {
     margaritaWorkError = e instanceof Error ? e.message : "Не удалось загрузить данные";
   }

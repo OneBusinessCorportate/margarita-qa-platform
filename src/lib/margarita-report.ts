@@ -11,7 +11,7 @@
 // (buildViolationWorkflowReport) as /work-report and /dashboard. No AI, no
 // static Excel exports.
 
-import { getViolationWorkflowReport } from "./repo";
+import { getViolationWorkflowReport, getReport } from "./repo";
 import { buildMargaritaWorkReportMessage } from "./templates";
 import type { ViolationWorkflowReport } from "./appeals-report";
 
@@ -103,7 +103,16 @@ export async function assembleMargaritaReport(
   opts: MargaritaWindowOptions = {}
 ): Promise<AssembledMargaritaReport> {
   const window = resolveMargaritaWindow(opts);
-  const report = await getViolationWorkflowReport(window);
-  const message = buildMargaritaWorkReportMessage(report, { date: window.to });
+  // Both loads share the same window/accountant scope. getReport gives the
+  // «активных чатов» denominator (totals.activeChats) from the SAME liveness
+  // calc as the dashboard/report, so «Проверено чатов: N из M» always agrees.
+  const [report, dailyReport] = await Promise.all([
+    getViolationWorkflowReport(window),
+    getReport({ from: window.from, to: window.to, accountant: window.accountant }),
+  ]);
+  const message = buildMargaritaWorkReportMessage(report, {
+    date: window.to,
+    activeChats: dailyReport.totals.activeChats,
+  });
   return { window, report, message };
 }
