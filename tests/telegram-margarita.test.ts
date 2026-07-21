@@ -56,6 +56,26 @@ test("header and totals are rendered", () => {
   assert.match(msg, /— Отклонено: 1/);
 });
 
+test("«!!!» alert lines show the all-time backlog, not the day's slice", () => {
+  const msg = buildMargaritaWorkReportMessage(
+    // Day is quiet: 0 unprocessed / 0 pending FOR THE DAY...
+    report({ chatsChecked: 5, violationsCreated: 0, appealsPending: 0, unprocessedViolations: 0 }),
+    // ...but the standing backlog is 129 tickets and 3 appeals.
+    { activeChats: 40, unprocessedBacklog: 129, pendingBacklog: 3 }
+  );
+  assert.match(msg, /!!! Тикеты без реакций бухгалтеров: 129/);
+  assert.match(msg, /!!! Аппеляций без реакции Маргариты: 3/);
+});
+
+test("without a backlog option the «!!!» lines fall back to the day's values", () => {
+  const msg = buildMargaritaWorkReportMessage(
+    report({ unprocessedViolations: 2, appealsPending: 1 }),
+    { activeChats: 40 }
+  );
+  assert.match(msg, /!!! Тикеты без реакций бухгалтеров: 2/);
+  assert.match(msg, /!!! Аппеляций без реакции Маргариты: 1/);
+});
+
 test("active chats unknown → «…» and 0% (never divide by an unknown)", () => {
   const msg = buildMargaritaWorkReportMessage(
     report({ chatsChecked: 3, violationsCreated: 2 })

@@ -221,14 +221,21 @@ export default async function MessagesPage({
   let margaritaWorkMessage: string | null = null;
   let margaritaWorkError: string | null = null;
   try {
-    const flow = await getViolationWorkflowReport({
-      from: resolved.from,
-      to: resolved.to,
-      accountant: filters.accountant,
-    });
+    const [flow, backlog] = await Promise.all([
+      getViolationWorkflowReport({
+        from: resolved.from,
+        to: resolved.to,
+        accountant: filters.accountant,
+      }),
+      // ВЕСЬ непогашенный бэклог (без окна дат) — для строк-алертов «!!! без
+      // реакции», чтобы превью на «Сообщениях» совпадало с тем, что уходит в TG.
+      getViolationWorkflowReport({ accountant: filters.accountant }),
+    ]);
     margaritaWorkMessage = buildMargaritaWorkReportMessage(flow, {
       date: resolved.to,
       activeChats: report.totals.activeChats,
+      unprocessedBacklog: backlog.unprocessedViolations,
+      pendingBacklog: backlog.appealsPending,
     });
   } catch (e) {
     margaritaWorkError = e instanceof Error ? e.message : "Не удалось загрузить данные";
