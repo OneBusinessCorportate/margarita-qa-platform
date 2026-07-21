@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   SYSTEM_TASK_PRIORITIES,
   SYSTEM_TASK_PRIORITY_LABEL,
@@ -67,6 +67,11 @@ export default function SystemTasksPanel({
   initialTasks: AccountantSystemTask[];
 }) {
   const [tasks, setTasks] = useState<AccountantSystemTask[]>(initialTasks);
+  // Re-sync when AutoRefresh streams fresh server props (state was seeded once →
+  // new/edited tasks only showed after a full reload). Mirrors ScoringPanel.
+  useEffect(() => {
+    setTasks(initialTasks);
+  }, [initialTasks]);
   const [draft, setDraft] = useState<Draft>(blankDraft());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

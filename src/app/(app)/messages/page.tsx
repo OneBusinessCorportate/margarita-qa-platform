@@ -24,6 +24,7 @@ import { dailyViolationRows } from "@/lib/violation-report";
 import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
 import PrintComparisonButton from "@/components/PrintComparisonButton";
+import PublishReportBox from "@/components/PublishReportBox";
 
 export const dynamic = "force-dynamic";
 
@@ -312,28 +313,25 @@ export default async function MessagesPage({
         </p>
       </div>
 
-      {/* Analytics message card */}
+      {/* Editable + approvable daily report (replaces the old PDF). Margarita
+          reviews/corrects the generated text, then publishes it — accountants
+          see ONLY the approved version in kk-accountants-feedback-form. */}
       <div className="card p-3 space-y-2">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-medium">Аналитика качества</div>
+          <div className="text-sm font-medium">
+            Ежедневный отчёт бухгалтерии — проверьте, отредактируйте и опубликуйте
+          </div>
           <div className="flex gap-2">
             <CopyButton label="Копировать отчёт" className="btn-primary" text={reportMessage} />
-            <a
-              className="btn-secondary"
-              href={`/api/report/pdf?from=${resolved.from}&to=${resolved.to}&period=daily`}
-            >
-              📄 PDF (день)
-            </a>
-            <SendTelegramButton
-              text={reportMessage}
-              configured={botReady}
-              pdfPeriod={{ from: resolved.from, to: resolved.to, period: "daily" }}
-            />
+            <SendTelegramButton text={reportMessage} configured={botReady} />
           </div>
         </div>
-        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
-{reportMessage}
-        </pre>
+        <PublishReportBox
+          initialText={reportMessage}
+          title="Ежедневный отчёт бухгалтерии"
+          reportDate={resolved.to}
+          periodLabel={periodLabel}
+        />
       </div>
 
       {/* Апелляции и QA Маргариты — апелляции и ознакомления (Phase 6). */}
@@ -379,17 +377,10 @@ export default async function MessagesPage({
           </div>
           <div className="flex gap-2">
             <CopyButton label="Копировать отчёт" className="btn-primary" text={weeklyMessage} />
-            <a
-              className="btn-secondary"
-              href={`/api/report/pdf?from=${resolved.from}&to=${resolved.to}&period=weekly`}
-            >
-              📄 PDF (неделя)
-            </a>
             <SendTelegramButton
               text={weeklyMessage}
               configured={botReady}
               label="Отправить в Telegram"
-              pdfPeriod={{ from: resolved.from, to: resolved.to, period: "weekly" }}
             />
           </div>
         </div>

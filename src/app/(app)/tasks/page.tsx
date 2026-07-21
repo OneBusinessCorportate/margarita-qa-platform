@@ -1,4 +1,5 @@
 import TasksPanel from "@/components/TasksPanel";
+import AutoRefresh from "@/components/AutoRefresh";
 import { listAccountants, listChats, listTasks } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
@@ -11,13 +12,16 @@ export default async function TasksPage() {
   ]);
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Задачи</h1>
-        <p className="text-sm text-gray-500">
-          Задачи с дедлайном (напр. «вернётся через 2 дня») и повторяющиеся задачи.
-          Повторяющаяся задача закрывается только после подтверждения QA. Новая — в
-          нижней строке.
-        </p>
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-semibold">Задачи</h1>
+          <p className="text-sm text-gray-500">
+            Задачи с дедлайном (напр. «вернётся через 2 дня») и повторяющиеся задачи.
+            Повторяющаяся задача закрывается только после подтверждения QA. Новая — в
+            нижней строке.
+          </p>
+        </div>
+        <AutoRefresh />
       </div>
       <TasksPanel
         chats={chats}

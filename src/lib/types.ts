@@ -395,6 +395,29 @@ export interface ActiveInclusion {
  * новая/комментарий). A manual override takes priority over the auto-computed
  * evaluation total for that (chat, day) in the dashboard, reports and PDF.
  */
+/**
+ * A daily report AFTER Margarita edited + approved it — the text the accountants
+ * see (in kk-accountants-feedback-form) instead of the old auto-generated PDF.
+ * Append-only; the latest by published_at is the current report.
+ */
+export interface PublishedReport {
+  id: string;
+  title: string;
+  body: string;
+  report_date: string | null; // ISO date the report covers
+  period_label: string | null;
+  published_by: string | null;
+  published_at: string;
+  created_at: string;
+}
+
+export interface NewPublishedReportInput {
+  title: string;
+  body: string;
+  report_date?: string | null;
+  period_label?: string | null;
+}
+
 export interface ScoreOverride {
   id: string;
   chat_agr_no: string;

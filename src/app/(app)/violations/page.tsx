@@ -1,4 +1,5 @@
 import ViolationsPanel from "@/components/ViolationsPanel";
+import AutoRefresh from "@/components/AutoRefresh";
 import { listAccountants, listChats, listViolations } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
@@ -11,11 +12,14 @@ export default async function ViolationsPage() {
   ]);
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Нарушения</h1>
-        <p className="text-sm text-gray-500">
-          Журнал нарушений. Новая запись — в нижней строке.
-        </p>
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-semibold">Нарушения</h1>
+          <p className="text-sm text-gray-500">
+            Журнал нарушений. Новая запись — в нижней строке.
+          </p>
+        </div>
+        <AutoRefresh />
       </div>
       <ViolationsPanel
         accountants={accountants.map((a) => a.name)}

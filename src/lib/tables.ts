@@ -20,6 +20,7 @@ export const TABLES = {
   activeExclusions: `${PREFIX}active_exclusions`,
   activeInclusions: `${PREFIX}active_inclusions`,
   reportSnapshots: `${PREFIX}report_snapshots`,
+  publishedReports: `${PREFIX}published_reports`,
   chatActivity: `${PREFIX}chat_activity`,
   unanswered: `${PREFIX}unanswered`,
   unansweredLabels: `${PREFIX}unanswered_labels`,

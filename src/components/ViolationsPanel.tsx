@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   VIOLATION_SEVERITIES,
   violationTypeOptions,
@@ -71,6 +71,14 @@ export default function ViolationsPanel({
   initialViolations: Violation[];
 }) {
   const [rows, setRows] = useState<Violation[]>(initialViolations);
+  // Re-sync the list when AutoRefresh streams fresh server props. Without this
+  // the state is seeded ONCE and a newly-added нарушение (and its комментарий)
+  // only appeared after a FULL browser reload — Маргарита: «приходится по
+  // несколько раз обновлять страницу; при добавлении нарушения комментарий не
+  // отображается». Mirrors the ScoringPanel prop→state re-sync.
+  useEffect(() => {
+    setRows(initialViolations);
+  }, [initialViolations]);
   const [draft, setDraft] = useState<Draft>(blankDraft());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -162,10 +162,11 @@ export interface DailyReportRow {
 }
 
 /**
- * Structured body of the daily accounting report, shared by the Telegram
- * message (buildReportMessage) and the daily PDF (buildReportPdf, mode "daily")
- * so the two ALWAYS agree: same service %, same «Звезда дня» and the same
- * нарушения priced by the ONE fine engine (groupNarusheniya). Changing the
+ * Structured body of the daily accounting report, rendered as the Telegram
+ * message (buildReportMessage) AND as the editable/approved report shown to
+ * accountants (PublishReportBox → mqa_published_reports). The PDF was retired;
+ * this ONE model keeps the service %, «Звезда дня» and the нарушения priced by
+ * the single fine engine (groupNarusheniya) consistent everywhere. Changing the
  * daily report means changing this model once — both outputs follow, so PDF and
  * message can never drift apart.
  *
@@ -179,6 +180,14 @@ export interface DailyReportModel {
   dateLabel: string;
   /** «Общий уровень сервиса» percent for the department. */
   servicePct: number;
+  /**
+   * Были ли вообще проверки (оценки) за период. Когда нет — «Общий уровень
+   * сервиса» показывается как «—», а не «0%» (иначе пустой день читается как
+   * катастрофический сервис — жалоба Маргариты: «0% не соответствует данным»).
+   */
+  serviceHasData: boolean;
+  /** Проверено чатов (QA) по каждому бухгалтеру — только у кого > 0. */
+  checkedByAccountant: { accountant: string; chats: number }[];
   /** Звёзды дня — top-scoring accountants (roster only). */
   stars: DailyReportStar[];
   /** Бухгалтеры С нарушениями — имя + их нарушения (только нарушители). */
@@ -214,9 +223,27 @@ export function buildDailyReportModel(
   const rosterSet = roster && roster.length > 0 ? new Set(roster) : null;
   const inRoster = (name: string) => !rosterSet || rosterSet.has(name);
 
-  // ── Stars of the day (roster only) ─────────────────────────────────────────
+  // Бухгалтеры с ПОДТВЕРЖДЁННЫМ критичным нарушением (mqa_violations, severity
+  // «Критичное»/gross). Оценка чата (avgScore) и нарушение живут в РАЗНЫХ
+  // таблицах, поэтому бухгалтер с критичным нарушением, но оценками 100, раньше
+  // показывался «Звездой дня» с сервисом 100% (жалоба Маргариты про Тагуи).
+  // Такой человек НЕ может быть звездой дня.
+  const criticalAccts = new Set<string>();
+  for (const v of violations) {
+    if (v.confirmed === false) continue;
+    if (/критич/i.test(v.severity ?? "") || v.gross) {
+      const a = v.accountant?.trim();
+      if (a) criticalAccts.add(a);
+    }
+  }
+
+  // ── Stars of the day (roster only; never someone with a critical violation) ─
   const scored = perAccountant.filter(
-    (a) => a.count > 0 && a.avgScore >= 0 && inRoster(a.accountant)
+    (a) =>
+      a.count > 0 &&
+      a.avgScore >= 0 &&
+      inRoster(a.accountant) &&
+      !criticalAccts.has(a.accountant.trim())
   );
   const topScore = scored.reduce((m, a) => Math.max(m, a.avgScore), 0);
   const perfect = scored.filter((a) => a.avgScore === 100);
@@ -229,6 +256,13 @@ export function buildDailyReportModel(
     accountant: s.accountant,
     avgScore: s.avgScore,
   }));
+
+  // Проверено чатов (QA) по бухгалтерам — из per-accountant chatsChecked; только
+  // те, у кого > 0, отсортированы по убыванию (roster-фильтр как у звёзд).
+  const checkedByAccountant = perAccountant
+    .filter((a) => a.chatsChecked > 0 && inRoster(a.accountant))
+    .map((a) => ({ accountant: a.accountant, chats: a.chatsChecked }))
+    .sort((x, y) => y.chats - x.chats || x.accountant.localeCompare(y.accountant));
 
   // ── Нарушения per accountant (single fine engine — matches PDF/dashboard) ──
   // Деньги — единое правило Маргариты (groupNarusheniya, тот же, что PDF/дашборд):
@@ -314,6 +348,8 @@ export function buildDailyReportModel(
   return {
     dateLabel: periodHeader(report, dateISO),
     servicePct: serviceQualityPct,
+    serviceHasData: (report.totals?.evaluatedChats ?? 0) > 0,
+    checkedByAccountant,
     stars,
     rows,
     cleanAccountants,
@@ -344,7 +380,22 @@ export function buildReportMessage(
   lines.push("");
   lines.push(`Дата: ${model.dateLabel}`);
   lines.push("");
-  lines.push(`Общий уровень сервиса: ${model.servicePct}% по отделу`);
+  lines.push(
+    model.serviceHasData
+      ? `Общий уровень сервиса: ${model.servicePct}% по отделу`
+      : `Общий уровень сервиса: — (нет проверок за период)`
+  );
+
+  // Проверено чатов (QA) по бухгалтерам — сколько чатов прошло проверку у каждого
+  // (запрос Маргариты: «в отчёте не отображается количество чатов, прошедших QA,
+  // по каждому бухгалтеру»).
+  if (model.checkedByAccountant.length > 0) {
+    lines.push("");
+    lines.push("Проверено чатов (QA):");
+    for (const c of model.checkedByAccountant) {
+      lines.push(`- ${c.accountant}: ${c.chats}`);
+    }
+  }
 
   if (model.stars.length) {
     lines.push("");
