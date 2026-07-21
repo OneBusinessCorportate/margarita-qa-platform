@@ -1092,6 +1092,18 @@ export interface MargaritaWorkReportOptions {
    * передан — показываем «…» и процент не считаем (нельзя делить на неизвестное).
    */
   activeChats?: number;
+  /**
+   * ВЕСЬ непогашенный бэклог тикетов без реакции бухгалтера (статус «новое»),
+   * НЕ только за отчётный день — для строки-алерта «!!! Тикеты без реакций
+   * бухгалтеров». Когда не передан, берётся дневное `report.unprocessedViolations`.
+   */
+  unprocessedBacklog?: number;
+  /**
+   * ВЕСЬ непогашенный бэклог апелляций без решения Маргариты (pending), НЕ только
+   * за отчётный день — для строки-алерта «!!! Аппеляций без реакции Маргариты».
+   * Когда не передан, берётся дневное `report.appealsPending`.
+   */
+  pendingBacklog?: number;
 }
 
 /**
@@ -1119,14 +1131,17 @@ export interface MargaritaWorkReportOptions {
  *   — Отклонено: 1
  *
  * Смысл строк:
- *   • Проверено чатов — сколько чатов Маргарита проверила, из активных за день.
- *   • Создано тикетов — сколько нарушений (тикетов) заведено; процент — от
- *     активных чатов.
- *   • Тикеты без реакций бухгалтеров — тикеты Маргариты, на которые бухгалтер
- *     ещё не отреагировал (статус «новое»).
- *   • Всего реакций (бухгалтеров) — ознакомления + поданные апелляции.
- *   • Аппеляций без реакции Маргариты — апелляции, по которым она ещё не решила.
- *   • Всего реакций (Маргариты) — подтверждено + отклонено.
+ *   • Проверено чатов — сколько чатов Маргарита проверила ЗА ДЕНЬ, из активных.
+ *   • Создано тикетов — сколько нарушений (тикетов) заведено ЗА ДЕНЬ; процент —
+ *     от активных чатов.
+ *   • Всего реакций (за день) — в каждой группе это активность за отчётный день
+ *     (ознакомления + апелляции у бухгалтеров; подтверждено + отклонено у неё).
+ *   • Строки «!!!» — это АЛЕРТЫ по всей непогашенной очереди (не только за день):
+ *     «Тикеты без реакций бухгалтеров» — все тикеты Маргариты в статусе «новое»,
+ *     на которые бухгалтер ещё не отреагировал; «Аппеляций без реакции Маргариты»
+ *     — все апелляции, по которым она ещё не приняла решение. Значения бэклога
+ *     приходят опциями `unprocessedBacklog`/`pendingBacklog`; без них подставляются
+ *     дневные значения из отчёта.
  *
  * Sent as PLAIN text (sendToTelegram uses no parse_mode), so no Markdown/HTML
  * escaping is required and arbitrary characters can never break the layout. If
@@ -1157,6 +1172,12 @@ export function buildMargaritaWorkReportMessage(
   // Реакции Маргариты на апелляции = подтверждено + отклонено.
   const margaritaReactions = report.appealsApproved + report.appealsRejected;
 
+  // Строки-алерты «!!!» — ВЕСЬ непогашенный бэклог (не только за день), если он
+  // передан; иначе дневные значения из отчёта. Так «Проверено/Создано/Подано»
+  // остаются за день, а «без реакции» показывают реальную очередь на действие.
+  const unprocessed = options.unprocessedBacklog ?? report.unprocessedViolations;
+  const pending = options.pendingBacklog ?? report.appealsPending;
+
   const lines: string[] = [];
   lines.push(`Отчет по работе QA Маргариты ${fmtFullDay(dateISO)}`);
   lines.push("");
@@ -1165,14 +1186,14 @@ export function buildMargaritaWorkReportMessage(
 
   lines.push("");
   lines.push("Аппеляции бухгалтеров");
-  lines.push(`!!! Тикеты без реакций бухгалтеров: ${report.unprocessedViolations}`);
+  lines.push(`!!! Тикеты без реакций бухгалтеров: ${unprocessed}`);
   lines.push(`Всего реакций: ${accountantReactions}`);
   lines.push(`— Ознакомлений: ${report.acknowledged}`);
   lines.push(`— Апелляций: ${report.appealsSubmitted}`);
 
   lines.push("");
   lines.push("Реакция Маргариты на аппеляции:");
-  lines.push(`!!! Аппеляций без реакции Маргариты: ${report.appealsPending}`);
+  lines.push(`!!! Аппеляций без реакции Маргариты: ${pending}`);
   lines.push(`Всего реакций: ${margaritaReactions}`);
   lines.push(`— Подтверждено: ${report.appealsApproved}`);
   lines.push(`— Отклонено: ${report.appealsRejected}`);

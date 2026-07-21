@@ -103,16 +103,22 @@ export async function assembleMargaritaReport(
   opts: MargaritaWindowOptions = {}
 ): Promise<AssembledMargaritaReport> {
   const window = resolveMargaritaWindow(opts);
-  // Both loads share the same window/accountant scope. getReport gives the
-  // «активных чатов» denominator (totals.activeChats) from the SAME liveness
-  // calc as the dashboard/report, so «Проверено чатов: N из M» always agrees.
-  const [report, dailyReport] = await Promise.all([
+  // Three loads, same accountant scope:
+  //   • report      — метрики ЗА ДЕНЬ (проверено/создано/подано + реакции дня).
+  //   • dailyReport — «активных чатов» (totals.activeChats), тот же расчёт
+  //     активности, что дашборд/отчёт, поэтому «N из M» всегда совпадает.
+  //   • backlog     — ВЕСЬ непогашенный бэклог (без окна дат) для строк-алертов
+  //     «!!! без реакции»: реальная очередь на действие, а не срез за день.
+  const [report, dailyReport, backlog] = await Promise.all([
     getViolationWorkflowReport(window),
     getReport({ from: window.from, to: window.to, accountant: window.accountant }),
+    getViolationWorkflowReport({ accountant: window.accountant }),
   ]);
   const message = buildMargaritaWorkReportMessage(report, {
     date: window.to,
     activeChats: dailyReport.totals.activeChats,
+    unprocessedBacklog: backlog.unprocessedViolations,
+    pendingBacklog: backlog.appealsPending,
   });
   return { window, report, message };
 }
