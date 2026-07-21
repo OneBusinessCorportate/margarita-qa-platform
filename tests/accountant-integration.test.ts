@@ -64,21 +64,17 @@ test("accountant acknowledge + appeal surface in the day report and Telegram, an
   assert.equal(row!.pending, 1);
   assert.equal(row!.unprocessed, 0, "both violations were reacted to");
 
-  // The Telegram «Апелляции и QA Маргариты» message reflects the same numbers.
-  // (The in-memory store is seeded, so totals include seed rows — assert on this
-  // accountant's own block, which is deterministic.)
+  // The Telegram «Отчет по работе QA Маргариты» message reflects the same
+  // aggregation. (The in-memory store is seeded, so exact totals include seed
+  // rows; assert the report object numbers above and the message's shape here.)
   const msg = buildMargaritaWorkReportMessage(report);
-  assert.match(msg, /Апелляции и QA Маргариты/);
-  const block = [
-    `${ACC}:`,
-    "- тикетов: 2",
-    "- ознакомлен: 1",
-    "- апелляций: 1",
-    "- подтверждено: 0",
-    "- отклонено: 0",
-    "- pending: 1",
-  ].join("\n");
-  assert.ok(msg.includes(block), `per-accountant block present:\n${msg}`);
+  assert.match(msg, /Отчет по работе QA Маргариты/);
+  assert.match(msg, /Аппеляции бухгалтеров/);
+  assert.match(msg, /Реакция Маргариты на аппеляции:/);
+  // «Всего реакций» бухгалтеров = ознакомления + апелляции ≥ 2 here (1 + 1).
+  const accountantReactions = report.acknowledged + report.appealsSubmitted;
+  assert.ok(accountantReactions >= 2, "acknowledge + appeal both counted");
+  assert.match(msg, new RegExp(`Всего реакций: ${accountantReactions}`));
 
   // Margarita's decision flows back onto the violation (visible to the accountant
   // via the kk_violation_workflow view in repo #2).

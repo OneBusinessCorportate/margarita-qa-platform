@@ -36,85 +36,40 @@ test("header and totals are rendered", () => {
       appealsRejected: 1,
       appealsPending: 1,
       unprocessedViolations: 1,
-      byAccountant: [
-        {
-          name: "Гаяне",
-          chatsChecked: 4,
-          evaluations: 4,
-          violations: 3,
-          acknowledgements: 1,
-          appealsSubmitted: 2,
-          approved: 1,
-          rejected: 0,
-          pending: 1,
-          unprocessed: 1,
-        },
-      ],
     }),
-    { date: "2026-07-16" }
+    { date: "2026-07-16", activeChats: 40 }
   );
-  assert.match(msg, /Апелляции и QA Маргариты/);
-  assert.match(msg, /Проверено чатов: 12/);
-  assert.match(msg, /Создано тикетов: 5/);
-  assert.match(msg, /Ознакомлено бухгалтерами: 2/);
-  assert.match(msg, /Подано апелляций: 3/);
-  assert.match(msg, /Подтверждено Маргаритой: 1/);
-  assert.match(msg, /Отклонено Маргаритой: 1/);
-  assert.match(msg, /Ожидают решения: 1/);
-  assert.match(msg, /Не обработано бухгалтерами: 1/);
+  assert.match(msg, /Отчет по работе QA Маргариты 16\.07\.2026/);
+  // Проверено чатов: N из <активных>
+  assert.match(msg, /Проверено чатов: 12 из 40/);
+  // Создано тикетов: N (процент от активных чатов) — 5/40 = 13%
+  assert.match(msg, /Создано тикетов: 5 \(13%\)/);
+  // Аппеляции бухгалтеров
+  assert.match(msg, /!!! Тикеты без реакций бухгалтеров: 1/);
+  assert.match(msg, /Всего реакций: 5/); // acknowledged(2) + appeals(3)
+  assert.match(msg, /— Ознакомлений: 2/);
+  assert.match(msg, /— Апелляций: 3/);
+  // Реакция Маргариты на аппеляции
+  assert.match(msg, /!!! Аппеляций без реакции Маргариты: 1/);
+  assert.match(msg, /Всего реакций: 2/); // approved(1) + rejected(1)
+  assert.match(msg, /— Подтверждено: 1/);
+  assert.match(msg, /— Отклонено: 1/);
 });
 
-test("per-accountant breakdown is formatted", () => {
+test("active chats unknown → «…» and 0% (never divide by an unknown)", () => {
   const msg = buildMargaritaWorkReportMessage(
-    report({
-      violationsCreated: 3,
-      byAccountant: [
-        {
-          name: "Гаяне",
-          chatsChecked: 0,
-          evaluations: 0,
-          violations: 3,
-          acknowledgements: 1,
-          appealsSubmitted: 2,
-          approved: 1,
-          rejected: 0,
-          pending: 1,
-          unprocessed: 1,
-        },
-      ],
-    })
+    report({ chatsChecked: 3, violationsCreated: 2 })
+    // no activeChats passed
   );
-  assert.match(msg, /\nГаяне:\n- тикетов: 3\n- ознакомлен: 1\n- апелляций: 2\n- подтверждено: 1\n- отклонено: 0\n- pending: 1/);
+  assert.match(msg, /Проверено чатов: 3 из …/);
+  assert.match(msg, /Создано тикетов: 2 \(0%\)/);
 });
 
-test("a quiet day says so instead of a bare zero wall", () => {
-  const msg = buildMargaritaWorkReportMessage(report());
-  assert.match(msg, /За день новых нарушений и апелляций нет\./);
-});
-
-test("special characters in a name do not break the layout", () => {
-  const msg = buildMargaritaWorkReportMessage(
-    report({
-      violationsCreated: 1,
-      byAccountant: [
-        {
-          name: "Աни <О'Брайен> & Co. _*[x]",
-          chatsChecked: 0,
-          evaluations: 0,
-          violations: 1,
-          acknowledgements: 0,
-          appealsSubmitted: 0,
-          approved: 0,
-          rejected: 0,
-          pending: 0,
-          unprocessed: 1,
-        },
-      ],
-    })
-  );
-  // Name is preserved verbatim (plain text) and stays on its own single line
-  // (a trailing colon heads the per-accountant block).
-  const nameLines = msg.split("\n").filter((l) => l.includes("О'Брайен"));
-  assert.equal(nameLines.length, 1);
-  assert.equal(nameLines[0], "Աни <О'Брайен> & Co. _*[x]:");
+test("a quiet day renders the same zero-filled form", () => {
+  const msg = buildMargaritaWorkReportMessage(report(), { activeChats: 40 });
+  assert.match(msg, /Отчет по работе QA Маргариты/);
+  assert.match(msg, /Проверено чатов: 0 из 40/);
+  assert.match(msg, /Создано тикетов: 0 \(0%\)/);
+  assert.match(msg, /!!! Тикеты без реакций бухгалтеров: 0/);
+  assert.match(msg, /!!! Аппеляций без реакции Маргариты: 0/);
 });

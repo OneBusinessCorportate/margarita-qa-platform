@@ -1085,65 +1085,97 @@ export function buildWeeklyReportMessage(
 export interface MargaritaWorkReportOptions {
   /** ISO date / period label shown in the header (defaults to today). */
   date?: string;
+  /**
+   * Кол-во АКТИВНЫХ чатов за окно (живой книги) — знаменатель для «Проверено
+   * чатов: N из M» и процента «Создано тикетов». Берётся из того же расчёта
+   * активности, что дашборд/отчёт (DailyReport.totals.activeChats). Когда не
+   * передан — показываем «…» и процент не считаем (нельзя делить на неизвестное).
+   */
+  activeChats?: number;
 }
 
 /**
- * «Апелляции и QA Маргариты» — the acknowledgement + appeals section of the
- * daily Telegram report (Phase 6). Rendered from the SAME aggregation
- * (buildViolationWorkflowReport) as the web /work-report and /dashboard, so the
- * figures always agree.
+ * «Отчет по работе QA Маргариты» — сводка ежедневной QA-работы Маргариты для
+ * Telegram. Рендерится из ТОЙ ЖЕ агрегации (buildViolationWorkflowReport), что
+ * и веб /work-report и /dashboard, поэтому цифры всегда совпадают.
+ *
+ * Форма (по запросу руководителя, июль 2026) — сводка + две группы реакций:
+ *
+ *   Отчет по работе QA Маргариты 20.07.2026
+ *
+ *   Проверено чатов: 12 из 40
+ *   Создано тикетов: 5 (13%)
+ *
+ *   Аппеляции бухгалтеров
+ *   !!! Тикеты без реакций бухгалтеров: 1
+ *   Всего реакций: 5
+ *   — Ознакомлений: 2
+ *   — Апелляций: 3
+ *
+ *   Реакция Маргариты на аппеляции:
+ *   !!! Аппеляций без реакции Маргариты: 1
+ *   Всего реакций: 2
+ *   — Подтверждено: 1
+ *   — Отклонено: 1
+ *
+ * Смысл строк:
+ *   • Проверено чатов — сколько чатов Маргарита проверила, из активных за день.
+ *   • Создано тикетов — сколько нарушений (тикетов) заведено; процент — от
+ *     активных чатов.
+ *   • Тикеты без реакций бухгалтеров — тикеты Маргариты, на которые бухгалтер
+ *     ещё не отреагировал (статус «новое»).
+ *   • Всего реакций (бухгалтеров) — ознакомления + поданные апелляции.
+ *   • Аппеляций без реакции Маргариты — апелляции, по которым она ещё не решила.
+ *   • Всего реакций (Маргариты) — подтверждено + отклонено.
  *
  * Sent as PLAIN text (sendToTelegram uses no parse_mode), so no Markdown/HTML
- * escaping is required and arbitrary characters in accountant names can never
- * break the layout. If a future caller switches to a parse mode, escape names
- * with `escapeTelegramText` below before rendering.
+ * escaping is required and arbitrary characters can never break the layout. If
+ * a future caller switches to a parse mode, escape user text first.
  *
  * IMPORTANT (Phase 6): callers MUST catch data-loading failures and NOT call
  * this with an all-zero report — a load failure must read differently from a
- * genuinely quiet day. This function assumes it is given real stored numbers
- * and marks a truly empty day explicitly ("действий нет").
+ * genuinely quiet day. This function assumes it is given real stored numbers;
+ * a quiet day simply shows zeros in the same form.
  */
 export function buildMargaritaWorkReportMessage(
   report: ViolationWorkflowReport,
   options: MargaritaWorkReportOptions = {}
 ): string {
   const dateISO = options.date ?? new Date().toISOString().slice(0, 10);
+  const { activeChats } = options;
+  const activeLabel =
+    typeof activeChats === "number" ? String(activeChats) : "…";
+  // Процент созданных тикетов от активных чатов — только когда активные чаты
+  // известны и их > 0 (иначе деление на неизвестное/ноль бессмысленно).
+  const ticketPct =
+    typeof activeChats === "number" && activeChats > 0
+      ? Math.round((report.violationsCreated / activeChats) * 100)
+      : 0;
+
+  // Реакции бухгалтеров на тикеты Маргариты = ознакомления + поданные апелляции.
+  const accountantReactions = report.acknowledged + report.appealsSubmitted;
+  // Реакции Маргариты на апелляции = подтверждено + отклонено.
+  const margaritaReactions = report.appealsApproved + report.appealsRejected;
+
   const lines: string[] = [];
-  lines.push("Апелляции и QA Маргариты");
+  lines.push(`Отчет по работе QA Маргариты ${fmtFullDay(dateISO)}`);
   lines.push("");
-  lines.push(`Дата: ${fmtFullDay(dateISO)}`);
+  lines.push(`Проверено чатов: ${report.chatsChecked} из ${activeLabel}`);
+  lines.push(`Создано тикетов: ${report.violationsCreated} (${ticketPct}%)`);
+
   lines.push("");
-  lines.push(`Проверено чатов: ${report.chatsChecked}`);
-  lines.push(`Создано тикетов: ${report.violationsCreated}`);
-  lines.push(`Ознакомлено бухгалтерами: ${report.acknowledged}`);
-  lines.push(`Подано апелляций: ${report.appealsSubmitted}`);
-  lines.push(`Подтверждено Маргаритой: ${report.appealsApproved}`);
-  lines.push(`Отклонено Маргаритой: ${report.appealsRejected}`);
-  lines.push(`Ожидают решения: ${report.appealsPending}`);
-  lines.push(`Не обработано бухгалтерами: ${report.unprocessedViolations}`);
+  lines.push("Аппеляции бухгалтеров");
+  lines.push(`!!! Тикеты без реакций бухгалтеров: ${report.unprocessedViolations}`);
+  lines.push(`Всего реакций: ${accountantReactions}`);
+  lines.push(`— Ознакомлений: ${report.acknowledged}`);
+  lines.push(`— Апелляций: ${report.appealsSubmitted}`);
 
-  // Genuinely quiet day — say so explicitly (distinct from a load failure,
-  // which the caller must handle before ever reaching here).
-  if (report.violationsCreated === 0 && report.appealsSubmitted === 0) {
-    lines.push("");
-    lines.push("За день новых нарушений и апелляций нет.");
-    return lines.join("\n");
-  }
-
-  // Per-accountant breakdown — only people with violations or appeals.
-  const rows = report.byAccountant.filter(
-    (r) => r.violations > 0 || r.appealsSubmitted > 0
-  );
-  for (const r of rows) {
-    lines.push("");
-    lines.push(`${r.name}:`);
-    lines.push(`- тикетов: ${r.violations}`);
-    lines.push(`- ознакомлен: ${r.acknowledgements}`);
-    lines.push(`- апелляций: ${r.appealsSubmitted}`);
-    lines.push(`- подтверждено: ${r.approved}`);
-    lines.push(`- отклонено: ${r.rejected}`);
-    lines.push(`- pending: ${r.pending}`);
-  }
+  lines.push("");
+  lines.push("Реакция Маргариты на аппеляции:");
+  lines.push(`!!! Аппеляций без реакции Маргариты: ${report.appealsPending}`);
+  lines.push(`Всего реакций: ${margaritaReactions}`);
+  lines.push(`— Подтверждено: ${report.appealsApproved}`);
+  lines.push(`— Отклонено: ${report.appealsRejected}`);
 
   return lines.join("\n");
 }
