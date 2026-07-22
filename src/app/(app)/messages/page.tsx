@@ -25,6 +25,7 @@ import CopyButton from "@/components/CopyButton";
 import SendTelegramButton from "@/components/SendTelegramButton";
 import PrintComparisonButton from "@/components/PrintComparisonButton";
 import PublishReportBox from "@/components/PublishReportBox";
+import DashboardFilters from "@/components/DashboardFilters";
 
 export const dynamic = "force-dynamic";
 
@@ -313,6 +314,19 @@ export default async function MessagesPage({
         </p>
       </div>
 
+      {/* Выбор периода прямо здесь, на «Сообщениях» (запрос QA): Сегодня /
+          неделя / месяц / любой диапазон дат. Меняет ВСЮ страницу, включая
+          таблицу «бухгалтер × день» ниже — по каждому дню видны оценки и общая
+          динамика за выбранный период. */}
+      <div className="no-print">
+        <div className="text-sm font-medium mb-1">📅 Период</div>
+        <DashboardFilters
+          accountants={periodAccountants}
+          initial={filters}
+          basePath="/messages"
+        />
+      </div>
+
       {/* Editable + approvable daily report (replaces the old PDF). Margarita
           reviews/corrects the generated text, then publishes it — accountants
           see ONLY the approved version in kk-accountants-feedback-form. */}
@@ -448,7 +462,7 @@ export default async function MessagesPage({
                 ))}
                 {isMultiDay && (
                   <th colSpan={2} rowSpan={2} className="px-2 py-2 border border-gray-300 bg-gradient-to-b from-gray-100 to-gray-50 font-semibold text-center whitespace-nowrap">
-                    Итого
+                    Итого · динамика
                   </th>
                 )}
               </tr>
@@ -662,7 +676,31 @@ export default async function MessagesPage({
                     })}
                     {isMultiDay && [
                       <td key="total-s" className={`px-2 py-2 border border-gray-300 text-center font-bold ${accData && accData.avgScore >= 0 ? scoreCellClass(accData.avgScore) : (isAlternate ? "bg-gray-50/50" : "bg-white")}`}>
-                        {accData && accData.avgScore >= 0 ? accData.avgScore : <span className="text-gray-300">—</span>}
+                        {accData && accData.avgScore >= 0 ? (
+                          <span className="inline-flex items-center justify-center gap-1">
+                            {accData.avgScore}
+                            {(() => {
+                              // Динамика за период: тренд по дням (среднее второй
+                              // половины минус первой). ▲ рост / ▼ спад / → ровно.
+                              const series = periodDates
+                                .map((d) => dayAccScoreMap.get(`${d}|${acc}`)?.score)
+                                .filter((v): v is number => typeof v === "number" && v >= 0);
+                              if (series.length < 2) return null;
+                              const mid = Math.floor(series.length / 2);
+                              const avg = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
+                              const delta = Math.round(
+                                avg(series.slice(series.length - mid)) - avg(series.slice(0, mid))
+                              );
+                              if (delta > 0)
+                                return <span className="text-green-600 text-[10px] font-semibold" title="рост оценки за период">▲{delta}</span>;
+                              if (delta < 0)
+                                return <span className="text-rose-600 text-[10px] font-semibold" title="снижение оценки за период">▼{Math.abs(delta)}</span>;
+                              return <span className="text-gray-400 text-[10px]" title="без изменений">→</span>;
+                            })()}
+                          </span>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
                       </td>,
                       <td key="total-n" className={`px-1 py-2 border border-gray-300 text-center text-gray-400 font-medium ${isAlternate ? "bg-gray-50/50" : "bg-white"}`}>
                         {accData ? accData.count : ""}
