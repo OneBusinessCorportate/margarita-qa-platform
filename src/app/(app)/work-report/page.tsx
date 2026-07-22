@@ -1,40 +1,59 @@
 import { getWorkReport } from "@/lib/appeals-data";
-import { getViolationWorkflowReport, listAccountants } from "@/lib/repo";
+import { getAnalytics, getViolationWorkflowReport, listAccountants } from "@/lib/repo";
+import DashboardFilters from "@/components/DashboardFilters";
+import AnalyticsTable from "@/components/AnalyticsTable";
 import AutoRefresh from "@/components/AutoRefresh";
 
 export const dynamic = "force-dynamic";
 
+function fmtDay(iso: string): string {
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return d && m ? `${d}.${m}.${y}` : iso;
+}
+
 export default async function WorkReportPage({
   searchParams,
 }: {
-  searchParams: { from?: string; to?: string; accountant?: string };
+  searchParams: { from?: string; to?: string; accountant?: string; client?: string };
 }) {
-  const from = searchParams.from || undefined;
-  const to = searchParams.to || undefined;
-  const accountant = searchParams.accountant || undefined;
+  const filters = {
+    from: searchParams.from || undefined,
+    to: searchParams.to || undefined,
+    accountant: searchParams.accountant || undefined,
+    client: searchParams.client || undefined,
+  };
+
+  // getAnalytics разрешает окно (последний оценённый день по умолчанию); передаём
+  // это же окно в остальные отчёты, чтобы все цифры на странице были за один период.
+  const { report: analytics, resolved } = await getAnalytics(filters);
+  const win = { from: resolved.from, to: resolved.to, accountant: filters.accountant };
 
   const [flow, fines, accountants] = await Promise.all([
-    getViolationWorkflowReport({ from, to, accountant }),
-    // Fines / оценки live in the existing report; kept as a secondary block.
-    getWorkReport({ from, to, accountant }).catch(() => null),
+    getViolationWorkflowReport(win),
+    getWorkReport(win).catch(() => null),
     listAccountants(),
   ]);
 
+  const { totals } = analytics;
+  const periodLabel =
+    resolved.from === resolved.to
+      ? fmtDay(resolved.from)
+      : `${fmtDay(resolved.from)} — ${fmtDay(resolved.to)}`;
+
+  // Полная сводка QA + рабочего цикла (не только штрафы/апелляции).
   const stats: { label: string; value: number | string; alert?: boolean }[] = [
-    { label: "Чатов проверено", value: flow.chatsChecked },
-    { label: "Оценок создано", value: flow.evaluations },
-    { label: "Нарушений создано", value: flow.violationsCreated },
-    { label: "Бухгалтеров с нарушениями", value: flow.accountantsWithViolations },
-    { label: "Ознакомлено бухгалтерами", value: flow.acknowledged },
-    { label: "Подано апелляций", value: flow.appealsSubmitted },
-    { label: "Ожидают решения", value: flow.appealsPending, alert: flow.appealsPending > 0 },
-    { label: "Принято апелляций", value: flow.appealsApproved },
-    { label: "Отклонено апелляций", value: flow.appealsRejected },
-    { label: "Обработано апелляций", value: flow.appealsProcessed },
-    { label: "Не обработано бухгалтерами", value: flow.unprocessedViolations, alert: flow.unprocessedViolations > 0 },
-    { label: "Штрафов снято (апелляции)", value: flow.penaltiesCancelled },
-    { label: "% обработки апелляций", value: `${flow.appealProcessingPct}%` },
-    { label: "% реакции бухгалтеров", value: `${flow.acknowledgementPct}%` },
+    { label: "Проверено бухгалтеров", value: totals.accountantsReviewed },
+    { label: "Чатов проверено", value: totals.chatsChecked },
+    { label: "Проверок (оценок)", value: totals.evaluations },
+    { label: "Средняя оценка", value: totals.avgScore >= 0 ? `${totals.avgScore}%` : "—" },
+    { label: "Критичных оценок", value: totals.critical, alert: totals.critical > 0 },
+    { label: "Нарушений", value: totals.violations },
+    { label: "Ознакомлено", value: flow.acknowledged },
+    { label: "Не обработано", value: flow.unprocessedViolations, alert: flow.unprocessedViolations > 0 },
+    { label: "Подано апелляций", value: totals.appeals },
+    { label: "Принято апелляций", value: totals.appealsApproved },
+    { label: "Отклонено апелляций", value: totals.appealsRejected },
+    { label: "Ожидают решения", value: totals.appealsPending, alert: totals.appealsPending > 0 },
   ];
 
   const drams = (n: number) => `${n.toLocaleString("ru-RU")} др.`;
@@ -47,33 +66,19 @@ export default async function WorkReportPage({
           <AutoRefresh />
         </div>
         <p className="text-sm text-gray-500">
-          Реальный объём работы Маргариты: проверки, нарушения, ознакомления
-          бухгалтеров и апелляции с решениями — по периоду и бухгалтеру. Данные из
-          сохранённых записей, обновляются автоматически.
+          Полный отчёт по работе бухгалтеров за <span className="font-medium">{periodLabel}</span>:
+          качество (оценки, чаты), нарушения, ознакомления, апелляции с решениями и штрафы. Данные
+          из сохранённых записей, обновляются автоматически.
         </p>
       </div>
 
-      <form className="card p-3 flex flex-wrap gap-3 items-end" method="get">
-        <label className="text-sm">
-          <span className="block text-gray-500 mb-1">С даты</span>
-          <input className="input" type="date" name="from" defaultValue={from} />
-        </label>
-        <label className="text-sm">
-          <span className="block text-gray-500 mb-1">По дату</span>
-          <input className="input" type="date" name="to" defaultValue={to} />
-        </label>
-        <label className="text-sm">
-          <span className="block text-gray-500 mb-1">Бухгалтер</span>
-          <select className="input" name="accountant" defaultValue={accountant ?? ""}>
-            <option value="">Все</option>
-            {accountants.map((a) => (
-              <option key={a.name} value={a.name}>{a.name}</option>
-            ))}
-          </select>
-        </label>
-        <button className="btn-primary" type="submit">Применить</button>
-        <a className="btn-secondary" href="/work-report">Сбросить</a>
-      </form>
+      <div className="no-print">
+        <DashboardFilters
+          accountants={accountants.map((a) => a.name)}
+          initial={filters}
+          basePath="/work-report"
+        />
+      </div>
 
       <div className="flex flex-wrap gap-3">
         {stats.map((s) => (
@@ -84,8 +89,15 @@ export default async function WorkReportPage({
         ))}
       </div>
 
+      {/* Полная статистика QA по бухгалтерам (оценки + нарушения + апелляции). */}
       <div>
-        <h2 className="font-semibold mb-2">По бухгалтерам — нарушения и апелляции</h2>
+        <h2 className="font-semibold mb-2">Полная статистика по бухгалтерам</h2>
+        <AnalyticsTable rows={analytics.perAccountant} />
+      </div>
+
+      {/* Рабочий цикл: ознакомления и необработанные нарушения (детально). */}
+      <div>
+        <h2 className="font-semibold mb-2">Нарушения и апелляции — рабочий цикл</h2>
         {flow.byAccountant.length === 0 ? (
           <div className="card p-6 text-center text-sm text-gray-500">Нет данных за период.</div>
         ) : (
@@ -94,8 +106,6 @@ export default async function WorkReportPage({
               <thead>
                 <tr>
                   <th>Бухгалтер</th>
-                  <th>Чатов проверено</th>
-                  <th>Оценок</th>
                   <th>Нарушений</th>
                   <th>Ознакомлено</th>
                   <th>Не обработано</th>
@@ -109,8 +119,6 @@ export default async function WorkReportPage({
                 {flow.byAccountant.map((r) => (
                   <tr key={r.name}>
                     <td className="font-medium">{r.name}</td>
-                    <td>{r.chatsChecked}</td>
-                    <td>{r.evaluations}</td>
                     <td>{r.violations}</td>
                     <td>{r.acknowledgements}</td>
                     <td className={r.unprocessed > 0 ? "text-amber-600 font-medium" : ""}>{r.unprocessed}</td>
