@@ -18,6 +18,7 @@ import type { Chat, Evaluation, Violation } from "./types";
 import { groupNarusheniya } from "./violations";
 import type { ViolationReport } from "./violation-report";
 import type { ViolationWorkflowReport } from "./appeals-report";
+import type { AnalyticsReport } from "./analytics";
 import type { MailingComplianceReport } from "./mailing-compliance";
 
 export function telegramConfigured(): boolean {
@@ -437,6 +438,113 @@ export function buildReportMessage(
   if (sheetUrl) {
     lines.push("");
     lines.push(`🔗 ${sheetUrl}`);
+  }
+
+  return lines.join("\n");
+}
+
+/** "1 чат / 2 чата / 5 чатов" — Russian count form. */
+function fmtChatCount(n: number): string {
+  const mod100 = n % 100;
+  const mod10 = n % 10;
+  if (mod10 === 1 && mod100 !== 11) return `${n} чат`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} чата`;
+  return `${n} чатов`;
+}
+
+export interface PeriodSummaryOptions {
+  /** Сколько строк максимум в блоке «Требуют внимания» (по умолчанию 3). */
+  maxAttention?: number;
+}
+
+/**
+ * Краткий Telegram-отчёт по QA за выбранный период (запрос руководства). Один
+ * компактный, читаемый текст — БЕЗ длинных списков: период, сколько бухгалтеров/
+ * чатов проверено, средняя оценка, лучший результат, требующие внимания,
+ * нарушения и апелляции (подтверждено / отклонено). Все цифры — из
+ * `buildAnalytics` (реальные записи БД), поэтому совпадают с дашбордом.
+ *
+ *   Отчёт по QA за 01.07.2026–31.07.2026
+ *
+ *   Проверено бухгалтеров: 12
+ *   Проверено чатов: 348
+ *   Средняя оценка: 84%
+ *
+ *   Лучший результат:
+ *   — Имя — 96%, проверено 42 чата
+ *
+ *   Требуют внимания:
+ *   — Имя — 61%, 8 нарушений
+ *
+ *   Нарушения: 27
+ *   Апелляции: 9
+ *   Подтверждено: 4
+ *   Отклонено: 5
+ */
+export function buildPeriodSummaryMessage(
+  analytics: AnalyticsReport,
+  options: PeriodSummaryOptions = {}
+): string {
+  const { maxAttention = 3 } = options;
+  const { totals, perAccountant, rankings, period } = analytics;
+  const lines: string[] = [];
+
+  lines.push(`Отчёт по QA за ${period.label}`);
+  lines.push("");
+
+  if (totals.evaluations === 0) {
+    lines.push("За выбранный период проверок QA не было.");
+    if (totals.violations > 0) lines.push(`Нарушения: ${totals.violations}`);
+    if (totals.appeals > 0) lines.push(`Апелляции: ${totals.appeals}`);
+    return lines.join("\n");
+  }
+
+  lines.push(`Проверено бухгалтеров: ${totals.accountantsReviewed}`);
+  lines.push(`Проверено чатов: ${totals.chatsChecked}`);
+  lines.push(
+    `Средняя оценка: ${totals.avgScore >= 0 ? `${totals.avgScore}%` : "—"}`
+  );
+
+  // Лучший результат — по средней (с достаточной выборкой), с числом чатов.
+  const best = rankings.topByScore;
+  if (best) {
+    const row = perAccountant.find((a) => a.accountant === best.accountant);
+    lines.push("");
+    lines.push("Лучший результат:");
+    const chats = row ? `, проверено ${fmtChatCount(row.chatsChecked)}` : "";
+    lines.push(`— ${best.accountant} — ${best.value}%${chats}`);
+  }
+
+  // Требуют внимания — слабая средняя (< 80%) или есть нарушения; максимум N.
+  // Не делаем громких выводов по крошечной выборке: сортируем по «худшести»,
+  // но выводим оценку как есть и нарушения как есть (реальные данные).
+  const attention = perAccountant
+    .filter((a) => (a.avgScore >= 0 && a.avgScore < 80) || a.violations > 0)
+    .filter((a) => a.accountant !== best?.accountant)
+    .sort(
+      (x, y) =>
+        (x.avgScore < 0 ? 101 : x.avgScore) - (y.avgScore < 0 ? 101 : y.avgScore) ||
+        y.violations - x.violations
+    )
+    .slice(0, maxAttention);
+  if (attention.length) {
+    lines.push("");
+    lines.push("Требуют внимания:");
+    for (const a of attention) {
+      const parts: string[] = [];
+      if (a.avgScore >= 0) parts.push(`${a.avgScore}%`);
+      if (a.violations > 0) parts.push(fmtViolationCount(a.violations));
+      lines.push(`— ${a.accountant} — ${parts.join(", ")}`);
+    }
+  }
+
+  lines.push("");
+  lines.push(`Нарушения: ${totals.violations}`);
+  lines.push(`Апелляции: ${totals.appeals}`);
+  if (totals.appeals > 0) {
+    lines.push(`Подтверждено: ${totals.appealsApproved}`);
+    lines.push(`Отклонено: ${totals.appealsRejected}`);
+    if (totals.appealsPending > 0) lines.push(`Ожидают: ${totals.appealsPending}`);
   }
 
   return lines.join("\n");

@@ -1,5 +1,6 @@
 import {
   countClientRequests,
+  getAnalytics,
   getDailyAnalytics,
   getReport,
   getViolationWorkflowReport,
@@ -14,6 +15,7 @@ import {
   buildFridayFinesMessage,
   buildMonthlyFinesMessage,
   buildMargaritaWorkReportMessage,
+  buildPeriodSummaryMessage,
   buildReportMessage,
   buildWeeklyReportMessage,
   buildWeeklyViolationHistory,
@@ -82,10 +84,15 @@ export default async function MessagesPage({
     client: searchParams.client || undefined,
   };
 
-  const [{ report, resolved }, allAccountants] = await Promise.all([
+  const [{ report, resolved }, { report: analytics }, allAccountants] = await Promise.all([
     getDailyAnalytics(filters),
+    getAnalytics(filters),
     listAccountants(),
   ]);
+
+  // Краткий, читаемый отчёт по QA за выбранный период (замена «слабого»
+  // варианта — жалоба Маргариты). Тот же движок аналитики, что и на дашборде.
+  const periodSummaryMessage = buildPeriodSummaryMessage(analytics);
 
   const isMultiDay = resolved.from !== resolved.to;
 
@@ -325,6 +332,31 @@ export default async function MessagesPage({
           initial={filters}
           basePath="/messages"
         />
+      </div>
+
+      {/* Краткий отчёт по QA за выбранный период — компактная, читаемая сводка
+          (проверено бухгалтеров/чатов, средняя, лучший, требуют внимания,
+          нарушения и апелляции). Заменяет прежний «слабый» вариант отчёта. */}
+      <div className="card p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">
+            ✈️ Краткий отчёт по QA за период
+            <a href="/analytics" className="ml-2 text-xs text-blue-600 hover:underline">
+              → подробная аналитика
+            </a>
+          </div>
+          <div className="flex gap-2">
+            <CopyButton label="Копировать" className="btn-primary" text={periodSummaryMessage} />
+            <SendTelegramButton
+              text={periodSummaryMessage}
+              configured={botReady}
+              label="Отправить в Telegram"
+            />
+          </div>
+        </div>
+        <pre className="text-xs whitespace-pre-wrap bg-gray-50 rounded p-3 border border-gray-100">
+{periodSummaryMessage}
+        </pre>
       </div>
 
       {/* Editable + approvable daily report (replaces the old PDF). Margarita
