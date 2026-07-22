@@ -22,7 +22,6 @@ import { predictEvaluation, toSnapshot, type AiModel } from "@/lib/ai";
 import { reviewStatusFor, confidenceDisplay, type ConfidenceTone } from "@/lib/confidence";
 import {
   SORT_OPTIONS,
-  autoDebtStatus,
   autoMonthlyStatus,
   cmpAgrNo,
   compareByActivity,
@@ -1575,7 +1574,11 @@ function ChatScoreRow({
       ? { text: "✓ Принято без изменений", cls: "bg-green-100 text-green-700" }
       : reviewStatus === "corrected"
         ? { text: "✎ Исправлено Маргаритой", cls: "bg-amber-100 text-amber-800" }
-        : { text: "⏳ Не проверено", cls: "bg-gray-100 text-gray-500" };
+        : // Неактивный чат, который ещё не оценивали, — это НЕ «не проверено»
+          // (по нему QA не требуется). Показываем «Не был активен», а не «⏳».
+          chat.status === "Inactive"
+          ? { text: "🚫 Не был активен", cls: "bg-gray-100 text-gray-500" }
+          : { text: "⏳ Не проверено", cls: "bg-gray-100 text-gray-500" };
   // Честная плашка уверенности: ярлык + тон из confidenceDisplay. Низкая
   // уверенность / неполные данные / предварительная калибровка → предупреждающий
   // стиль (не «всё зелёное»). «Недостаточно данных» вместо подмены на 90%.
@@ -1678,27 +1681,6 @@ function ChatScoreRow({
   };
 
   /** One click: agree with the AI — its row becomes Margarita's answer. */
-  function acceptAi() {
-    setCriteria({ ...ai.criteria });
-    setMonthly((m) => {
-      const next = { ...m };
-      for (const c of MONTHLY_CATEGORIES) {
-        next[c.id] = {
-          ...next[c.id],
-          status: canonicalMonthlyStatus(c, ai.monthly[c.id]?.status),
-        };
-      }
-      // The OneBusiness-derived debt status wins over the AI's guess.
-      const debtCat = MONTHLY_CATEGORIES.find((c) => c.id === "debts")!;
-      const debtStatus =
-        canonicalMonthlyStatus(debtCat, chat.debt_status) ||
-        autoDebtStatus(chat.debts);
-      if (debtStatus) next["debts"] = { ...next["debts"], status: debtStatus };
-      return next;
-    });
-    setOverride(String(ai.total));
-  }
-
   async function save() {
     setSaving(true);
     setError(null);
@@ -2309,15 +2291,13 @@ function ChatScoreRow({
             {ai.note}
           </span>
         </td>
-        <td className={`${aiCell} whitespace-nowrap text-right`}>
-          <button
-            className="btn-secondary !px-2 !py-0.5 text-xs"
-            onClick={acceptAi}
-            title="Согласиться с AI — перенести его оценку в вашу строку"
-          >
-            Принять
-          </button>
-        </td>
+        {/* Кнопку «Принять» убрали (решение владельца): строка «Вы» уже
+            предзаполнена прогнозом AI, поэтому достаточно нажать «Оценить».
+            Если Маргарита ничего не меняет — статус «Принято без изменений»,
+            если правит хотя бы одну ячейку — «Исправлено Маргаритой». Так
+            модель учится на её правках. Ячейку оставляем пустой, чтобы не
+            ломать выравнивание колонок с шапкой и строкой «Вы». */}
+        <td className={`${aiCell} whitespace-nowrap text-right`} aria-hidden="true" />
       </tr>
 
       {/* ---- Your editable line ---- */}
