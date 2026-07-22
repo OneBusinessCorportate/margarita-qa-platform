@@ -22,6 +22,7 @@ import {
   type ReportSnapshot,
 } from "./report";
 import { telegramChatId } from "./chat-list";
+import { buildAnalytics, type AnalyticsReport } from "./analytics";
 import { buildViolationWorkflowReport } from "./appeals-report";
 import { reviewStatusFor, validConfidence } from "./confidence";
 import type { DebtTotals } from "./debts";
@@ -1633,6 +1634,55 @@ export async function getDailyAnalytics(
   );
 
   return { report, previous, resolved: { from: from!, to: to! } };
+}
+
+// --- QA Analytics (аналитический дашборд + краткий отчёт за период) ---------
+
+export interface QaAnalytics {
+  report: AnalyticsReport;
+  resolved: { from: string; to: string };
+}
+
+/**
+ * Единая точка сбора данных для аналитического дашборда, «Отчёта по работе» и
+ * краткого Telegram-отчёта за период. Разрешает окно так же, как
+ * getDailyAnalytics (явные даты в приоритете, иначе — последний оценённый день),
+ * затем собирает из РЕАЛЬНЫХ записей: оценки (role=accountant), подтверждённые
+ * нарушения и апелляции. Один источник ⇒ одни и те же цифры на всех страницах.
+ */
+export async function getAnalytics(
+  filters: ReportFilters = {}
+): Promise<QaAnalytics> {
+  const today = new Date().toISOString().slice(0, 10);
+  const [evaluations, violationsAll, appealsAll] = await Promise.all([
+    listEvaluations({ accountant: filters.accountant, client: filters.client }),
+    listViolations({ accountant: filters.accountant }),
+    listViolationAppeals({ accountant: filters.accountant }),
+  ]);
+  const accountantEvals = evaluations.filter((e) => e.role === "accountant");
+  const evalDates = [
+    ...new Set(accountantEvals.map((e) => e.checking_date.slice(0, 10))),
+  ].sort();
+
+  let from = filters.from;
+  let to = filters.to;
+  if (!from && !to) {
+    const latest = evalDates[evalDates.length - 1] ?? today;
+    from = latest;
+    to = latest;
+  } else {
+    from ??= to;
+    to ??= from;
+  }
+
+  const report = buildAnalytics({
+    evaluations: accountantEvals,
+    violations: violationsAll,
+    appeals: appealsAll,
+    from: from!,
+    to: to!,
+  });
+  return { report, resolved: { from: from!, to: to! } };
 }
 
 // --- Report history (saved snapshots) --------------------------------------
