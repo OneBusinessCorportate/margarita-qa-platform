@@ -37,7 +37,7 @@ import {
   pearson,
   rangeOf,
 } from "./confidence";
-import { classifyMatch, median, type MatchStatus } from "./match";
+import { classifyMatch, median, SCORE_TOLERANCE, type MatchStatus } from "./match";
 import { bandFor, type QualityBand } from "./scoring";
 
 export interface ConfidenceReportFilters {
@@ -83,6 +83,33 @@ export interface ConfidenceHighMetrics {
   correctedPct: number | null; // corrected / reviewed × 100
   /** «Точность оценок с уверенностью 90%+» = accepted / reviewed × 100. */
   accuracyPct: number | null;
+  /** Доля исправленных от ВСЕХ оценок ≥90% (corrected / count × 100). */
+  correctedOfAllPct: number | null;
+}
+
+/**
+ * Метрики бакета уверенности <90% (зеркало high) — для «показателя 2»:
+ * сколько НЕ исправлено (accepted) из оценок с уверенностью <90%.
+ */
+export interface ConfidenceLowMetrics {
+  count: number; // оценок с уверенностью <90%
+  pct: number | null; // % от оценок с валидной уверенностью
+  reviewed: number;
+  accepted: number; // «не исправлено» = принято без изменений
+  corrected: number;
+  /** accepted / count × 100 — доля НЕ исправленных от всех <90%. */
+  acceptedOfAllPct: number | null;
+}
+
+/**
+ * «Показатель 3»: чаты, где расхождение оценки Маргариты и AI-агента <5%
+ * (|Δ баллов| < 5 на нормированной шкале 0..100). Считается по проверенным
+ * строкам с исходным AI-снимком (comparable).
+ */
+export interface WithinToleranceMetrics {
+  count: number; // чатов с расхождением <5%
+  comparable: number; // всего сравнимых (проверено + есть AI-снимок)
+  pct: number | null; // count / comparable × 100
 }
 
 export interface ConfidenceCorrelation {
@@ -140,6 +167,33 @@ export interface CorrectedDetailRow {
   changedFields: string[];
 }
 
+/**
+ * Компактная строка на КАЖДУЮ AI-оценку в выборке — для drill-down: по клику на
+ * карточку показателя открывается список чатов, стоящих за этой цифрой (с их
+ * оценками AI/Маргариты, уверенностью и статусом).
+ */
+export interface ConfidenceRowLite {
+  id: string;
+  date: string;
+  accountant: string | null;
+  chat: string;
+  aiScore: number | null;
+  finalScore: number;
+  scoreDiff: number | null; // final − ai (знаковая)
+  absScoreDiff: number | null;
+  confidence: number | null;
+  status: ReviewStatus;
+  reviewed: boolean;
+  matchStatus: MatchStatus | null;
+  /** conf != null && conf ≥ 90. */
+  high: boolean;
+  /** conf != null && conf < 90. */
+  low: boolean;
+  /** Проверено + есть AI-снимок + |Δ| < 5. */
+  within5: boolean;
+  changedFields: string[];
+}
+
 export interface ConfidenceReport {
   total: number; // всего AI-оценок в выборке
   withConfidence: number; // из них с валидной уверенностью
@@ -158,6 +212,8 @@ export interface ConfidenceReport {
   avgConfidenceCorrected: number | null;
   ranges: ConfidenceRangeRow[];
   high: ConfidenceHighMetrics;
+  low: ConfidenceLowMetrics;
+  within5: WithinToleranceMetrics;
   matches: MatchMetrics;
   /** Корреляция уверенность ↔ факт исправления (0/1, point-biserial). */
   correlation: ConfidenceCorrelation;
@@ -165,6 +221,8 @@ export interface ConfidenceReport {
   correlationScoreDiff: ConfidenceCorrelation;
   byAccountant: AccountantConfidenceRow[];
   detailed: CorrectedDetailRow[];
+  /** Каждая AI-оценка выборки (для drill-down по карточкам). */
+  rows: ConfidenceRowLite[];
   filters: ConfidenceReportFilters;
 }
 
@@ -267,6 +325,9 @@ export function buildConfidenceReport(
   const rangeAbsDiffs = new Map<string, number[]>(CONFIDENCE_RANGES.map((r) => [r.id, []]));
 
   const high = { count: 0, reviewed: 0, accepted: 0, corrected: 0 };
+  const low = { count: 0, reviewed: 0, accepted: 0, corrected: 0 };
+  // Чаты с расхождением |Δ| < 5 (проверено + есть AI-снимок) — «показатель 3».
+  let within5Count = 0;
 
   // Per-accountant accumulation.
   interface AccAcc {
@@ -288,6 +349,7 @@ export function buildConfidenceReport(
   };
 
   const detailed: CorrectedDetailRow[] = [];
+  const lite: ConfidenceRowLite[] = [];
 
   for (const e of rows) {
     const status = statusOf(e);
@@ -298,6 +360,7 @@ export function buildConfidenceReport(
     const conf = evaluationConfidence(e);
     const reviewed = isReviewed(status);
     const match = matchOf(e);
+    const within5 = reviewed && match != null && match.absScoreDiff < SCORE_TOLERANCE;
 
     // Match statistics (only rows with an AI baseline; independent of conf).
     if (reviewed) {
@@ -307,10 +370,31 @@ export function buildConfidenceReport(
         else mMismatch++;
         signedDiffs.push(match.scoreDiff);
         absDiffs.push(match.absScoreDiff);
+        if (within5) within5Count++;
       } else {
         excludedNoBaseline++;
       }
     }
+
+    // Одна компактная строка на каждую AI-оценку — источник drill-down.
+    lite.push({
+      id: e.id,
+      date: e.checking_date.slice(0, 10),
+      accountant: e.accountant,
+      chat: e.chat_agr_no,
+      aiScore: evaluationAiTotal(e),
+      finalScore: e.total_score,
+      scoreDiff: match ? match.scoreDiff : null,
+      absScoreDiff: match ? match.absScoreDiff : null,
+      confidence: conf,
+      status,
+      reviewed,
+      matchStatus: match ? match.status : null,
+      high: conf != null && conf >= HIGH_CONFIDENCE_THRESHOLD,
+      low: conf != null && conf < HIGH_CONFIDENCE_THRESHOLD,
+      within5,
+      changedFields: match ? match.changedFields : [],
+    });
 
     // Per-accountant.
     if (reviewed) {
@@ -375,6 +459,11 @@ export function buildConfidenceReport(
       if (status === "accepted") high.accepted++;
       else if (status === "corrected") high.corrected++;
       if (reviewed) high.reviewed++;
+    } else {
+      low.count++;
+      if (status === "accepted") low.accepted++;
+      else if (status === "corrected") low.corrected++;
+      if (reviewed) low.reviewed++;
     }
   }
 
@@ -436,6 +525,20 @@ export function buildConfidenceReport(
       corrected: high.corrected,
       correctedPct: correctionPct(high.corrected, high.reviewed),
       accuracyPct: high.reviewed > 0 ? round1((high.accepted / high.reviewed) * 100) : null,
+      correctedOfAllPct: high.count > 0 ? round1((high.corrected / high.count) * 100) : null,
+    },
+    low: {
+      count: low.count,
+      pct: withConfidence > 0 ? pct(low.count, withConfidence) : null,
+      reviewed: low.reviewed,
+      accepted: low.accepted,
+      corrected: low.corrected,
+      acceptedOfAllPct: low.count > 0 ? round1((low.accepted / low.count) * 100) : null,
+    },
+    within5: {
+      count: within5Count,
+      comparable,
+      pct: comparable > 0 ? round1((within5Count / comparable) * 100) : null,
     },
     matches: {
       comparable,
@@ -469,6 +572,7 @@ export function buildConfidenceReport(
     },
     byAccountant,
     detailed,
+    rows: lite,
     filters,
   };
 }
