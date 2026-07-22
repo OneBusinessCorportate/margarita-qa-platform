@@ -166,6 +166,33 @@ export interface CorrectedDetailRow {
   changedFields: string[];
 }
 
+/**
+ * Компактная строка на КАЖДУЮ AI-оценку в выборке — для drill-down: по клику на
+ * карточку показателя открывается список чатов, стоящих за этой цифрой (с их
+ * оценками AI/Маргариты, уверенностью, статусом и совпадением).
+ */
+export interface ConfidenceRowLite {
+  id: string;
+  date: string;
+  accountant: string | null;
+  chat: string;
+  aiScore: number | null;
+  finalScore: number;
+  scoreDiff: number | null; // final − ai (знаковая)
+  absScoreDiff: number | null;
+  confidence: number | null;
+  status: ReviewStatus;
+  reviewed: boolean;
+  matchStatus: MatchStatus | null;
+  /** conf != null && conf ≥ 90. */
+  high: boolean;
+  /** conf != null && conf < 90. */
+  low: boolean;
+  /** Проверено + есть AI-снимок + |Δ| < 5 (показатель 5). */
+  closeAgreement: boolean;
+  changedFields: string[];
+}
+
 export interface ConfidenceReport {
   total: number; // всего AI-оценок в выборке
   withConfidence: number; // из них с валидной уверенностью
@@ -195,6 +222,8 @@ export interface ConfidenceReport {
   correlationScoreDiff: ConfidenceCorrelation;
   byAccountant: AccountantConfidenceRow[];
   detailed: CorrectedDetailRow[];
+  /** Каждая AI-оценка выборки (для drill-down по карточкам). */
+  rows: ConfidenceRowLite[];
   filters: ConfidenceReportFilters;
 }
 
@@ -321,6 +350,7 @@ export function buildConfidenceReport(
   };
 
   const detailed: CorrectedDetailRow[] = [];
+  const lite: ConfidenceRowLite[] = [];
 
   for (const e of rows) {
     const status = statusOf(e);
@@ -331,6 +361,7 @@ export function buildConfidenceReport(
     const conf = evaluationConfidence(e);
     const reviewed = isReviewed(status);
     const match = matchOf(e);
+    const closeAgreement = reviewed && match != null && match.absScoreDiff < SCORE_TOLERANCE;
 
     // Match statistics (only rows with an AI baseline; independent of conf).
     if (reviewed) {
@@ -345,6 +376,26 @@ export function buildConfidenceReport(
         excludedNoBaseline++;
       }
     }
+
+    // Одна компактная строка на каждую AI-оценку — источник drill-down.
+    lite.push({
+      id: e.id,
+      date: e.checking_date.slice(0, 10),
+      accountant: e.accountant,
+      chat: e.chat_agr_no,
+      aiScore: evaluationAiTotal(e),
+      finalScore: e.total_score,
+      scoreDiff: match ? match.scoreDiff : null,
+      absScoreDiff: match ? match.absScoreDiff : null,
+      confidence: conf,
+      status,
+      reviewed,
+      matchStatus: match ? match.status : null,
+      high: conf != null && conf >= HIGH_CONFIDENCE_THRESHOLD,
+      low: conf != null && conf < HIGH_CONFIDENCE_THRESHOLD,
+      closeAgreement,
+      changedFields: match ? match.changedFields : [],
+    });
 
     // Per-accountant.
     if (reviewed) {
@@ -521,6 +572,7 @@ export function buildConfidenceReport(
     },
     byAccountant,
     detailed,
+    rows: lite,
     filters,
   };
 }

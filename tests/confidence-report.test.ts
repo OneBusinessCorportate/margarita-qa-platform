@@ -307,3 +307,68 @@ test("chat and matchStatus filters narrow the set", () => {
   assert.equal(buildConfidenceReport(evals, { matchStatus: "mismatch" }).total, 1);
   assert.equal(buildConfidenceReport(evals, { matchStatus: "exact" }).matches.exact, 1);
 });
+
+// --- Ключевые показатели калибровки (пп. 3–5) ------------------------------
+
+test("high (≥90%) exposes corrected count and corrected-of-all share (показатель 1)", () => {
+  const evals = [
+    mkEval({ confidence: 92, status: "corrected" }),
+    mkEval({ confidence: 95, status: "corrected" }),
+    mkEval({ confidence: 99, status: "corrected" }),
+    mkEval({ confidence: 91, status: "accepted" }),
+    // <90 must not leak into the high bucket
+    mkEval({ confidence: 80, status: "corrected" }),
+  ];
+  const r = buildConfidenceReport(evals);
+  assert.equal(r.high.count, 4);
+  assert.equal(r.high.corrected, 3);
+  assert.equal(r.high.correctedPct, 75); // 3 corrected / 4 reviewed
+});
+
+test("low (<90%) exposes accepted (не исправлено) count and share (показатель 2)", () => {
+  const evals = [
+    mkEval({ confidence: 80, status: "accepted" }),
+    mkEval({ confidence: 60, status: "accepted" }),
+    mkEval({ confidence: 70, status: "accepted" }),
+    mkEval({ confidence: 55, status: "corrected" }),
+    // ≥90 must not leak into the low bucket
+    mkEval({ confidence: 95, status: "accepted" }),
+  ];
+  const r = buildConfidenceReport(evals);
+  assert.equal(r.low.count, 4);
+  assert.equal(r.low.accepted, 3);
+  assert.equal(r.low.corrected, 1);
+  assert.equal(r.low.notCorrectedPct, 75); // 3 accepted / 4 reviewed
+});
+
+test("closeAgreement: chats where |Margarita − AI| < 5 points, strict boundary (показатель 5)", () => {
+  const evals = [
+    mkMatch({ aiTotal: 88, finalTotal: 88, status: "accepted" }), // Δ0 → close
+    mkMatch({ aiTotal: 88, finalTotal: 85, status: "corrected" }), // Δ3 → close
+    mkMatch({ aiTotal: 88, finalTotal: 83, status: "corrected" }), // Δ5 → NOT close (strict <5)
+    mkMatch({ aiTotal: 88, finalTotal: 60, status: "corrected" }), // Δ28 → not close
+    mkMatch({ aiTotal: 88, finalTotal: 88, status: "not_reviewed" }), // not reviewed → excluded
+  ];
+  const r = buildConfidenceReport(evals);
+  assert.equal(r.closeAgreement.comparable, 4); // reviewed rows with a baseline
+  assert.equal(r.closeAgreement.count, 2); // Δ0 and Δ3
+  assert.equal(r.closeAgreement.pct, 50); // 2 / 4
+});
+
+test("rows carries one drill-down row per evaluation with metric flags", () => {
+  const evals = [
+    mkMatch({ aiTotal: 88, finalTotal: 88, confidence: 95, status: "corrected" }), // high, closeAgreement
+    mkMatch({ aiTotal: 88, finalTotal: 70, confidence: 60, status: "accepted" }), // low, mismatch
+  ];
+  const r = buildConfidenceReport(evals);
+  assert.equal(r.rows.length, 2);
+  const a = r.rows.find((x) => x.confidence === 95)!;
+  assert.equal(a.high, true);
+  assert.equal(a.low, false);
+  assert.equal(a.closeAgreement, true);
+  assert.equal(a.status, "corrected");
+  const b = r.rows.find((x) => x.confidence === 60)!;
+  assert.equal(b.low, true);
+  assert.equal(b.closeAgreement, false);
+  assert.equal(b.matchStatus, "mismatch");
+});

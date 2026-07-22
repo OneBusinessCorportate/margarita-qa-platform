@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { ConfidenceReport } from "@/lib/confidence-report";
+import type { ConfidenceReport, ConfidenceRowLite } from "@/lib/confidence-report";
 import { periodRange, type PeriodPreset } from "@/lib/confidence";
 
 // ---------------------------------------------------------------------------
@@ -332,12 +332,25 @@ function Filters({
   );
 }
 
+/** Открытый drill-down: заголовок + отобранные строки, стоящие за показателем. */
+export interface Drill {
+  title: string;
+  rows: ConfidenceRowLite[];
+}
+
+type DrillFn = (title: string, predicate: (r: ConfidenceRowLite) => boolean) => void;
+
 function Report({ report }: { report: ConfidenceReport }) {
+  const [drill, setDrill] = useState<Drill | null>(null);
+  // Открыть список чатов за показателем: отбираем строки report.rows по
+  // предикату и показываем их в модальном окне.
+  const openDrill: DrillFn = (title, predicate) =>
+    setDrill({ title, rows: report.rows.filter(predicate) });
   return (
     <div className="space-y-6">
-      <CalibrationHighlights report={report} />
-      <SummaryCards report={report} />
-      <MatchCards report={report} />
+      <CalibrationHighlights report={report} onDrill={openDrill} />
+      <SummaryCards report={report} onDrill={openDrill} />
+      <MatchCards report={report} onDrill={openDrill} />
       <RangeTable report={report} />
       <div className="grid gap-6 lg:grid-cols-2">
         <CorrectionByRangeChart report={report} />
@@ -349,11 +362,14 @@ function Report({ report }: { report: ConfidenceReport }) {
       </div>
       <AccountantTable report={report} />
       <DetailedTable report={report} />
+      {drill && (
+        <DrillModal title={drill.title} rows={drill.rows} onClose={() => setDrill(null)} />
+      )}
     </div>
   );
 }
 
-function MatchCards({ report: r }: { report: ConfidenceReport }) {
+function MatchCards({ report: r, onDrill }: { report: ConfidenceReport; onDrill: DrillFn }) {
   const m = r.matches;
   return (
     <div className="space-y-2">
@@ -365,14 +381,14 @@ function MatchCards({ report: r }: { report: ConfidenceReport }) {
         </span>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card title="Точное совпадение (exact)" value={String(m.exact)} sub={fmtNum(m.exactPct, "%")} color="#059669" />
-        <Card title="Частичное (partial)" value={String(m.partial)} sub="±5 баллов / правка критерия" color="#2563eb" />
-        <Card title="Несовпадение (mismatch)" value={String(m.mismatch)} sub={fmtNum(m.mismatchPct, "%")} color="#dc2626" />
-        <Card title="Приемлемо (exact+partial)" value={fmtNum(m.acceptablePct, "%")} sub="доля от сравнимых" color="#059669" />
+        <Card title="Точное совпадение (exact)" value={String(m.exact)} sub={fmtNum(m.exactPct, "%")} color="#059669" onClick={() => onDrill("Точное совпадение", (x) => x.matchStatus === "exact")} />
+        <Card title="Частичное (partial)" value={String(m.partial)} sub="±5 баллов / правка критерия" color="#2563eb" onClick={() => onDrill("Частичное совпадение", (x) => x.matchStatus === "partial")} />
+        <Card title="Несовпадение (mismatch)" value={String(m.mismatch)} sub={fmtNum(m.mismatchPct, "%")} color="#dc2626" onClick={() => onDrill("Несовпадение", (x) => x.matchStatus === "mismatch")} />
+        <Card title="Приемлемо (exact+partial)" value={fmtNum(m.acceptablePct, "%")} sub="доля от сравнимых" color="#059669" onClick={() => onDrill("Приемлемо (exact+partial)", (x) => x.matchStatus === "exact" || x.matchStatus === "partial")} />
         <Card title="Средняя разница баллов" value={m.avgScoreDiff == null ? "Нет данных" : String(m.avgScoreDiff)} sub={`|разница| ${fmtNum(m.avgAbsScoreDiff)}`} />
         <Card title="Медиана разницы баллов" value={m.medianScoreDiff == null ? "Нет данных" : String(m.medianScoreDiff)} />
-        <Card title="Ср. уверенность — совпало" value={fmtNum(m.avgConfidenceMatched, "%")} color="#059669" />
-        <Card title="Ср. уверенность — несовпало" value={fmtNum(m.avgConfidenceMismatched, "%")} color="#dc2626" />
+        <Card title="Ср. уверенность — совпало" value={fmtNum(m.avgConfidenceMatched, "%")} color="#059669" onClick={() => onDrill("Совпало (exact+partial)", (x) => x.matchStatus === "exact" || x.matchStatus === "partial")} />
+        <Card title="Ср. уверенность — несовпало" value={fmtNum(m.avgConfidenceMismatched, "%")} color="#dc2626" onClick={() => onDrill("Несовпадение", (x) => x.matchStatus === "mismatch")} />
       </div>
     </div>
   );
@@ -383,72 +399,94 @@ function Card({
   value,
   sub,
   color = "#1f2937",
+  onClick,
 }: {
   title: string;
   value: string;
   sub?: string;
   color?: string;
+  onClick?: () => void;
 }) {
-  return (
-    <div className="card p-4">
+  const body = (
+    <>
       <div className="text-xs text-gray-500 mb-1">{title}</div>
       <div className="text-2xl font-bold tabular-nums" style={{ color }}>
         {value}
       </div>
       {sub && <div className="text-xs text-gray-400 mt-1">{sub}</div>}
-    </div>
+      {onClick && <div className="text-[11px] text-blue-600 mt-1">Показать чаты →</div>}
+    </>
   );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="card p-4 text-left transition hover:shadow-md hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
+      >
+        {body}
+      </button>
+    );
+  }
+  return <div className="card p-4">{body}</div>;
 }
 
-function SummaryCards({ report: r }: { report: ConfidenceReport }) {
+function SummaryCards({ report: r, onDrill }: { report: ConfidenceReport; onDrill: DrillFn }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Card title="Всего AI-оценок" value={String(r.total)} sub={`${r.withConfidence} с уверенностью · ${r.noConfidence} без данных`} />
+      <Card title="Всего AI-оценок" value={String(r.total)} sub={`${r.withConfidence} с уверенностью · ${r.noConfidence} без данных`} onClick={() => onDrill("Все AI-оценки", () => true)} />
       <Card
         title="Принято без изменений"
         value={String(r.accepted)}
         sub={`${r.acceptedPct}% от всех`}
         color="#059669"
+        onClick={() => onDrill("Принято без изменений", (x) => x.status === "accepted")}
       />
       <Card
         title="Исправлено Маргаритой"
         value={String(r.corrected)}
         sub={`${r.correctedPct}% от всех`}
         color="#d97706"
+        onClick={() => onDrill("Исправлено Маргаритой", (x) => x.status === "corrected")}
       />
       <Card
         title="Не активно"
         value={String(r.notReviewed)}
         sub={`${r.notReviewedPct}% от всех`}
         color="#6b7280"
+        onClick={() => onDrill("Не активно / не проверено", (x) => x.status === "not_reviewed")}
       />
       <Card
         title="Процент исправлений"
         value={fmtNum(r.overallCorrectionPct, "%")}
         sub="исправлено / проверено"
         color="#d97706"
+        onClick={() => onDrill("Исправлено Маргаритой", (x) => x.status === "corrected")}
       />
       <Card
         title="Средняя уверенность — принятые"
         value={fmtNum(r.avgConfidenceAccepted, "%")}
         color="#059669"
+        onClick={() => onDrill("Принято без изменений", (x) => x.status === "accepted")}
       />
       <Card
         title="Средняя уверенность — исправленные"
         value={fmtNum(r.avgConfidenceCorrected, "%")}
         color="#d97706"
+        onClick={() => onDrill("Исправлено Маргаритой", (x) => x.status === "corrected")}
       />
       <Card
         title="Оценок с уверенностью ≥90%"
         value={String(r.high.count)}
         sub={r.high.pct == null ? "Нет данных" : `${r.high.pct}% · исправлено ${r.high.corrected}`}
         color="#2563eb"
+        onClick={() => onDrill("Уверенность ≥90%", (x) => x.high)}
       />
     </div>
   );
 }
 
-function CalibrationHighlights({ report: r }: { report: ConfidenceReport }) {
+function CalibrationHighlights({ report: r, onDrill }: { report: ConfidenceReport; onDrill: DrillFn }) {
   return (
     <div className="space-y-3">
       {/* Цель калибровки (п.6). */}
@@ -461,13 +499,17 @@ function CalibrationHighlights({ report: r }: { report: ConfidenceReport }) {
           (≥90%), Маргарите почти не нужно исправлять оценку, а там, где не уверена
           (&lt;90%), исправления должны быть частыми. Два показателя ниже — это
           «ошибки калибровки»: чем они меньше, тем ближе автоматические оценки к
-          оценкам Маргариты.
+          оценкам Маргариты. Нажмите любой показатель — покажем стоящие за ним чаты.
         </p>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Основной показатель 1 (п.3): исправлено из уверенности ≥90%. */}
-        <div className="card p-6 bg-gradient-to-br from-amber-50 to-white border-amber-200">
+        <button
+          type="button"
+          onClick={() => onDrill("Исправлено · уверенность ≥90%", (x) => x.high && x.status === "corrected")}
+          className="card p-6 text-left w-full bg-gradient-to-br from-amber-50 to-white border-amber-200 transition hover:shadow-md hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
+        >
           <div className="text-sm font-medium text-gray-600">
             Показатель 1 — исправлено при уверенности{" "}
             <span className="font-semibold">≥90%</span>
@@ -489,15 +531,34 @@ function CalibrationHighlights({ report: r }: { report: ConfidenceReport }) {
           </div>
           <div className="mt-3 border-t pt-2 text-sm text-gray-500">
             Всего оценок с уверенностью ≥90%:{" "}
-            <span className="font-semibold tabular-nums text-gray-700">
+            <span
+              className="font-semibold tabular-nums text-gray-700 underline decoration-dotted"
+              role="link"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDrill("Уверенность ≥90%", (x) => x.high);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  onDrill("Уверенность ≥90%", (x) => x.high);
+                }
+              }}
+            >
               {r.high.count}
             </span>{" "}
             <span className="text-gray-400">(проверено {r.high.reviewed})</span>
           </div>
-        </div>
+          <div className="text-[11px] text-blue-600 mt-2">Показать чаты →</div>
+        </button>
 
         {/* Основной показатель 2 (п.4): НЕ исправлено из уверенности <90%. */}
-        <div className="card p-6 bg-gradient-to-br from-blue-50 to-white border-blue-200">
+        <button
+          type="button"
+          onClick={() => onDrill("Принято без изменений · уверенность <90%", (x) => x.low && x.status === "accepted")}
+          className="card p-6 text-left w-full bg-gradient-to-br from-blue-50 to-white border-blue-200 transition hover:shadow-md hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
+        >
           <div className="text-sm font-medium text-gray-600">
             Показатель 2 — НЕ исправлено при уверенности{" "}
             <span className="font-semibold">&lt;90%</span>
@@ -519,16 +580,35 @@ function CalibrationHighlights({ report: r }: { report: ConfidenceReport }) {
           </div>
           <div className="mt-3 border-t pt-2 text-sm text-gray-500">
             Всего оценок с уверенностью &lt;90%:{" "}
-            <span className="font-semibold tabular-nums text-gray-700">
+            <span
+              className="font-semibold tabular-nums text-gray-700 underline decoration-dotted"
+              role="link"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDrill("Уверенность <90%", (x) => x.low);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  onDrill("Уверенность <90%", (x) => x.low);
+                }
+              }}
+            >
               {r.low.count}
             </span>{" "}
             <span className="text-gray-400">(проверено {r.low.reviewed})</span>
           </div>
-        </div>
+          <div className="text-[11px] text-blue-600 mt-2">Показать чаты →</div>
+        </button>
       </div>
 
       {/* Показатель 5: чаты с отклонением оценки <5% между Маргаритой и AI. */}
-      <div className="card p-6 bg-gradient-to-br from-emerald-50 to-white border-emerald-200">
+      <button
+        type="button"
+        onClick={() => onDrill("Расхождение с AI < 5%", (x) => x.closeAgreement)}
+        className="card p-6 text-left w-full bg-gradient-to-br from-emerald-50 to-white border-emerald-200 transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-300"
+      >
         <div className="text-sm font-medium text-gray-600">
           Согласие оценок: чаты с отклонением{" "}
           <span className="font-semibold">&lt;5%</span> между Маргаритой и AI
@@ -548,7 +628,8 @@ function CalibrationHighlights({ report: r }: { report: ConfidenceReport }) {
           {r.closeAgreement.comparable === 0 &&
             " Нет сравнимых чатов в выборке."}
         </div>
-      </div>
+        <div className="text-[11px] text-blue-600 mt-2">Показать чаты →</div>
+      </button>
     </div>
   );
 }
@@ -868,6 +949,110 @@ function DetailedTable({ report: r }: { report: ConfidenceReport }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
+  accepted: { text: "Принято без изменений", cls: "bg-emerald-100 text-emerald-700" },
+  corrected: { text: "Исправлено", cls: "bg-amber-100 text-amber-800" },
+  not_reviewed: { text: "Не активно", cls: "bg-gray-100 text-gray-500" },
+};
+
+// --- Drill-down: чаты за показателем ---------------------------------------
+// Модальное окно со списком чатов (их оценки AI/Маргариты, разница, уверенность,
+// статус, совпадение) — открывается по клику на любую карточку показателя.
+function DrillModal({
+  title,
+  rows,
+  onClose,
+}: {
+  title: string;
+  rows: ConfidenceRowLite[];
+  onClose: () => void;
+}) {
+  // Закрытие по Esc.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const shown = rows.slice(0, 500);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="card w-full max-w-5xl my-8 bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <div className="font-semibold text-sm">
+            {title}{" "}
+            <span className="font-normal text-gray-400">
+              — {rows.length} {rows.length === 1 ? "чат" : "чатов"}
+              {rows.length > shown.length && ` (показано ${shown.length})`}
+            </span>
+          </div>
+          <button className="btn-secondary !px-3 !py-1 text-xs" onClick={onClose}>
+            Закрыть ✕
+          </button>
+        </div>
+        {shown.length === 0 ? (
+          <div className="p-8 text-center text-sm text-gray-500">Нет чатов в этой выборке.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-gray-500 border-b">
+                  <th className="px-2 py-2">Дата</th>
+                  <th className="px-2 py-2">Бухгалтер</th>
+                  <th className="px-2 py-2">Чат</th>
+                  <th className="px-2 py-2 text-right">AI</th>
+                  <th className="px-2 py-2 text-right">Маргарита</th>
+                  <th className="px-2 py-2 text-right">Δ</th>
+                  <th className="px-2 py-2 text-right">Увер.</th>
+                  <th className="px-2 py-2">Статус</th>
+                  <th className="px-2 py-2">Совпадение</th>
+                  <th className="px-2 py-2">Что изменено</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((d) => {
+                  const m = d.matchStatus ? MATCH_LABEL[d.matchStatus] : null;
+                  const s = STATUS_LABEL[d.status];
+                  return (
+                    <tr key={d.id} className="border-b last:border-0">
+                      <td className="px-2 py-1.5 whitespace-nowrap">{d.date}</td>
+                      <td className="px-2 py-1.5">{d.accountant ?? "—"}</td>
+                      <td className="px-2 py-1.5 font-medium">{d.chat}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{d.aiScore ?? "—"}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{d.finalScore}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-semibold">
+                        {d.scoreDiff == null ? "—" : `${d.scoreDiff > 0 ? "+" : ""}${d.scoreDiff}`}
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">
+                        {d.confidence == null ? "н/д" : `${d.confidence}%`}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {s && <span className={`inline-block rounded px-1.5 py-0.5 ${s.cls}`}>{s.text}</span>}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {m && <span className={`inline-block rounded px-1.5 py-0.5 ${m.cls}`}>{m.text}</span>}
+                      </td>
+                      <td className="px-2 py-1.5 text-gray-600">{d.changedFields.join(", ") || "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
