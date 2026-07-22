@@ -228,12 +228,26 @@ export default function ScoringPanel({
   // (она отвечает клиенту в Telegram и возвращается на вкладку → статус «Ждёт
   // ответа» и оценки подтягиваются сразу), and on a short background interval.
   useEffect(() => {
-    const refresh = () => {
+    // Жалоба QA «частые обновления страницы»: раньше список обновлялся каждые
+    // 5 минут И при КАЖДОМ возврате фокуса (её рабочий цикл — ответить в Telegram
+    // и вернуться), из-за чего страница «дёргалась» постоянно. Теперь:
+    //   • немедленный refresh на монтировании остаётся (заменяем устаревший
+    //     Router Cache — иначе «данные только после нескольких обновлений»);
+    //   • обновления по фокусу/видимости и по таймеру ограничены throttle —
+    //     не чаще одного раза в 2 минуты;
+    //   • фоновый интервал увеличен с 5 до 40 минут (как и обещает подсказка на
+    //     кнопке «Обновить»). Свежесть по-прежнему обеспечивает возврат фокуса.
+    let lastRefresh = 0;
+    const MIN_GAP_MS = 2 * 60 * 1000;
+    const refresh = (force = false) => {
       if (typeof document !== "undefined" && document.hidden) return;
+      const now = Date.now();
+      if (!force && now - lastRefresh < MIN_GAP_MS) return;
+      lastRefresh = now;
       router.refresh();
     };
-    refresh(); // немедленно на монтировании — заменяем устаревший Router Cache
-    const id = setInterval(refresh, 5 * 60 * 1000);
+    refresh(true); // немедленно на монтировании — заменяем устаревший Router Cache
+    const id = setInterval(() => refresh(), 40 * 60 * 1000);
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
@@ -1571,14 +1585,16 @@ function ChatScoreRow({
       ) ?? "not_reviewed";
   const reviewBadge =
     reviewStatus === "accepted"
-      ? { text: "✓ Принято без изменений", cls: "bg-green-100 text-green-700" }
+      ? // Сохранено без изменений (решение владельца: слова «Принять/Принято»
+        // убрать, оставить «Сохранить»). Совпадение с прогнозом AI → зелёный.
+        { text: "✓ Сохранено без изменений", cls: "bg-green-100 text-green-700" }
       : reviewStatus === "corrected"
         ? { text: "✎ Исправлено Маргаритой", cls: "bg-amber-100 text-amber-800" }
         : // Неактивный чат, который ещё не оценивали, — это НЕ «не проверено»
           // (по нему QA не требуется). Показываем «Не был активен», а не «⏳».
           chat.status === "Inactive"
           ? { text: "🚫 Не был активен", cls: "bg-gray-100 text-gray-500" }
-          : { text: "⏳ Не проверено", cls: "bg-gray-100 text-gray-500" };
+          : { text: "⏳ Не активно", cls: "bg-gray-100 text-gray-500" };
   // Честная плашка уверенности: ярлык + тон из confidenceDisplay. Низкая
   // уверенность / неполные данные / предварительная калибровка → предупреждающий
   // стиль (не «всё зелёное»). «Недостаточно данных» вместо подмены на 90%.
@@ -2292,10 +2308,10 @@ function ChatScoreRow({
           </span>
         </td>
         {/* Кнопку «Принять» убрали (решение владельца): строка «Вы» уже
-            предзаполнена прогнозом AI, поэтому достаточно нажать «Оценить».
-            Если Маргарита ничего не меняет — статус «Принято без изменений»,
-            если правит хотя бы одну ячейку — «Исправлено Маргаритой». Так
-            модель учится на её правках. Ячейку оставляем пустой, чтобы не
+            предзаполнена прогнозом AI, поэтому достаточно нажать «Сохранить».
+            Если Маргарита ничего не меняет — статус «Сохранено без изменений»
+            (зелёный), если правит хотя бы одну ячейку — «Исправлено Маргаритой».
+            Так модель учится на её правках. Ячейку оставляем пустой, чтобы не
             ломать выравнивание колонок с шапкой и строкой «Вы». */}
         <td className={`${aiCell} whitespace-nowrap text-right`} aria-hidden="true" />
       </tr>
@@ -2426,7 +2442,7 @@ function ChatScoreRow({
             onClick={save}
             disabled={saving}
           >
-            {saving ? "Сохраняю…" : savedId ? "✓ Сохранено · изменить" : "Оценить"}
+            {saving ? "Сохраняю…" : savedId ? "✓ Сохранено · изменить" : "Сохранить"}
           </button>
           {mailingPersistError && (
             <div
@@ -2602,7 +2618,7 @@ function RoleQaRow({
           onClick={save}
           disabled={saving}
         >
-          {saving ? "Сохраняю…" : savedId ? "✓ Сохранено · изменить" : "Оценить"}
+          {saving ? "Сохраняю…" : savedId ? "✓ Сохранено · изменить" : "Сохранить"}
         </button>
         {error && <span className="ml-1 text-[10px] text-red-600">{error}</span>}
       </td>

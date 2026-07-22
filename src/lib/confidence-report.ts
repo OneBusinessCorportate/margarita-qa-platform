@@ -83,33 +83,32 @@ export interface ConfidenceHighMetrics {
   correctedPct: number | null; // corrected / reviewed × 100
   /** «Точность оценок с уверенностью 90%+» = accepted / reviewed × 100. */
   accuracyPct: number | null;
-  /** Доля исправленных от ВСЕХ оценок ≥90% (corrected / count × 100). */
-  correctedOfAllPct: number | null;
 }
 
 /**
- * Метрики бакета уверенности <90% (зеркало high) — для «показателя 2»:
- * сколько НЕ исправлено (accepted) из оценок с уверенностью <90%.
+ * Метрики «низкой» уверенности (<90%). Зеркало ConfidenceHighMetrics —
+ * нужны для основного показателя 2 «сколько НЕ исправлено из уверенности <90%»:
+ * модель была не уверена, а оценка всё равно оказалась верной (принята без
+ * изменений) → уверенность занижена, есть куда калибровать.
  */
 export interface ConfidenceLowMetrics {
   count: number; // оценок с уверенностью <90%
   pct: number | null; // % от оценок с валидной уверенностью
   reviewed: number;
-  accepted: number; // «не исправлено» = принято без изменений
+  accepted: number; // проверено и НЕ исправлено (принято без изменений)
   corrected: number;
-  /** accepted / count × 100 — доля НЕ исправленных от всех <90%. */
-  acceptedOfAllPct: number | null;
+  /** «Не исправлено» = accepted / reviewed × 100. */
+  notCorrectedPct: number | null;
 }
 
 /**
- * «Показатель 3»: чаты, где расхождение оценки Маргариты и AI-агента <5%
- * (|Δ баллов| < 5 на нормированной шкале 0..100). Считается по проверенным
- * строкам с исходным AI-снимком (comparable).
+ * Согласие Маргариты и AI по баллам: сколько сравнимых чатов (проверено, есть
+ * AI-снимок) с отклонением итоговой оценки < 5% (|финал − AI| < 5 из 100).
  */
-export interface WithinToleranceMetrics {
-  count: number; // чатов с расхождением <5%
-  comparable: number; // всего сравнимых (проверено + есть AI-снимок)
-  pct: number | null; // count / comparable × 100
+export interface CloseAgreementMetrics {
+  count: number;
+  comparable: number;
+  pct: number | null;
 }
 
 export interface ConfidenceCorrelation {
@@ -170,7 +169,7 @@ export interface CorrectedDetailRow {
 /**
  * Компактная строка на КАЖДУЮ AI-оценку в выборке — для drill-down: по клику на
  * карточку показателя открывается список чатов, стоящих за этой цифрой (с их
- * оценками AI/Маргариты, уверенностью и статусом).
+ * оценками AI/Маргариты, уверенностью, статусом и совпадением).
  */
 export interface ConfidenceRowLite {
   id: string;
@@ -189,8 +188,8 @@ export interface ConfidenceRowLite {
   high: boolean;
   /** conf != null && conf < 90. */
   low: boolean;
-  /** Проверено + есть AI-снимок + |Δ| < 5. */
-  within5: boolean;
+  /** Проверено + есть AI-снимок + |Δ| < 5 (показатель 5). */
+  closeAgreement: boolean;
   changedFields: string[];
 }
 
@@ -212,8 +211,10 @@ export interface ConfidenceReport {
   avgConfidenceCorrected: number | null;
   ranges: ConfidenceRangeRow[];
   high: ConfidenceHighMetrics;
+  /** Метрики уверенности <90% (основной показатель 2). */
   low: ConfidenceLowMetrics;
-  within5: WithinToleranceMetrics;
+  /** Чаты с отклонением оценки < 5% между Маргаритой и AI (показатель 5). */
+  closeAgreement: CloseAgreementMetrics;
   matches: MatchMetrics;
   /** Корреляция уверенность ↔ факт исправления (0/1, point-biserial). */
   correlation: ConfidenceCorrelation;
@@ -302,6 +303,8 @@ export function buildConfidenceReport(
   let mPartial = 0;
   let mMismatch = 0;
   let excludedNoBaseline = 0;
+  // Сравнимые чаты с отклонением итоговой оценки < 5% (показатель 5).
+  let closeAgreementCount = 0;
   const signedDiffs: number[] = [];
   const absDiffs: number[] = [];
 
@@ -326,8 +329,6 @@ export function buildConfidenceReport(
 
   const high = { count: 0, reviewed: 0, accepted: 0, corrected: 0 };
   const low = { count: 0, reviewed: 0, accepted: 0, corrected: 0 };
-  // Чаты с расхождением |Δ| < 5 (проверено + есть AI-снимок) — «показатель 3».
-  let within5Count = 0;
 
   // Per-accountant accumulation.
   interface AccAcc {
@@ -360,7 +361,7 @@ export function buildConfidenceReport(
     const conf = evaluationConfidence(e);
     const reviewed = isReviewed(status);
     const match = matchOf(e);
-    const within5 = reviewed && match != null && match.absScoreDiff < SCORE_TOLERANCE;
+    const closeAgreement = reviewed && match != null && match.absScoreDiff < SCORE_TOLERANCE;
 
     // Match statistics (only rows with an AI baseline; independent of conf).
     if (reviewed) {
@@ -368,9 +369,9 @@ export function buildConfidenceReport(
         if (match.status === "exact") mExact++;
         else if (match.status === "partial") mPartial++;
         else mMismatch++;
+        if (match.absScoreDiff < SCORE_TOLERANCE) closeAgreementCount++;
         signedDiffs.push(match.scoreDiff);
         absDiffs.push(match.absScoreDiff);
-        if (within5) within5Count++;
       } else {
         excludedNoBaseline++;
       }
@@ -392,7 +393,7 @@ export function buildConfidenceReport(
       matchStatus: match ? match.status : null,
       high: conf != null && conf >= HIGH_CONFIDENCE_THRESHOLD,
       low: conf != null && conf < HIGH_CONFIDENCE_THRESHOLD,
-      within5,
+      closeAgreement,
       changedFields: match ? match.changedFields : [],
     });
 
@@ -525,7 +526,6 @@ export function buildConfidenceReport(
       corrected: high.corrected,
       correctedPct: correctionPct(high.corrected, high.reviewed),
       accuracyPct: high.reviewed > 0 ? round1((high.accepted / high.reviewed) * 100) : null,
-      correctedOfAllPct: high.count > 0 ? round1((high.corrected / high.count) * 100) : null,
     },
     low: {
       count: low.count,
@@ -533,12 +533,12 @@ export function buildConfidenceReport(
       reviewed: low.reviewed,
       accepted: low.accepted,
       corrected: low.corrected,
-      acceptedOfAllPct: low.count > 0 ? round1((low.accepted / low.count) * 100) : null,
+      notCorrectedPct: low.reviewed > 0 ? round1((low.accepted / low.reviewed) * 100) : null,
     },
-    within5: {
-      count: within5Count,
+    closeAgreement: {
+      count: closeAgreementCount,
       comparable,
-      pct: comparable > 0 ? round1((within5Count / comparable) * 100) : null,
+      pct: comparable > 0 ? pct(closeAgreementCount, comparable) : null,
     },
     matches: {
       comparable,
