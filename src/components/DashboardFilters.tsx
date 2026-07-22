@@ -42,9 +42,12 @@ function weekLabel(mon: Date): string {
 export default function DashboardFilters({
   accountants,
   initial,
+  basePath = "/dashboard",
 }: {
   accountants: string[];
   initial: Filters;
+  /** Куда применять фильтр периода. По умолчанию «Отчёт»; на «Сообщениях» — /messages. */
+  basePath?: string;
 }) {
   const router = useRouter();
   const [f, setF] = useState<Filters>(initial);
@@ -55,7 +58,7 @@ export default function DashboardFilters({
     if (next.to) params.set("to", next.to);
     if (next.accountant) params.set("accountant", next.accountant);
     if (next.client) params.set("client", next.client);
-    router.push(`/dashboard?${params.toString()}`);
+    router.push(`${basePath}?${params.toString()}`);
   }
 
   // Apply a date range while keeping the accountant / client filters.
