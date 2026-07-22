@@ -45,7 +45,7 @@ const RANGE_OPTIONS = [
 const STATUS_OPTIONS = [
   { id: "accepted", label: "Принято без изменений" },
   { id: "corrected", label: "Исправлено Маргаритой" },
-  { id: "not_reviewed", label: "Не проверено" },
+  { id: "not_reviewed", label: "Не активно" },
 ];
 
 function emptyFilters(): Filters {
@@ -335,9 +335,9 @@ function Filters({
 function Report({ report }: { report: ConfidenceReport }) {
   return (
     <div className="space-y-6">
+      <CalibrationHighlights report={report} />
       <SummaryCards report={report} />
       <MatchCards report={report} />
-      <HighlightMetric report={report} />
       <RangeTable report={report} />
       <div className="grid gap-6 lg:grid-cols-2">
         <CorrectionByRangeChart report={report} />
@@ -417,7 +417,7 @@ function SummaryCards({ report: r }: { report: ConfidenceReport }) {
         color="#d97706"
       />
       <Card
-        title="Не проверено"
+        title="Не активно"
         value={String(r.notReviewed)}
         sub={`${r.notReviewedPct}% от всех`}
         color="#6b7280"
@@ -448,22 +448,106 @@ function SummaryCards({ report: r }: { report: ConfidenceReport }) {
   );
 }
 
-function HighlightMetric({ report: r }: { report: ConfidenceReport }) {
-  const val = r.high.accuracyPct;
+function CalibrationHighlights({ report: r }: { report: ConfidenceReport }) {
   return (
-    <div className="card p-6 bg-gradient-to-br from-emerald-50 to-blue-50 border-emerald-200">
-      <div className="text-sm font-medium text-gray-600">
-        Точность оценок с уверенностью 90%+
+    <div className="space-y-3">
+      {/* Цель калибровки (п.6). */}
+      <div className="card p-4 bg-gradient-to-br from-sky-50 to-emerald-50 border-sky-200">
+        <div className="text-sm font-semibold text-gray-800">
+          🎯 Цель: откалибровать систему QA-анализа
+        </div>
+        <p className="text-sm text-gray-600 mt-1">
+          Уверенность модели должна отражать реальность: там, где модель уверена
+          (≥90%), Маргарите почти не нужно исправлять оценку, а там, где не уверена
+          (&lt;90%), исправления должны быть частыми. Два показателя ниже — это
+          «ошибки калибровки»: чем они меньше, тем ближе автоматические оценки к
+          оценкам Маргариты.
+        </p>
       </div>
-      <div className="text-5xl font-bold tabular-nums text-emerald-700 mt-2">
-        {fmtNum(val, "%")}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Основной показатель 1 (п.3): исправлено из уверенности ≥90%. */}
+        <div className="card p-6 bg-gradient-to-br from-amber-50 to-white border-amber-200">
+          <div className="text-sm font-medium text-gray-600">
+            Показатель 1 — исправлено при уверенности{" "}
+            <span className="font-semibold">≥90%</span>
+          </div>
+          <div className="text-xs text-gray-500">
+            модель была уверена, но Маргарита всё равно поправила — переоценка
+            уверенности
+          </div>
+          <div className="text-5xl font-bold tabular-nums text-amber-700 mt-2">
+            {r.high.corrected}
+          </div>
+          <div className="text-sm text-gray-600 mt-1">
+            исправлено{" "}
+            {r.high.reviewed > 0 && (
+              <span className="text-gray-400">
+                ({fmtNum(r.high.correctedPct, "%")} от проверенных ≥90%)
+              </span>
+            )}
+          </div>
+          <div className="mt-3 border-t pt-2 text-sm text-gray-500">
+            Всего оценок с уверенностью ≥90%:{" "}
+            <span className="font-semibold tabular-nums text-gray-700">
+              {r.high.count}
+            </span>{" "}
+            <span className="text-gray-400">(проверено {r.high.reviewed})</span>
+          </div>
+        </div>
+
+        {/* Основной показатель 2 (п.4): НЕ исправлено из уверенности <90%. */}
+        <div className="card p-6 bg-gradient-to-br from-blue-50 to-white border-blue-200">
+          <div className="text-sm font-medium text-gray-600">
+            Показатель 2 — НЕ исправлено при уверенности{" "}
+            <span className="font-semibold">&lt;90%</span>
+          </div>
+          <div className="text-xs text-gray-500">
+            модель была не уверена, но оценка оказалась верной — заниженная
+            уверенность
+          </div>
+          <div className="text-5xl font-bold tabular-nums text-blue-700 mt-2">
+            {r.low.accepted}
+          </div>
+          <div className="text-sm text-gray-600 mt-1">
+            принято без изменений{" "}
+            {r.low.reviewed > 0 && (
+              <span className="text-gray-400">
+                ({fmtNum(r.low.notCorrectedPct, "%")} от проверенных &lt;90%)
+              </span>
+            )}
+          </div>
+          <div className="mt-3 border-t pt-2 text-sm text-gray-500">
+            Всего оценок с уверенностью &lt;90%:{" "}
+            <span className="font-semibold tabular-nums text-gray-700">
+              {r.low.count}
+            </span>{" "}
+            <span className="text-gray-400">(проверено {r.low.reviewed})</span>
+          </div>
+        </div>
       </div>
-      <div className="text-xs text-gray-500 mt-2">
-        Принято без изменений ({r.high.accepted}) / проверено ({r.high.reviewed}) × 100.
-        {r.high.reviewed === 0 && " Нет проверенных оценок ≥90% в выборке."}
-      </div>
-      <div className="text-xs text-gray-500 mt-1">
-        Гипотеза: оценки с уверенностью ≥90% должны редко требовать исправлений.
+
+      {/* Показатель 5: чаты с отклонением оценки <5% между Маргаритой и AI. */}
+      <div className="card p-6 bg-gradient-to-br from-emerald-50 to-white border-emerald-200">
+        <div className="text-sm font-medium text-gray-600">
+          Согласие оценок: чаты с отклонением{" "}
+          <span className="font-semibold">&lt;5%</span> между Маргаритой и AI
+        </div>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-2">
+          <span className="text-5xl font-bold tabular-nums text-emerald-700">
+            {r.closeAgreement.count}
+          </span>
+          <span className="text-3xl font-semibold tabular-nums text-emerald-600">
+            {r.closeAgreement.pct == null ? "" : `${r.closeAgreement.pct}%`}
+          </span>
+        </div>
+        <div className="text-xs text-gray-500 mt-2">
+          Из {r.closeAgreement.comparable} сравнимых чатов (проверено, есть
+          AI-снимок) итоговая оценка Маргариты и AI расходится менее чем на 5
+          баллов из 100.
+          {r.closeAgreement.comparable === 0 &&
+            " Нет сравнимых чатов в выборке."}
+        </div>
       </div>
     </div>
   );
@@ -483,7 +567,7 @@ function RangeTable({ report: r }: { report: ConfidenceReport }) {
             <th className="px-3 py-2 text-right" title="Несовпадение">Несовп.</th>
             <th className="px-3 py-2 text-right">Принято</th>
             <th className="px-3 py-2 text-right">Исправлено</th>
-            <th className="px-3 py-2 text-right">Не пров.</th>
+            <th className="px-3 py-2 text-right">Не акт.</th>
             <th className="px-3 py-2 text-right">% исправлений</th>
             <th className="px-3 py-2 text-right" title="Средний модуль разницы баллов">Ср. Δ</th>
           </tr>

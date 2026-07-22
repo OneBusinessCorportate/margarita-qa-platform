@@ -69,6 +69,19 @@ export default function TasksPanel({
   const chatMap = useMemo(() => new Map(chats.map((c) => [c.agr_no, c])), [chats]);
   const asOf = today();
 
+  // Кого можно назначить менеджером. Ответственные менеджеры клиентов (Shogher,
+  // manager_onebusiness и т.п.) НЕ входят в справочник бухгалтеров, поэтому
+  // раньше их не было в выпадающем списке — задачу менеджеру нельзя было
+  // назначить на реального человека (баг «задача менеджеру»). Собираем имена из
+  // поля «менеджер» чатов + уже сохранённых задач + пула сотрудников.
+  const managerOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of chats) if (c.manager) s.add(c.manager);
+    for (const t of tasks) if (t.manager) s.add(t.manager);
+    for (const a of accountants) s.add(a.name);
+    return [...s].sort();
+  }, [chats, tasks, accountants]);
+
   // Does a task match the search box? Matches the chat (№ / name / link via
   // matchesChatQuery), plus the task's own accountant and description text.
   const taskMatches = useMemo(() => {
@@ -377,9 +390,9 @@ export default function TasksPanel({
                     onChange={(e) => setDraft({ ...draft, manager: e.target.value })}
                   >
                     <option value="">— менеджер —</option>
-                    {accountants.map((a) => (
-                      <option key={a.name} value={a.name}>
-                        {a.name}
+                    {managerOptions.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
                       </option>
                     ))}
                   </select>

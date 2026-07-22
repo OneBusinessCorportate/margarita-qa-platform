@@ -37,7 +37,7 @@ import {
   pearson,
   rangeOf,
 } from "./confidence";
-import { classifyMatch, median, type MatchStatus } from "./match";
+import { classifyMatch, median, SCORE_TOLERANCE, type MatchStatus } from "./match";
 import { bandFor, type QualityBand } from "./scoring";
 
 export interface ConfidenceReportFilters {
@@ -83,6 +83,32 @@ export interface ConfidenceHighMetrics {
   correctedPct: number | null; // corrected / reviewed × 100
   /** «Точность оценок с уверенностью 90%+» = accepted / reviewed × 100. */
   accuracyPct: number | null;
+}
+
+/**
+ * Метрики «низкой» уверенности (<90%). Зеркало ConfidenceHighMetrics —
+ * нужны для основного показателя 2 «сколько НЕ исправлено из уверенности <90%»:
+ * модель была не уверена, а оценка всё равно оказалась верной (принята без
+ * изменений) → уверенность занижена, есть куда калибровать.
+ */
+export interface ConfidenceLowMetrics {
+  count: number; // оценок с уверенностью <90%
+  pct: number | null; // % от оценок с валидной уверенностью
+  reviewed: number;
+  accepted: number; // проверено и НЕ исправлено (принято без изменений)
+  corrected: number;
+  /** «Не исправлено» = accepted / reviewed × 100. */
+  notCorrectedPct: number | null;
+}
+
+/**
+ * Согласие Маргариты и AI по баллам: сколько сравнимых чатов (проверено, есть
+ * AI-снимок) с отклонением итоговой оценки < 5% (|финал − AI| < 5 из 100).
+ */
+export interface CloseAgreementMetrics {
+  count: number;
+  comparable: number;
+  pct: number | null;
 }
 
 export interface ConfidenceCorrelation {
@@ -158,6 +184,10 @@ export interface ConfidenceReport {
   avgConfidenceCorrected: number | null;
   ranges: ConfidenceRangeRow[];
   high: ConfidenceHighMetrics;
+  /** Метрики уверенности <90% (основной показатель 2). */
+  low: ConfidenceLowMetrics;
+  /** Чаты с отклонением оценки < 5% между Маргаритой и AI (показатель 5). */
+  closeAgreement: CloseAgreementMetrics;
   matches: MatchMetrics;
   /** Корреляция уверенность ↔ факт исправления (0/1, point-biserial). */
   correlation: ConfidenceCorrelation;
@@ -244,6 +274,8 @@ export function buildConfidenceReport(
   let mPartial = 0;
   let mMismatch = 0;
   let excludedNoBaseline = 0;
+  // Сравнимые чаты с отклонением итоговой оценки < 5% (показатель 5).
+  let closeAgreementCount = 0;
   const signedDiffs: number[] = [];
   const absDiffs: number[] = [];
 
@@ -267,6 +299,7 @@ export function buildConfidenceReport(
   const rangeAbsDiffs = new Map<string, number[]>(CONFIDENCE_RANGES.map((r) => [r.id, []]));
 
   const high = { count: 0, reviewed: 0, accepted: 0, corrected: 0 };
+  const low = { count: 0, reviewed: 0, accepted: 0, corrected: 0 };
 
   // Per-accountant accumulation.
   interface AccAcc {
@@ -305,6 +338,7 @@ export function buildConfidenceReport(
         if (match.status === "exact") mExact++;
         else if (match.status === "partial") mPartial++;
         else mMismatch++;
+        if (match.absScoreDiff < SCORE_TOLERANCE) closeAgreementCount++;
         signedDiffs.push(match.scoreDiff);
         absDiffs.push(match.absScoreDiff);
       } else {
@@ -375,6 +409,11 @@ export function buildConfidenceReport(
       if (status === "accepted") high.accepted++;
       else if (status === "corrected") high.corrected++;
       if (reviewed) high.reviewed++;
+    } else {
+      low.count++;
+      if (status === "accepted") low.accepted++;
+      else if (status === "corrected") low.corrected++;
+      if (reviewed) low.reviewed++;
     }
   }
 
@@ -436,6 +475,19 @@ export function buildConfidenceReport(
       corrected: high.corrected,
       correctedPct: correctionPct(high.corrected, high.reviewed),
       accuracyPct: high.reviewed > 0 ? round1((high.accepted / high.reviewed) * 100) : null,
+    },
+    low: {
+      count: low.count,
+      pct: withConfidence > 0 ? pct(low.count, withConfidence) : null,
+      reviewed: low.reviewed,
+      accepted: low.accepted,
+      corrected: low.corrected,
+      notCorrectedPct: low.reviewed > 0 ? round1((low.accepted / low.reviewed) * 100) : null,
+    },
+    closeAgreement: {
+      count: closeAgreementCount,
+      comparable,
+      pct: comparable > 0 ? pct(closeAgreementCount, comparable) : null,
     },
     matches: {
       comparable,

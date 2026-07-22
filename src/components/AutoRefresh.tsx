@@ -24,7 +24,11 @@ import { useRouter } from "next/navigation";
  * fixed timer), and a subtle «Обновление данных…» pill shows only while pending.
  */
 export default function AutoRefresh({
-  intervalMs = 45_000,
+  // Жалоба QA «частые обновления страницы»: 45-секундный опрос был слишком
+  // частым и страница ощущалась «дёргающейся». Спокойный интервал в 3 минуты
+  // сохраняет живость (плюс мгновенный refresh на монтировании и по фокусу), но
+  // не обновляет страницу постоянно.
+  intervalMs = 180_000,
   label = "Обновление данных…",
 }: {
   intervalMs?: number;
