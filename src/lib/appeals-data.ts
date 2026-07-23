@@ -173,6 +173,59 @@ export async function listAppeals(filters: AppealFilters = {}): Promise<Appeal[]
   return out;
 }
 
+/** Postgres unique-violation SQLSTATE — a concurrent insert already won. */
+const PG_UNIQUE_VIOLATION = "23505";
+
+/**
+ * Insert an appeal row keyed by `source_id`, or update the existing one — the
+ * ON-CONFLICT-free, race-safe backfill of a feedback ticket. Sequence:
+ *   1. look up an existing row by source_id → update it if present;
+ *   2. otherwise insert; if a concurrent decision inserted first (unique
+ *      violation on the partial source_id index), re-read that row and update it.
+ * Both racing callers therefore converge on ONE appeal row carrying the latest
+ * decision, instead of the loser throwing 23505 back to the UI.
+ */
+async function upsertAppealBySourceId(
+  sb: NonNullable<ReturnType<typeof getServiceClient>>,
+  sourceId: string,
+  row: Record<string, unknown>
+): Promise<any> {
+  const updateExisting = async (): Promise<any | null> => {
+    const { data: prior, error: se } = await sb
+      .from(APPEALS_TABLE)
+      .select("id")
+      .eq("source_id", sourceId)
+      .maybeSingle();
+    if (se) throw se;
+    if (!prior) return null;
+    const { data: upd, error: ue } = await sb
+      .from(APPEALS_TABLE)
+      .update(row)
+      .eq("id", (prior as any).id)
+      .select()
+      .single();
+    if (ue) throw ue;
+    return upd;
+  };
+
+  const existing = await updateExisting();
+  if (existing) return existing;
+
+  const { data: ins, error: ie } = await sb
+    .from(APPEALS_TABLE)
+    .insert(row)
+    .select()
+    .single();
+  if (!ie) return ins;
+
+  // Lost an insert race → the winner's row now exists; update it instead.
+  if ((ie as any)?.code === PG_UNIQUE_VIOLATION) {
+    const afterRace = await updateExisting();
+    if (afterRace) return afterRace;
+  }
+  throw ie;
+}
+
 /**
  * Approve or reject an appeal and mirror the decision onto the disputed issue,
  * exactly like the accountant app: approving dismisses the issue (marks it a
@@ -243,32 +296,12 @@ export async function updateAppeal(
     // `.upsert(..., { onConflict: "source_id" })` cannot infer it and fails with
     // «42P10: there is no unique or exclusion constraint matching the ON CONFLICT
     // specification» — which blocked approving/rejecting feedback-derived appeals.
-    // A plain select-then-update-or-insert is index-agnostic and always works.
-    const { data: prior, error: pe0 } = await sb
-      .from(APPEALS_TABLE)
-      .select("id")
-      .eq("source_id", (ticket as any).id)
-      .maybeSingle();
-    if (pe0) throw pe0;
-
-    if (prior) {
-      const { data: upd, error: ue } = await sb
-        .from(APPEALS_TABLE)
-        .update(row)
-        .eq("id", (prior as any).id)
-        .select()
-        .single();
-      if (ue) throw ue;
-      data = upd;
-    } else {
-      const { data: ins, error: ie } = await sb
-        .from(APPEALS_TABLE)
-        .insert(row)
-        .select()
-        .single();
-      if (ie) throw ie;
-      data = ins;
-    }
+    // A select-then-update-or-insert is index-agnostic; and because the partial
+    // unique index DOES guard the table, the insert branch stays race-safe: if a
+    // second, concurrent decision on the same ticket loses the insert (23505
+    // unique violation), we fall back to updating the row the winner created,
+    // so both callers converge on the same appeal instead of erroring out.
+    data = await upsertAppealBySourceId(sb, (ticket as any).id, row);
   }
 
   const problemId = (data as any).problem_id;
