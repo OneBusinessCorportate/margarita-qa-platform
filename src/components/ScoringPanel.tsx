@@ -71,6 +71,19 @@ const MAILING_DONE_STATUS: Record<string, string> = {
   primary_docs: "Получил",
 };
 
+// The "completed action" status per category — the ONE detection confident
+// enough that the AI may fill Margarita's own cell over a carried-forward value
+// («AI fills my cell only when it is sure»). Unlike MAILING_DONE_STATUS this
+// includes «Долги»: «Нет долга» is a definitive close. Weaker detections
+// (запросил / не отправил / debt-reminder) never override her kept value —
+// they only fill an empty cell.
+const MAILING_COMPLETION_STATUS: Record<string, string> = {
+  main_taxes: "Отправил",
+  salary: "Получил",
+  primary_docs: "Получил",
+  debts: "Нет долга",
+};
+
 /** Everything carried forward from the most recent check before the chosen date. */
 interface PrevCheck {
   date: string;
@@ -1482,28 +1495,40 @@ function ChatScoreRow({
     });
     for (const c of MONTHLY_CATEGORIES) {
       const prevVal = canonicalMonthlyStatus(c, prevStatuses[c.id]);
-      // Priority order:
+      // Priority order (Маргарита: «статус рассылки всегда сохраняется, сбрасывается
+      // 28-го; AI анализирует и подсказывает отдельно, но ВЧЕРАШНИЙ статус сохраняется,
+      // и AI заполняет мою ячейку только когда уверен»):
       //   1. A MANUAL row from mqa_chat_mailings — the status QA saved by hand.
       //      It is period-keyed (cycle = 28th → 27th), so a value set once holds
       //      every day of the cycle and resets to «Предстоящая» on the 28th.
       //      It beats everything, including the debt feed — her correction must
-      //      never be overwritten by an automatic source (her complaint: «вношу
-      //      данные вручную — назавтра они пропадают»).
+      //      never be overwritten by an automatic source.
       //   2. «Долги» from the OneBusiness debts system (overdue + contact log) —
       //      the column she wants filled automatically end-to-end.
-      //   3. The auto-detected status from THIS cycle's message scan (it's
-      //      cycle-specific evidence, so it beats a carried-over previous value
-      //      and the deadline placeholder). The 🔍 badge below the dropdown
-      //      shows the same detected value for reference.
-      //   4. The value carried from the last check in the same cycle, then the
-      //      deadline placeholder, then the AI model.
+      //   3. A CONFIDENT auto-detection = a completed action (Отправил / Получил /
+      //      Нет долга). Only a definitive completion may fill her cell over a
+      //      carried-forward value — «AI fills my cell only when it is sure». A
+      //      completion later in the cycle should still lift an earlier «Запросил».
+      //   4. The value CARRIED from the last check in the same cycle («вчерашний
+      //      статус сохраняется»). It now outranks a WEAK detection (request /
+      //      not-done / debt-reminder), so a re-scan never quietly overwrites the
+      //      status she was already looking at.
+      //   5. The weaker auto-detected status (request / neg / debt-reminder) — it
+      //      still fills an empty cell so a fresh рассылка surfaces on its own.
+      //   6. The deadline placeholder («Предстоящая»), then the AI model.
+      // In every case the AI's own suggestion stays visible on the «🤖 AI» row and
+      // in the 🔍 badge below the dropdown — this only governs HER cell's prefill.
       const detected = canonicalMonthlyStatus(c, detectedStatuses[c.id] ?? null);
       const manual = manualMailing.has(c.id) ? detected : "";
+      // A completion is the one "sure" signal that may override her kept value.
+      const confidentDetected =
+        detected && detected === MAILING_COMPLETION_STATUS[c.id] ? detected : "";
       const status =
         manual ||
         (c.id === "debts" ? canonicalMonthlyStatus(c, chat.debt_status) : "") ||
-        detected ||
+        confidentDetected ||
         prevVal ||
+        detected ||
         autoMonthlyStatus(c, chat.status, chat.debts, date) ||
         canonicalMonthlyStatus(c, aiInit.monthly[c.id]?.status);
       if (status)

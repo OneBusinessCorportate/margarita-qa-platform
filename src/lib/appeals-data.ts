@@ -224,27 +224,51 @@ export async function updateAppeal(
       .maybeSingle();
     if (te) throw te;
     if (!ticket) throw new Error(`Appeal ${id} not found`);
-    const { data: ins, error: ie } = await sb
+
+    const row = {
+      problem_id: (ticket as any).problem_id,
+      accountant_id: (ticket as any).accountant_id ?? null,
+      accountant_name: (ticket as any).accountant_name ?? null,
+      comment: feedbackComment((ticket as any).situation_comment, (ticket as any).solution_comment),
+      status: decision,
+      resolved_by: resolvedBy ?? null,
+      resolution_comment: resolutionComment ?? null,
+      resolved_at: now,
+      source: FEEDBACK_SOURCE,
+      source_id: (ticket as any).id,
+    };
+
+    // Dedupe by source_id WITHOUT an ON CONFLICT clause. The unique index on
+    // source_id is partial (`WHERE source_id IS NOT NULL`), so PostgREST's
+    // `.upsert(..., { onConflict: "source_id" })` cannot infer it and fails with
+    // «42P10: there is no unique or exclusion constraint matching the ON CONFLICT
+    // specification» — which blocked approving/rejecting feedback-derived appeals.
+    // A plain select-then-update-or-insert is index-agnostic and always works.
+    const { data: prior, error: pe0 } = await sb
       .from(APPEALS_TABLE)
-      .upsert(
-        {
-          problem_id: (ticket as any).problem_id,
-          accountant_id: (ticket as any).accountant_id ?? null,
-          accountant_name: (ticket as any).accountant_name ?? null,
-          comment: feedbackComment((ticket as any).situation_comment, (ticket as any).solution_comment),
-          status: decision,
-          resolved_by: resolvedBy ?? null,
-          resolution_comment: resolutionComment ?? null,
-          resolved_at: now,
-          source: FEEDBACK_SOURCE,
-          source_id: (ticket as any).id,
-        },
-        { onConflict: "source_id" }
-      )
-      .select()
-      .single();
-    if (ie) throw ie;
-    data = ins;
+      .select("id")
+      .eq("source_id", (ticket as any).id)
+      .maybeSingle();
+    if (pe0) throw pe0;
+
+    if (prior) {
+      const { data: upd, error: ue } = await sb
+        .from(APPEALS_TABLE)
+        .update(row)
+        .eq("id", (prior as any).id)
+        .select()
+        .single();
+      if (ue) throw ue;
+      data = upd;
+    } else {
+      const { data: ins, error: ie } = await sb
+        .from(APPEALS_TABLE)
+        .insert(row)
+        .select()
+        .single();
+      if (ie) throw ie;
+      data = ins;
+    }
   }
 
   const problemId = (data as any).problem_id;
