@@ -83,3 +83,23 @@ test("median: odd and even", () => {
 test("SCORE_TOLERANCE is the documented 5 points", () => {
   assert.equal(SCORE_TOLERANCE, 5);
 });
+
+test("field counts: exact match reports all fields matched", () => {
+  const m = classifyMatch(
+    ai({ criteria: { accuracy: 4, sla: 5 }, monthly: { main_taxes: { status: "Отправил" } } }),
+    fin({ criteria: { accuracy: 4, sla: 5 }, monthly: { main_taxes: { status: "Отправил", prev: "--" } } }),
+    88
+  )!;
+  assert.equal(m.fieldsTotal, 3); // accuracy + sla + main_taxes
+  assert.equal(m.fieldsMatched, 3);
+});
+
+test("field counts: one criterion differs → matched = total − 1", () => {
+  const m = classifyMatch(
+    ai({ criteria: { accuracy: 4, sla: 5 } }),
+    fin({ criteria: { accuracy: 3, sla: 5 } }),
+    85
+  )!;
+  assert.equal(m.fieldsTotal, 3); // accuracy + sla + main_taxes (from fin default monthly)
+  assert.equal(m.fieldsMatched, 2); // sla + main_taxes match, accuracy differs
+});
