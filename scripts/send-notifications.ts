@@ -117,29 +117,23 @@ async function main() {
     }
 
     // action === "send".
-    // Dedup: if a PRIOR run already delivered this row (a telegram_ok log row
-    // exists) but failed to flip the status afterwards, do NOT re-send — just
-    // reconcile the status. This closes the "Telegram accepted but the status
-    // UPDATE failed → next run re-sends" window without ever marking a FAILED
-    // attempt as sent.
-    const { data: prior, error: priorErr } = await db
-      .from("mqa_sent_notifications")
-      .select("id")
-      .eq("planned_id", r.id)
-      .eq("telegram_ok", true)
-      .limit(1);
-    if (priorErr) {
-      console.log(`FAIL  ${tag}: не удалось проверить журнал: ${priorErr.message}`);
+    // Concurrency + partial-failure safety. We CLAIM the row atomically first
+    // (conditional UPDATE to 'sent' guarded on a sendable status). Postgres
+    // row-locks the UPDATE, so if two runs fire together only ONE claims the row
+    // (the other's WHERE no longer matches → 0 rows → skip); no double send.
+    const { data: claimed, error: claimErr } = await db
+      .from("mqa_planned_notifications")
+      .update({ status: "sent", sent_at: new Date().toISOString() })
+      .eq("id", r.id)
+      .in("status", ["planned", "edited", "approved"])
+      .select("id");
+    if (claimErr) {
+      console.log(`FAIL  ${tag}: не удалось зарезервировать строку: ${claimErr.message}`);
       continue;
     }
-    if (prior && prior.length > 0) {
-      await db
-        .from("mqa_planned_notifications")
-        .update({ status: "sent", sent_at: new Date().toISOString() })
-        .eq("id", r.id)
-        .in("status", ["planned", "edited", "approved"]);
+    if (!claimed || claimed.length === 0) {
       skipped++;
-      console.log(`SKIP  ${tag}: уже доставлено ранее (журнал), статус синхронизирован`);
+      console.log(`SKIP  ${tag}: уже обрабатывается/отправлено другим запуском`);
       continue;
     }
 
@@ -149,30 +143,16 @@ async function main() {
       ? `${r.rendered_text}\n\n${r.accompanying_text}`
       : r.rendered_text;
 
-    // Send WITHOUT duplicating the text. With an attached file the wording rides
-    // as the document's caption (one message); only when the text is too long
-    // for a caption (>1024) do we send the text once and the file separately.
-    const errs: string[] = [];
-    let ok = true;
+    // Deliver in a SINGLE Telegram call so there is no partial (text-ok /
+    // doc-failed) state that a retry would duplicate: with a file the wording
+    // rides as the document caption; without a file it is one text message.
     const hasFile = !!att?.file_url;
-    const textFitsCaption = messageText.length <= 1024;
-    if (hasFile && textFitsCaption) {
-      const docRes = await postTelegramDocumentByUrl(token!, chatId!, att!.file_url, messageText);
-      ok = docRes.ok;
-      if (!docRes.ok && docRes.error) errs.push(docRes.error);
-    } else {
-      const textRes = await postTelegramMessage(token!, chatId!, messageText);
-      ok = textRes.ok;
-      if (!textRes.ok && textRes.error) errs.push(textRes.error);
-      if (hasFile) {
-        const docRes = await postTelegramDocumentByUrl(token!, chatId!, att!.file_url);
-        ok = ok && docRes.ok;
-        if (!docRes.ok && docRes.error) errs.push(`документ: ${docRes.error}`);
-      }
-    }
+    const res = hasFile
+      ? await postTelegramDocumentByUrl(token!, chatId!, att!.file_url, messageText)
+      : await postTelegramMessage(token!, chatId!, messageText);
 
-    // Always write the mandatory log row FIRST and check the result — a delivery
-    // must never go unlogged.
+    // Mandatory log row — written and its result checked (a delivery is never
+    // left unlogged).
     const { error: logErr } = await db.from("mqa_sent_notifications").insert({
       agr_no: r.agr_no,
       chat_id: chatId,
@@ -182,37 +162,27 @@ async function main() {
       full_text: hasFile ? `${messageText}\n[вложение: ${att!.file_name || att!.file_url}]` : messageText,
       template_id: r.template_id,
       planned_id: r.id,
-      telegram_ok: ok,
-      telegram_error: errs.length ? errs.join("; ") : null,
+      telegram_ok: res.ok,
+      telegram_error: res.error ?? null,
     });
     if (logErr) {
-      // Do NOT mark 'sent' without a journal row; leave the row sendable so the
-      // next run reconciles (the dedup check above prevents a re-send once the
-      // log lands).
-      console.log(`FAIL  ${tag} → chat ${chatId}: доставка ${ok ? "ok" : "нет"}, но журнал не записан: ${logErr.message}`);
-      continue;
+      console.log(`WARN  ${tag} → chat ${chatId}: доставка ${res.ok ? "ok" : "нет"}, но журнал не записан: ${logErr.message}`);
     }
 
-    if (!ok) {
-      // Failed delivery: logged (telegram_ok=false), status left sendable so the
-      // next run retries — the row is NOT marked 'sent' and is NOT lost.
-      console.log(`FAIL  ${tag} → chat ${chatId}: ${errs.join("; ")} (в журнале, будет повтор)`);
-      continue;
+    if (res.ok) {
+      sent++;
+      console.log(`SENT  ${tag} → chat ${chatId}${hasFile ? " (документ+текст)" : ""}`);
+    } else {
+      // Nothing was delivered (single call failed). REVERT the claim to the
+      // original sendable status so the next run retries — no loss, and no
+      // duplicate (nothing went out this time).
+      await db
+        .from("mqa_planned_notifications")
+        .update({ status: r.status, sent_at: null })
+        .eq("id", r.id)
+        .eq("status", "sent");
+      console.log(`FAIL  ${tag} → chat ${chatId}: ${res.error} (в журнале, статус возвращён, будет повтор)`);
     }
-
-    // Success: only NOW mark the row sent (guarded so a concurrent flip is safe).
-    const { error: updErr } = await db
-      .from("mqa_planned_notifications")
-      .update({ status: "sent", sent_at: new Date().toISOString() })
-      .eq("id", r.id)
-      .in("status", ["planned", "edited", "approved"]);
-    if (updErr) {
-      // Delivered + logged; the status flip failed. The next run finds the
-      // telegram_ok log row (dedup above) and reconciles without re-sending.
-      console.log(`WARN  ${tag} → chat ${chatId}: доставлено и записано, статус будет синхронизирован при след. запуске`);
-    }
-    sent++;
-    console.log(`SENT  ${tag} → chat ${chatId}${hasFile ? " (+документ)" : ""}`);
   }
 
   console.log(
