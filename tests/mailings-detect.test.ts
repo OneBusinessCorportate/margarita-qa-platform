@@ -649,3 +649,52 @@ describe("v12 — soft catch-all identifies every рассылка type", () => 
     assert.ok(!sigs.some((s) => s.category === "main_taxes" && s.type === "done"));
   });
 });
+
+// v15: service-payment reminder (оплата бухгалтерского обслуживания/услуг) is a
+// debt mailing even without the word «долг». These lock the broadened
+// SVC_PAY_REMINDER — new POSITIVE forms fire debts→req, and the claimed
+// NEGATIVE cases (tax payment, onboarding, salary send) must NOT fire it.
+describe("detectAllSignals — v15 service-payment reminder (debts without «долг»)", () => {
+  const firesDebtReq = (text: string) =>
+    detectAllSignals(text).some((s) => s.category === "debts" && s.type === "req");
+
+  it("positive: «оплатить … стоимость бухгалтерского обслуживания» → debts req", () => {
+    assert.ok(
+      firesDebtReq(
+        "Необходимо оплатить только стоимость бухгалтерского обслуживания, чтобы продолжить работу."
+      )
+    );
+  });
+
+  it("positive: «оплата бухгалтерского обслуживания» → debts req", () => {
+    assert.ok(firesDebtReq("Напоминаем про оплату бухгалтерского обслуживания за июль."));
+  });
+
+  it("positive: «произвести оплату бухгалтерских услуг до 5-го» → debts req", () => {
+    assert.ok(firesDebtReq("Просим произвести оплату бухгалтерских услуг до 5-го числа."));
+  });
+
+  it("positive: English «payment for accountant service» → debts req", () => {
+    assert.ok(firesDebtReq("Назначение платежа: Payment for accountant service. Сумма: 24 000."));
+  });
+
+  it("positive (HY): «հաշվապահական ծառայությունների վճարումը» → debts req", () => {
+    assert.ok(
+      firesDebtReq("Կատարեք հաշվապահական ծառայությունների վճարումը մինչև ամսի 5-ը։")
+    );
+  });
+
+  it("negative: paying a TAX (not the service fee) is not a debt reminder", () => {
+    assert.ok(!firesDebtReq("Вы оплатите только 61 000 драмов налога по указанному счёту."));
+  });
+
+  it("negative: onboarding «Срок оплаты услуг:» field is not a debt reminder", () => {
+    assert.ok(!firesDebtReq("Срок оплаты услуг: 10 число каждого месяца."));
+  });
+
+  it("negative: a salary send is not misread as a debt reminder", () => {
+    assert.ok(
+      !firesDebtReq("Направляю таблицу по заработной плате, оплаты проставлены в банке.")
+    );
+  });
+});
