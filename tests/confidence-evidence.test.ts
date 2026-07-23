@@ -35,8 +35,15 @@ const base: ConfidenceFactors = {
   factCompleteness: 1,
 };
 
-test("raw confidence never claims 100% (ceiling)", () => {
-  assert.ok(predictionConfidenceRaw(base) <= 97);
+test("raw confidence never claims more than 95% (ceiling)", () => {
+  assert.ok(predictionConfidenceRaw(base) <= 95);
+});
+
+test("read/display cap: a legacy stored value above 95% is shown as 95%", () => {
+  assert.equal(confidenceDisplay(97).text, "95%");
+  assert.equal(confidenceDisplay(96).text, "95%");
+  assert.equal(confidenceDisplay(95).text, "95%");
+  assert.equal(confidenceDisplay(90).text, "90%");
 });
 
 test("raw confidence supports the full low..high range", () => {
@@ -117,8 +124,8 @@ test("integration: predictEvaluation is NOT clustered at 90-96 across chats", ()
   assert.ok(unknown.uncertainty.some((u) => u.includes("Бухгалтер не определён")));
 });
 
-test("calibration never pushes displayed confidence past the 97% ceiling", () => {
-  // A 90-100 bucket that historically ran at 100% accuracy must not yield 98-100.
+test("calibration never pushes displayed confidence past the 95% ceiling", () => {
+  // A 90-100 bucket that historically ran at 100% accuracy must not yield 96-100.
   const history: Evaluation[] = [];
   for (let i = 0; i < 30; i++)
     history.push(
@@ -133,7 +140,7 @@ test("calibration never pushes displayed confidence past the 97% ceiling", () =>
     );
   const model = trainAiModel(history);
   const p = predictEvaluation("Steady", {}, model, { status: "Active", debtStatus: "Нет долга", date: "2026-06-18" });
-  assert.ok(p.confidence <= 97, `confidence ${p.confidence} must respect the 97% ceiling`);
+  assert.ok(p.confidence <= 95, `confidence ${p.confidence} must respect the 95% ceiling`);
 });
 
 test("predictEvaluation surfaces evidence-based uncertainty notes", () => {

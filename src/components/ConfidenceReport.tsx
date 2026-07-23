@@ -67,6 +67,59 @@ function fmtNum(n: number | null | undefined, suffix = ""): string {
   return `${n}${suffix}`;
 }
 
+/** Процент как основное значение: «70%» либо «Нет данных». */
+function fmtPct(n: number | null | undefined): string {
+  if (n == null) return "Нет данных";
+  return `${n}%`;
+}
+
+/** Абсолютное «84 из 120 проверок» под процентом. */
+function ofChecks(part: number, whole: number): string {
+  return `${part} из ${whole} ${pluralChecks(whole)}`;
+}
+
+function pluralChecks(n: number): string {
+  const mod100 = n % 100;
+  const mod10 = n % 10;
+  if (mod100 >= 11 && mod100 <= 14) return "проверок";
+  if (mod10 === 1) return "проверка";
+  if (mod10 >= 2 && mod10 <= 4) return "проверки";
+  return "проверок";
+}
+
+// ---------------------------------------------------------------------------
+// Пояснительные тексты для тултипов (бизнес-язык, без техножаргона). Каждый
+// объясняет: что означает показатель, какие поля сравниваются, формулу,
+// знаменатель, исключаются ли неполные записи и пересечение с другими
+// категориями (требование менеджера — «тултипы или инструкция … и в остальных»).
+// ---------------------------------------------------------------------------
+const TIP = {
+  exact:
+    "Точное совпадение: AI и итоговая оценка Маргариты полностью совпали — по общей оценке (категории), решению о нарушении рассылки и ВСЕМ применимым критериям и статусам рассылок. Совпадения только по общему баллу недостаточно: если отличается хотя бы один критерий — это уже не точное совпадение. Формула: точные совпадения ÷ все валидные проверки (где сохранены и исходная оценка AI, и финал Маргариты) × 100. Неполные записи («Недостаточно данных») в знаменатель не входят.",
+  mismatch:
+    "Несовпадение: отличается хотя бы одно оцениваемое поле (общая оценка, критерий, статус рассылки или решение о нарушении), поэтому запись не является точным совпадением. Формула: несовпадения ÷ все валидные проверки × 100 = 100% − «Точное совпадение %» (тот же знаменатель). «Частичное совпадение» — это ПОДМНОЖЕСТВО несовпадений (совпала часть критериев).",
+  partial:
+    "Частичное совпадение: подмножество несовпадений, где совпала ЧАСТЬ критериев, категория и решение о рассылке не изменились, а общий балл отличается не более чем на 5 из 100. Детальный процент ниже — доля совпавших критериев внутри таких проверок (совпавшие критерии ÷ все сравнимые критерии × 100).",
+  insufficient:
+    "Недостаточно данных: проверки без исходного снимка AI (не с чем сравнивать), без финала Маргариты или без сравнимых критериев. Такие записи показываются отдельно и ИСКЛЮЧЕНЫ из знаменателя процентов совпадения — они не считаются ни совпадением, ни несовпадением.",
+  accepted:
+    "Принято без изменений: Маргарита сохранила исходную оценку AI, не изменив ни одно оцениваемое поле. Это ровно то же множество записей, что «Точное совпадение». Может быть верным даже при низкой уверенности AI — это не повышает исходную уверенность задним числом. Формула: принято ÷ проверено × 100. Не выводится из уверенности, отсутствия комментариев или совпадения только общего балла.",
+  corrected:
+    "Исправлено Маргаритой: Маргарита изменила хотя бы одно оцениваемое поле по сравнению с исходной оценкой AI. Совпадает с множеством «Несовпадение». Формула: исправлено ÷ проверено × 100. Разбивка «что изменено» — в таблице ниже.",
+  notReviewed:
+    "Не активно / не проверено: AI сформировал оценку, но Маргарита ещё не проверяла её. Такие записи не входят в знаменатель процентов «принято/исправлено» и совпадений.",
+  total:
+    "Все AI-оценки за выбранный период и фильтры. Из них «с уверенностью» — где сохранено валидное значение уверенности AI; «без данных» — легаси-строки без уверенности (в расчёты по уверенности не входят).",
+  overallCorrection:
+    "Процент исправлений = исправлено ÷ проверено × 100. Знаменатель — только проверенные записи (не все AI-оценки).",
+  high90:
+    "Оценки, где уверенность AI была ≥90%. Если модель уверена, Маргарита почти не должна их править — доля исправлений здесь показывает, не завышена ли уверенность.",
+  closeAgreement:
+    "Согласие по баллам: доля проверенных записей с AI-снимком, где итоговая оценка Маргариты и AI расходится менее чем на 5 из 100. Знаменатель — сравнимые проверки (проверено + есть AI-снимок).",
+  avgConfMatched:
+    "Средняя уверенность AI по записям, где оценки совпали (точное или частичное). Сравните со средней уверенностью по несовпадениям — так видно, откалибрована ли уверенность.",
+} as const;
+
 export default function ConfidenceReportView({ accountants, categories }: Props) {
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [report, setReport] = useState<ConfidenceReport | null>(null);
@@ -348,6 +401,7 @@ function Report({ report }: { report: ConfidenceReport }) {
     setDrill({ title, rows: report.rows.filter(predicate) });
   return (
     <div className="space-y-6">
+      <Instructions />
       <CalibrationHighlights report={report} onDrill={openDrill} />
       <SummaryCards report={report} onDrill={openDrill} />
       <MatchCards report={report} onDrill={openDrill} />
@@ -369,28 +423,161 @@ function Report({ report }: { report: ConfidenceReport }) {
   );
 }
 
+/**
+ * Видимый блок-инструкция рядом с аналитикой (требование менеджера): что означает
+ * каждая категория, какие поля сравниваются, формула и знаменатель, пересечения.
+ * Свёрнут по умолчанию, чтобы не мешать; каждая карточка также имеет тултип «?».
+ */
+function Instructions() {
+  const [open, setOpen] = useState(false);
+  const rows: { title: string; body: string; color: string }[] = [
+    { title: "Точное совпадение", body: TIP.exact, color: "#059669" },
+    { title: "Несовпадение", body: TIP.mismatch, color: "#dc2626" },
+    { title: "Частичное совпадение", body: TIP.partial, color: "#2563eb" },
+    { title: "Принято без изменений", body: TIP.accepted, color: "#059669" },
+    { title: "Исправлено Маргаритой", body: TIP.corrected, color: "#d97706" },
+    { title: "Недостаточно данных", body: TIP.insufficient, color: "#6b7280" },
+  ];
+  return (
+    <div className="card p-4">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between text-left"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="text-sm font-semibold text-gray-800">
+          📖 Как читать показатели: что такое точное совпадение, несовпадение и остальное
+        </span>
+        <span className="text-xs text-blue-600">{open ? "Свернуть ▲" : "Показать ▼"}</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <p className="text-xs text-gray-600">
+            Основное значение на карточках — <b>процент</b>, абсолютное число («84
+            из 120 проверок») указано ниже. Все проценты совпадения считаются от
+            <b> валидных проверок</b>: тех, где сохранены и исходная оценка AI, и
+            итоговая оценка Маргариты. «Точное совпадение %» и «Несовпадение %» в
+            сумме дают 100%.
+          </p>
+          <dl className="grid gap-3 sm:grid-cols-2">
+            {rows.map((row) => (
+              <div key={row.title} className="rounded border border-gray-100 bg-gray-50 p-3">
+                <dt className="text-xs font-semibold" style={{ color: row.color }}>
+                  {row.title}
+                </dt>
+                <dd className="mt-1 text-[11px] leading-snug text-gray-600">{row.body}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MatchCards({ report: r, onDrill }: { report: ConfidenceReport; onDrill: DrillFn }) {
   const m = r.matches;
+  const valid = m.validReviewed;
+  // Несовпадение (широкое) = не точное совпадение = частичное + значимое.
+  const isMismatchBroad = (x: ConfidenceRowLite) =>
+    x.matchStatus === "partial" || x.matchStatus === "mismatch";
   return (
     <div className="space-y-2">
-      <div className="text-sm font-semibold">
-        Совпадения AI ↔ Маргарита{" "}
-        <span className="font-normal text-gray-400">
-          (сравнимо {m.comparable}
-          {m.excludedNoBaseline > 0 && `; исключено без AI-снимка: ${m.excludedNoBaseline}`})
+      <div className="text-sm font-semibold flex items-center">
+        Совпадения AI ↔ итоговая оценка Маргариты{" "}
+        <span className="font-normal text-gray-400 ml-1">
+          (валидных проверок для сравнения: {valid})
         </span>
+        <InfoDot text={`Знаменатель всех процентов ниже — валидные проверки: где сохранены и исходная оценка AI, и финал Маргариты. Всего таких ${valid}. «Точное совпадение %» + «Несовпадение %» = 100%.`} />
       </div>
+      {/* Основные показатели — % как главное значение, абсолют ниже (требование менеджера). */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card title="Точное совпадение (exact)" value={String(m.exact)} sub={fmtNum(m.exactPct, "%")} color="#059669" onClick={() => onDrill("Точное совпадение", (x) => x.matchStatus === "exact")} />
-        <Card title="Частичное (partial)" value={String(m.partial)} sub="±5 баллов / правка критерия" color="#2563eb" onClick={() => onDrill("Частичное совпадение", (x) => x.matchStatus === "partial")} />
-        <Card title="Несовпадение (mismatch)" value={String(m.mismatch)} sub={fmtNum(m.mismatchPct, "%")} color="#dc2626" onClick={() => onDrill("Несовпадение", (x) => x.matchStatus === "mismatch")} />
-        <Card title="Приемлемо (exact+partial)" value={fmtNum(m.acceptablePct, "%")} sub="доля от сравнимых" color="#059669" onClick={() => onDrill("Приемлемо (exact+partial)", (x) => x.matchStatus === "exact" || x.matchStatus === "partial")} />
-        <Card title="Средняя разница баллов" value={m.avgScoreDiff == null ? "Нет данных" : String(m.avgScoreDiff)} sub={`|разница| ${fmtNum(m.avgAbsScoreDiff)}`} />
-        <Card title="Медиана разницы баллов" value={m.medianScoreDiff == null ? "Нет данных" : String(m.medianScoreDiff)} />
-        <Card title="Ср. уверенность — совпало" value={fmtNum(m.avgConfidenceMatched, "%")} color="#059669" onClick={() => onDrill("Совпало (exact+partial)", (x) => x.matchStatus === "exact" || x.matchStatus === "partial")} />
-        <Card title="Ср. уверенность — несовпало" value={fmtNum(m.avgConfidenceMismatched, "%")} color="#dc2626" onClick={() => onDrill("Несовпадение", (x) => x.matchStatus === "mismatch")} />
+        <Card
+          title="Точное совпадение"
+          value={valid > 0 ? fmtPct(m.exactPct) : "Нет данных"}
+          sub={valid > 0 ? ofChecks(m.exact, valid) : undefined}
+          color="#059669"
+          tooltip={TIP.exact}
+          onClick={() => onDrill("Точное совпадение", (x) => x.matchStatus === "exact")}
+        />
+        <Card
+          title="Несовпадение"
+          value={valid > 0 ? fmtPct(m.mismatchBroadPct) : "Нет данных"}
+          sub={valid > 0 ? ofChecks(m.mismatchBroad, valid) : undefined}
+          sub2="= 100% − точное совпадение"
+          color="#dc2626"
+          tooltip={TIP.mismatch}
+          onClick={() => onDrill("Несовпадение (частичное + значимое)", isMismatchBroad)}
+        />
+        <Card
+          title="Частичное совпадение"
+          value={valid > 0 ? fmtPct(m.partialPct) : "Нет данных"}
+          sub={valid > 0 ? ofChecks(m.partial, valid) : undefined}
+          sub2={
+            m.partialFieldsAgreementPct == null
+              ? "подмножество несовпадений"
+              : `совпало критериев ${m.partialFieldsMatched}/${m.partialFieldsTotal} = ${m.partialFieldsAgreementPct}%`
+          }
+          color="#2563eb"
+          tooltip={TIP.partial}
+          onClick={() => onDrill("Частичное совпадение", (x) => x.matchStatus === "partial")}
+        />
+        <Card
+          title="Недостаточно данных"
+          value={String(m.excludedNoBaseline)}
+          sub2="исключены из знаменателя"
+          color="#6b7280"
+          tooltip={TIP.insufficient}
+        />
+      </div>
+      {/* Дополнительная аналитика по расхождению баллов. */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Card title="Значимое несовпадение" value={valid > 0 ? fmtPct(m.mismatchPct) : "Нет данных"} sub={valid > 0 ? ofChecks(m.mismatch, valid) : undefined} sub2="сменилась категория/рассылка или |Δ|>5" color="#dc2626" onClick={() => onDrill("Значимое несовпадение", (x) => x.matchStatus === "mismatch")} />
+        <Card title="Средняя разница баллов" value={m.avgScoreDiff == null ? "Нет данных" : String(m.avgScoreDiff)} sub2={`|разница| ${fmtNum(m.avgAbsScoreDiff)}`} />
+        <Card title="Ср. уверенность — совпало" value={fmtNum(m.avgConfidenceMatched, "%")} color="#059669" tooltip={TIP.avgConfMatched} onClick={() => onDrill("Совпало (точное+частичное)", (x) => x.matchStatus === "exact" || x.matchStatus === "partial")} />
+        <Card title="Ср. уверенность — несовпало" value={fmtNum(m.avgConfidenceMismatched, "%")} color="#dc2626" tooltip={TIP.avgConfMatched} onClick={() => onDrill("Несовпадение (частичное + значимое)", isMismatchBroad)} />
       </div>
     </div>
+  );
+}
+
+/**
+ * Информационная иконка с всплывающей подсказкой (тултип). Чистый CSS/React без
+ * библиотек: подсказка появляется при наведении и при фокусе с клавиатуры
+ * (доступность). `stopPropagation`, чтобы клик по иконке не открывал drill-down
+ * родительской карточки.
+ */
+function InfoDot({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      className="relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        aria-label="Пояснение к показателю"
+        className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-gray-200 text-[10px] font-bold text-gray-600 hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-300"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+      >
+        ?
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          className="absolute left-0 top-6 z-40 w-72 rounded-md border border-gray-200 bg-white p-3 text-left text-[11px] font-normal leading-snug text-gray-700 shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {text}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -398,22 +585,30 @@ function Card({
   title,
   value,
   sub,
+  sub2,
   color = "#1f2937",
   onClick,
+  tooltip,
 }: {
   title: string;
   value: string;
   sub?: string;
+  sub2?: string;
   color?: string;
   onClick?: () => void;
+  tooltip?: string;
 }) {
   const body = (
     <>
-      <div className="text-xs text-gray-500 mb-1">{title}</div>
+      <div className="mb-1 flex items-start text-xs text-gray-500">
+        <span>{title}</span>
+        {tooltip && <InfoDot text={tooltip} />}
+      </div>
       <div className="text-2xl font-bold tabular-nums" style={{ color }}>
         {value}
       </div>
-      {sub && <div className="text-xs text-gray-400 mt-1">{sub}</div>}
+      {sub && <div className="text-xs text-gray-500 mt-1 tabular-nums">{sub}</div>}
+      {sub2 && <div className="text-[11px] text-gray-400 mt-0.5">{sub2}</div>}
       {onClick && <div className="text-[11px] text-blue-600 mt-1">Показать чаты →</div>}
     </>
   );
@@ -434,34 +629,30 @@ function Card({
 function SummaryCards({ report: r, onDrill }: { report: ConfidenceReport; onDrill: DrillFn }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Card title="Всего AI-оценок" value={String(r.total)} sub={`${r.withConfidence} с уверенностью · ${r.noConfidence} без данных`} onClick={() => onDrill("Все AI-оценки", () => true)} />
+      <Card title="Всего AI-оценок" value={String(r.total)} sub2={`${r.withConfidence} с уверенностью · ${r.noConfidence} без данных`} tooltip={TIP.total} onClick={() => onDrill("Все AI-оценки", () => true)} />
       <Card
         title="Принято без изменений"
-        value={String(r.accepted)}
-        sub={`${r.acceptedPct}% от всех`}
+        value={r.reviewed > 0 ? fmtPct(r.acceptedOfReviewedPct) : "Нет данных"}
+        sub={r.reviewed > 0 ? ofChecks(r.accepted, r.reviewed) : undefined}
         color="#059669"
+        tooltip={TIP.accepted}
         onClick={() => onDrill("Принято без изменений", (x) => x.status === "accepted")}
       />
       <Card
         title="Исправлено Маргаритой"
-        value={String(r.corrected)}
-        sub={`${r.correctedPct}% от всех`}
+        value={r.reviewed > 0 ? fmtPct(r.overallCorrectionPct) : "Нет данных"}
+        sub={r.reviewed > 0 ? ofChecks(r.corrected, r.reviewed) : undefined}
         color="#d97706"
+        tooltip={TIP.corrected}
         onClick={() => onDrill("Исправлено Маргаритой", (x) => x.status === "corrected")}
       />
       <Card
         title="Не активно"
         value={String(r.notReviewed)}
-        sub={`${r.notReviewedPct}% от всех`}
+        sub2={`${r.notReviewedPct}% от всех AI-оценок`}
         color="#6b7280"
+        tooltip={TIP.notReviewed}
         onClick={() => onDrill("Не активно / не проверено", (x) => x.status === "not_reviewed")}
-      />
-      <Card
-        title="Процент исправлений"
-        value={fmtNum(r.overallCorrectionPct, "%")}
-        sub="исправлено / проверено"
-        color="#d97706"
-        onClick={() => onDrill("Исправлено Маргаритой", (x) => x.status === "corrected")}
       />
       <Card
         title="Средняя уверенность — принятые"
@@ -477,9 +668,11 @@ function SummaryCards({ report: r, onDrill }: { report: ConfidenceReport; onDril
       />
       <Card
         title="Оценок с уверенностью ≥90%"
-        value={String(r.high.count)}
-        sub={r.high.pct == null ? "Нет данных" : `${r.high.pct}% · исправлено ${r.high.corrected}`}
+        value={r.high.pct == null ? "Нет данных" : fmtPct(r.high.pct)}
+        sub={r.high.pct == null ? undefined : ofChecks(r.high.count, r.withConfidence)}
+        sub2={`исправлено ${r.high.corrected}`}
         color="#2563eb"
+        tooltip={TIP.high90}
         onClick={() => onDrill("Уверенность ≥90%", (x) => x.high)}
       />
     </div>
@@ -609,9 +802,10 @@ function CalibrationHighlights({ report: r, onDrill }: { report: ConfidenceRepor
         onClick={() => onDrill("Расхождение с AI < 5%", (x) => x.closeAgreement)}
         className="card p-6 text-left w-full bg-gradient-to-br from-emerald-50 to-white border-emerald-200 transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-300"
       >
-        <div className="text-sm font-medium text-gray-600">
+        <div className="text-sm font-medium text-gray-600 flex items-center">
           Согласие оценок: чаты с отклонением{" "}
-          <span className="font-semibold">&lt;5%</span> между Маргаритой и AI
+          <span className="font-semibold mx-1">&lt;5%</span> между Маргаритой и AI
+          <InfoDot text={TIP.closeAgreement} />
         </div>
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-2">
           <span className="text-5xl font-bold tabular-nums text-emerald-700">

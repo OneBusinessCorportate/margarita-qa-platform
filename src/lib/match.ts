@@ -35,27 +35,41 @@ export interface MatchResult {
   monthlyChanged: boolean;
   /** Concise RU list of what Margarita changed (for the detailed table). */
   changedFields: string[];
+  /**
+   * Число сравнимых структурированных оцениваемых полей между исходной оценкой AI
+   * и финалом Маргариты (уникальные критерии ∪ статусы рассылок). Знаменатель для
+   * «доли совпавших критериев» частичного совпадения.
+   */
+  fieldsTotal: number;
+  /** Сколько из `fieldsTotal` совпало (одинаковое значение у AI и Маргариты). */
+  fieldsMatched: number;
 }
 
-function sameCriteria(a: CriteriaScores | undefined, b: CriteriaScores | undefined): boolean {
+/** Count comparable keys (union) and how many carry an equal value. */
+function tallyCriteria(
+  a: CriteriaScores | undefined,
+  b: CriteriaScores | undefined
+): { total: number; matched: number } {
   const av = (a ?? {}) as Record<string, number | undefined>;
   const bv = (b ?? {}) as Record<string, number | undefined>;
   const keys = new Set([...Object.keys(av), ...Object.keys(bv)]);
-  for (const k of keys) if ((av[k] ?? null) !== (bv[k] ?? null)) return false;
-  return true;
+  let matched = 0;
+  for (const k of keys) if ((av[k] ?? null) === (bv[k] ?? null)) matched += 1;
+  return { total: keys.size, matched };
 }
 
-function sameMonthly(
+function tallyMonthly(
   ai: Record<string, { status: string }> | undefined,
   final: EvaluationScores["monthly"] | undefined
-): boolean {
+): { total: number; matched: number } {
   const a = ai ?? {};
   const f = final ?? {};
   const keys = new Set([...Object.keys(a), ...Object.keys(f)]);
+  let matched = 0;
   for (const k of keys) {
-    if ((a[k]?.status ?? "") !== ((f[k]?.status ?? "") as string)) return false;
+    if ((a[k]?.status ?? "") === ((f[k]?.status ?? "") as string)) matched += 1;
   }
-  return true;
+  return { total: keys.size, matched };
 }
 
 /**
@@ -74,8 +88,12 @@ export function classifyMatch(
   const absScoreDiff = Math.abs(scoreDiff);
   const bandChanged = bandFor(ai.total) !== bandFor(finalTotal);
   const gateChanged = isMailingFail(ai.monthly) !== isMailingFail(finalScores.monthly);
-  const criteriaChanged = !sameCriteria(ai.criteria, finalScores.criteria);
-  const monthlyChanged = !sameMonthly(ai.monthly, finalScores.monthly);
+  const crit = tallyCriteria(ai.criteria, finalScores.criteria);
+  const mon = tallyMonthly(ai.monthly, finalScores.monthly);
+  const criteriaChanged = crit.matched !== crit.total;
+  const monthlyChanged = mon.matched !== mon.total;
+  const fieldsTotal = crit.total + mon.total;
+  const fieldsMatched = crit.matched + mon.matched;
 
   const changedFields: string[] = [];
   if (bandChanged) changedFields.push("Категория");
@@ -106,6 +124,8 @@ export function classifyMatch(
     criteriaChanged,
     monthlyChanged,
     changedFields,
+    fieldsTotal,
+    fieldsMatched,
   };
 }
 

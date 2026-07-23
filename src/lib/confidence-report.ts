@@ -121,17 +121,46 @@ export interface ConfidenceCorrelation {
 }
 
 export interface MatchMetrics {
+  /**
+   * ЕДИНЫЙ знаменатель всех процентов совпадения = «все валидные проверенные
+   * AI-оценки»: строки, где сохранены и исходная оценка AI, и финал Маргариты
+   * (проверено + есть AI-снимок). Совпадает с `comparable`. Именно от него
+   * считаются «Точное совпадение %» и «Несовпадение %», поэтому их сумма = 100%.
+   */
+  validReviewed: number;
   /** Проверенные строки с исходным AI-снимком (exact+partial+mismatch). */
   comparable: number;
   exact: number;
   partial: number;
+  /** Значимое несовпадение (сменилась категория/решение о рассылке или |Δ|>5). */
   mismatch: number;
+  /**
+   * Широкое «Несовпадение» = НЕ точное совпадение = partial + mismatch. Именно
+   * это показывает основная карточка «Несовпадение» (см. ТЗ: несовпадение —
+   * отличается хотя бы одно оцениваемое поле). Частичное совпадение —
+   * ПОДМНОЖЕСТВО этого множества.
+   */
+  mismatchBroad: number;
   matched: number; // exact + partial
-  /** Проверенные строки без AI-снимка — исключены из статистики совпадений. */
+  /**
+   * «Недостаточно данных»: проверенные строки без исходного AI-снимка (не с чем
+   * сравнивать). Показываются отдельно и ИСКЛЮЧЕНЫ из знаменателя validReviewed.
+   */
   excludedNoBaseline: number;
-  exactPct: number | null; // exact / comparable
-  acceptablePct: number | null; // matched / comparable
-  mismatchPct: number | null; // mismatch / comparable
+  exactPct: number | null; // exact / validReviewed × 100 — основной показатель
+  /** Несовпадение % = 100 − exactPct (тот же знаменатель). Сумма с exactPct = 100. */
+  mismatchBroadPct: number | null;
+  acceptablePct: number | null; // matched / validReviewed
+  /** Значимое несовпадение / validReviewed (для детализации, не основной). */
+  mismatchPct: number | null;
+  /** Частичное совпадение / validReviewed. */
+  partialPct: number | null;
+  /** Совпавшие оцениваемые поля в частичных совпадениях (Σ по partial-строкам). */
+  partialFieldsMatched: number;
+  /** Всего сравнимых оцениваемых полей в частичных совпадениях. */
+  partialFieldsTotal: number;
+  /** Доля совпавших критериев внутри частичных совпадений, % (см. ТЗ). */
+  partialFieldsAgreementPct: number | null;
   avgScoreDiff: number | null; // средняя ЗНАКОВАЯ разница (final − ai)
   avgAbsScoreDiff: number | null; // средний модуль разницы
   medianScoreDiff: number | null; // медиана знаковой разницы
@@ -204,6 +233,11 @@ export interface ConfidenceReport {
   acceptedPct: number; // % от total
   correctedPct: number; // % от total
   notReviewedPct: number; // % от total
+  /**
+   * accepted / reviewed × 100 — «Принято без изменений» от ПРОВЕРЕННЫХ (тот же
+   * знаменатель, что у «Точное совпадение»). null, если проверенных нет.
+   */
+  acceptedOfReviewedPct: number | null;
   /** corrected / reviewed × 100; null, если проверенных нет. */
   overallCorrectionPct: number | null;
   avgConfidence: number | null; // средняя уверенность по всем строкам с данными
@@ -305,6 +339,9 @@ export function buildConfidenceReport(
   let excludedNoBaseline = 0;
   // Сравнимые чаты с отклонением итоговой оценки < 5% (показатель 5).
   let closeAgreementCount = 0;
+  // Согласие по критериям внутри частичных совпадений (см. ТЗ «Частичное»).
+  let partialFieldsMatched = 0;
+  let partialFieldsTotal = 0;
   const signedDiffs: number[] = [];
   const absDiffs: number[] = [];
 
@@ -367,8 +404,11 @@ export function buildConfidenceReport(
     if (reviewed) {
       if (match) {
         if (match.status === "exact") mExact++;
-        else if (match.status === "partial") mPartial++;
-        else mMismatch++;
+        else if (match.status === "partial") {
+          mPartial++;
+          partialFieldsMatched += match.fieldsMatched;
+          partialFieldsTotal += match.fieldsTotal;
+        } else mMismatch++;
         if (match.absScoreDiff < SCORE_TOLERANCE) closeAgreementCount++;
         signedDiffs.push(match.scoreDiff);
         absDiffs.push(match.absScoreDiff);
@@ -513,6 +553,7 @@ export function buildConfidenceReport(
     acceptedPct: pct(accepted, total),
     correctedPct: pct(corrected, total),
     notReviewedPct: pct(notReviewed, total),
+    acceptedOfReviewedPct: reviewed > 0 ? round1((accepted / reviewed) * 100) : null,
     overallCorrectionPct: correctionPct(corrected, reviewed),
     avgConfidence: avg(allConf),
     avgConfidenceAccepted: avg(acceptedConf),
@@ -541,15 +582,24 @@ export function buildConfidenceReport(
       pct: comparable > 0 ? pct(closeAgreementCount, comparable) : null,
     },
     matches: {
+      validReviewed: comparable,
       comparable,
       exact: mExact,
       partial: mPartial,
       mismatch: mMismatch,
+      mismatchBroad: mPartial + mMismatch,
       matched: mExact + mPartial,
       excludedNoBaseline,
       exactPct: comparable > 0 ? pct(mExact, comparable) : null,
+      // Несовпадение = 100 − Точное совпадение (тот же знаменатель) ⇒ сумма 100%.
+      mismatchBroadPct: comparable > 0 ? round1(100 - pct(mExact, comparable)) : null,
       acceptablePct: comparable > 0 ? pct(mExact + mPartial, comparable) : null,
       mismatchPct: comparable > 0 ? pct(mMismatch, comparable) : null,
+      partialPct: comparable > 0 ? pct(mPartial, comparable) : null,
+      partialFieldsMatched,
+      partialFieldsTotal,
+      partialFieldsAgreementPct:
+        partialFieldsTotal > 0 ? pct(partialFieldsMatched, partialFieldsTotal) : null,
       avgScoreDiff: avg(signedDiffs),
       avgAbsScoreDiff: avg(absDiffs),
       medianScoreDiff: signedDiffs.length ? round1(median(signedDiffs)) : null,
