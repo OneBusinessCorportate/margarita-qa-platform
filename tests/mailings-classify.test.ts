@@ -85,6 +85,53 @@ describe("classifyMessage — spec examples", () => {
   });
 });
 
+// The exact standard department templates the owner uses (RU / EN / ZH), locked
+// so «use those templates» detection can never silently regress.
+describe("classifyMessage — owner's standard templates (multilingual)", () => {
+  it("RU monthly info request → primary_docs + salary req", () => {
+    const r = classifyMessage(
+      `Для своевременной и корректной подготовки отчетности просим предоставить следующую информацию за Май месяц.
+Информацию по выставляемым документам (инвойсы, акты, счета-фактуры).
+Документы по импорту/экспорту (договор, инвойс, CMR, таможенная декларация).
+Банковские выписки по всем счетам и во всех валютах.
+Данные для расчета заработной платы.`
+    );
+    assert.equal(has(r, "primary_docs")?.type, "req");
+    assert.equal(has(r, "salary")?.type, "req");
+  });
+
+  it("EN monthly info request → primary_docs + salary req", () => {
+    const r = classifyMessage(
+      `To ensure the timely and accurate preparation of your reports, please provide the following information for the month of June.
+Information on issued documents (invoices, acts, tax invoices).
+Import/export documents (contract, invoice, CMR, customs declaration, HS codes).
+Bank statements for all accounts and currencies.
+Payroll information.`
+    );
+    assert.equal(has(r, "primary_docs")?.type, "req");
+    assert.equal(has(r, "salary")?.type, "req");
+  });
+
+  it("ZH monthly info request → primary_docs + salary req", () => {
+    const r = classifyMessage(
+      `为了确保报表及时、准确地编制，请提供 6 月份的以下信息：
+关于开具发票的相关信息（Invoice、服务确认单、发票等）。
+进出口相关文件（合同、Invoice、CMR、报关单、商品文件、HS编码）。
+工资计算所需的数据。`
+    );
+    assert.equal(has(r, "primary_docs")?.type, "req");
+    assert.equal(has(r, "salary")?.type, "req");
+  });
+
+  it("ZH service-payment reminder → debts req, never a tax mailing", () => {
+    const r = classifyMessage(
+      `请于每月5日前支付会计服务费用。付款用途：会计服务费。收款方：Business Tech LLC。金额：25,000 AMD。`
+    );
+    assert.equal(has(r, "debts")?.type, "req");
+    assert.ok(!r.categories.some((c) => c.type === "done" || c.type === "paid"));
+  });
+});
+
 describe("classifyMessage — English", () => {
   it("English payroll request → salary req", () => {
     const r = classifyMessage("Please provide the payroll data for June so we can prepare the report.");
