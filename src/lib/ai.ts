@@ -257,7 +257,7 @@ function learnedBias(model: AiModel, accountant: string | null): number {
 // The value is then run through the historical CALIBRATION layer.
 // ---------------------------------------------------------------------------
 
-const CONF_CEIL = 97; // модель никогда не заявляет 100% — всегда оставляем «зазор»
+const CONF_CEIL = 95; // модель никогда не заявляет >95% — всегда оставляем «зазор»
 const CONF_PRIOR = 20; // старт: без данных мы почти ничего не знаем
 const CONF_ACC_MAX = 40; // максимум за реальную историю по бухгалтеру
 const CONF_ACC_SCALE = 8; // «половинное насыщение» по эффективному числу оценок
@@ -361,7 +361,7 @@ export function predictionConfidence(
   };
   const raw = predictionConfidenceRaw(factors);
   const cal = calibrateConfidence(raw, model.calibration);
-  // Keep the «никогда не 100%» invariant AFTER calibration too: a bucket that
+  // Keep the «никогда не >95%» invariant AFTER calibration too: a bucket that
   // historically ran at 100% accuracy must not push the shown confidence past
   // the ceiling (calibrateConfidence clamps to 0..100; we re-apply CONF_CEIL).
   const value = Math.min(CONF_CEIL, cal.value ?? raw);

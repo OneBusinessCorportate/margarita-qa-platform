@@ -151,12 +151,13 @@ test("low-confidence result accepted unchanged stays accepted (confidence NOT in
   assert.equal(r.avgConfidenceAccepted, 35);
 });
 
-test("high-confidence result corrected stays corrected (a mismatch)", () => {
+test("high-confidence result corrected stays corrected (a mismatch); confidence capped at 95%", () => {
   const evals = [mk({ aiTotal: 88, finalTotal: 60, confidence: 96, status: "corrected" })];
   const r = buildConfidenceReport(evals);
   assert.equal(r.corrected, 1);
   assert.equal(r.matches.mismatchBroad, 1);
-  assert.equal(r.rows[0].confidence, 96);
+  // Business rule: confidence never surfaces above 95% (stored 96 → shown 95).
+  assert.equal(r.rows[0].confidence, 95);
   assert.equal(r.high.corrected, 1);
 });
 

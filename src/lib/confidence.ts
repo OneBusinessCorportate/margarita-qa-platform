@@ -34,6 +34,15 @@ export const CONFIDENCE_RANGES: ConfidenceRange[] = [
 /** Порог «высокой уверенности» из бизнес-гипотезы (≥90% ⇒ редкие правки). */
 export const HIGH_CONFIDENCE_THRESHOLD = 90;
 
+/**
+ * Бизнес-правило: модель НИКОГДА не показывает уверенность выше 95% — всегда
+ * остаётся «зазор» на неопределённость. Новые прогнозы уже ограничены этим
+ * потолком при генерации (CONF_CEIL в ai.ts), а этот потолок применяется ещё и
+ * при ЧТЕНИИ/ПОКАЗЕ, чтобы редкие легаси-строки (сохранённые, когда потолок был
+ * 97%) тоже не показывали >95%. Сырые данные в БД при этом не переписываются.
+ */
+export const MAX_CONFIDENCE = 95;
+
 // --- Ярлык и тон уверенности для UI ----------------------------------------
 // Пояснительные ярлыки (главным значением остаётся ПРОЦЕНТ). Отдельно от
 // статистических бакетов (CONFIDENCE_RANGES) — у тех своя, более дробная сетка.
@@ -60,7 +69,8 @@ export function confidenceDisplay(
   confidence: number | null | undefined,
   opts?: { preliminary?: boolean; incompleteData?: boolean }
 ): ConfidenceDisplay {
-  const c = validConfidence(confidence);
+  const raw = validConfidence(confidence);
+  const c = raw == null ? null : Math.min(MAX_CONFIDENCE, raw);
   if (c == null) {
     return { text: "Недостаточно данных", label: "Нет данных", tone: "none", warn: true };
   }
@@ -110,8 +120,9 @@ export function validConfidence(c: unknown): number | null {
  */
 export function evaluationConfidence(e: Pick<Evaluation, "ai_confidence" | "scores">): number | null {
   const direct = validConfidence(e.ai_confidence);
-  if (direct != null) return direct;
-  return validConfidence(e.scores?.ai?.confidence);
+  const v = direct != null ? direct : validConfidence(e.scores?.ai?.confidence);
+  // Бизнес-правило «не выше 95%» применяется и при чтении (легаси-строки с 96–97%).
+  return v == null ? null : Math.min(MAX_CONFIDENCE, v);
 }
 
 /** Исходная общая оценка AI (колонка `ai_total` или снимок `scores.ai.total`). */
