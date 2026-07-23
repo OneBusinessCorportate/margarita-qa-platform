@@ -11,20 +11,8 @@ import {
   isSendable,
   pickTemplate,
   templateId,
-  sendDecision,
   WILL_SEND_WARNING,
 } from "../src/lib/notifications.ts";
-
-const OK = {
-  status: "planned" as const,
-  mode: "auto" as const,
-  requiresAttachment: false,
-  templateApproved: true,
-  hasAttachmentOrDone: false,
-  chatActive: true,
-  chatId: "-100123",
-  sendEnabled: true,
-};
 
 test("plan covers every category exactly once with a matching mode", () => {
   const cats = NOTIFICATION_PLAN.map((p) => p.category).sort();
@@ -88,40 +76,4 @@ test("templateId shape matches the catalog primary key", () => {
 
 test("the WILL-be-sent warning is explicit", () => {
   assert.match(WILL_SEND_WARNING, /БУДЕТ отправлено/);
-});
-
-test("sendDecision: happy path sends", () => {
-  assert.equal(sendDecision(OK).action, "send");
-});
-
-test("sendDecision: gated OFF → dry-run, not send", () => {
-  assert.equal(sendDecision({ ...OK, sendEnabled: false }).action, "dry-run");
-});
-
-test("sendDecision: unapproved wording is skipped even when send is enabled", () => {
-  const d = sendDecision({ ...OK, templateApproved: false });
-  assert.equal(d.action, "skip");
-  assert.match(d.reason, /not approved/);
-});
-
-test("sendDecision: manual notification without an attachment is skipped", () => {
-  const d = sendDecision({
-    ...OK,
-    mode: "manual",
-    requiresAttachment: true,
-    hasAttachmentOrDone: false,
-  });
-  assert.equal(d.action, "skip");
-  assert.match(d.reason, /attach/);
-  // ...but with a file / mark-done it sends
-  assert.equal(
-    sendDecision({ ...OK, mode: "manual", requiresAttachment: true, hasAttachmentOrDone: true }).action,
-    "send"
-  );
-});
-
-test("sendDecision: inactive chat / missing chat id / cancelled are skipped", () => {
-  assert.equal(sendDecision({ ...OK, chatActive: false }).action, "skip");
-  assert.equal(sendDecision({ ...OK, chatId: null }).action, "skip");
-  assert.equal(sendDecision({ ...OK, status: "cancelled" }).action, "skip");
 });

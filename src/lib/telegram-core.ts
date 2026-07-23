@@ -37,35 +37,6 @@ export async function postTelegramMessage(
   }
 }
 
-/** Send a document to a chat by URL — Telegram fetches the file itself, so the
- * caller does not need to download it first. Used to forward the accountant's
- * attached monthly document (salary ведомость / tax report) to the client. */
-export async function postTelegramDocumentByUrl(
-  token: string,
-  chatId: string,
-  fileUrl: string,
-  caption?: string
-): Promise<TelegramResult> {
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        document: fileUrl,
-        ...(caption ? { caption: caption.slice(0, 1024) } : {}),
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}` };
-    }
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? "Сетевая ошибка" };
-  }
-}
-
 /** Send a document (e.g. a PDF) to a chat with an optional short caption. */
 export async function postTelegramDocument(
   token: string,

@@ -107,52 +107,6 @@ export function planPeriodOf(scheduled: Date): string {
   return mailingPeriodOf(iso);
 }
 
-/**
- * Decide what the bot should do with one due planned notification. Pure so the
- * gating is testable and identical between the cron script and any API route.
- *
- *   send     — actually deliver + log
- *   dry-run  — everything is valid but live sending is gated OFF (log only)
- *   skip     — a precondition is missing (not approved / no attachment / cancelled)
- */
-export interface SendDecisionInput {
-  status: PlannedStatus;
-  mode: NotificationMode;
-  requiresAttachment: boolean;
-  templateApproved: boolean;
-  hasAttachmentOrDone: boolean;
-  chatActive: boolean;
-  chatId: string | null;
-  sendEnabled: boolean;
-}
-
-export interface SendDecision {
-  action: "send" | "dry-run" | "skip";
-  reason: string;
-}
-
-export function sendDecision(input: SendDecisionInput): SendDecision {
-  if (!isSendable(input.status)) {
-    return { action: "skip", reason: `status ${input.status} is not sendable` };
-  }
-  if (!input.chatActive) {
-    return { action: "skip", reason: "chat is inactive" };
-  }
-  if (!input.chatId) {
-    return { action: "skip", reason: "no telegram chat id on chat_link" };
-  }
-  if (!input.templateApproved) {
-    return { action: "skip", reason: "template wording not approved by owner yet" };
-  }
-  if (input.mode === "manual" && input.requiresAttachment && !input.hasAttachmentOrDone) {
-    return { action: "skip", reason: "manual notification has no attached file / mark-done" };
-  }
-  if (!input.sendEnabled) {
-    return { action: "dry-run", reason: "NOTIFICATIONS_SEND_ENABLED is off" };
-  }
-  return { action: "send", reason: "ok" };
-}
-
 /** Pick the template for a chat's language, falling back to Russian. Returns the
  * matching item or null. */
 export function pickTemplate<T extends { language: NotificationLanguage; active?: boolean }>(
