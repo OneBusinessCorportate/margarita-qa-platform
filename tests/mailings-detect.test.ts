@@ -781,3 +781,45 @@ describe("detectAllSignals — Chinese (中文) v16", () => {
     assert.ok(!has("我们会做报表和税务优化。", "main_taxes", "done"));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Real owner template: «ՎՃԱՐՄԱՆ ԵՆԹԱԿԱ ՊԱՐՏԱՎՈՐՈՒԹՅՈՒՆՆԵՐԻ ՄԱՍԻՆ ԾԱՆՈՒՑՈՒՄ»
+// (Armenian «Notice of payable obligations») — the accountant informs the
+// client of the tax / salary / service amounts due with treasury accounts and
+// deadlines. This IS a sent tax mailing (the HY analog of the RU tax notice) →
+// main_taxes «Отправил», and the salary line inside the same sent notice →
+// salary «Получил». Locked so this real template can never silently regress.
+// ---------------------------------------------------------------------------
+describe("detectAllSignals — HY payable-obligations notice (ԾԱՆՈՒՑՈՒՄ)", () => {
+  const HY_NOTICE = `ՎՃԱՐՄԱՆ ԵՆԹԱԿԱ ՊԱՐՏԱՎՈՐՈՒԹՅՈՒՆՆԵՐԻ ՄԱՍԻՆ ԾԱՆՈՒՑՈՒՄ
+Սույնով տեղեկացնում ենք, որ նշված հաշվետու ժամանակաշրջանի հաշվարկի արդյունքներով վճարման ենթակա են հետևյալ հարկերի և այլ պարտադիր վճարների գումարները.
+ԱԱՀ 900008000490
+Եկամտային հարկ 900008000490
+Սոցիալական վճար 900008000490
+Դրոշմանիշային վճար 900005001186
+Շրջանառության հարկ 900008000490
+Շահութահարկ (կանխավճար) 900008000490
+Աշխատավարձ
+Հաշվապահական ծառայություններ 1930097970708600
+Ուշադրություն՝ Վճարման ժամկետը խախտելու դեպքում հաշվարկվում է տույժ։
+Սույն ծանուցումը կրում է տեղեկատվական բնույթ։`;
+
+  const statusOfNotice = (cat: string) => {
+    const c = { done: 0, req: 0, call: 0, paid: 0, neg: 0 };
+    for (const s of detectAllSignals(HY_NOTICE)) if (s.category === cat) c[s.type] += 1;
+    return deriveStatus(cat, c);
+  };
+
+  it("→ main_taxes «Отправил» (the amounts-due notice was sent)", () => {
+    assert.equal(statusOfNotice("main_taxes"), "Отправил");
+  });
+
+  it("→ salary «Получил» (salary is a line item in the sent notice)", () => {
+    assert.equal(statusOfNotice("salary"), "Получил");
+  });
+
+  it("the «Հաշվապահական ծառայություններ» line does NOT misfire a debts reminder", () => {
+    // A payment-obligations notice is not the standalone «pay our fee» reminder.
+    assert.ok(!detectAllSignals(HY_NOTICE).some((s) => s.category === "debts"));
+  });
+});
