@@ -74,6 +74,18 @@ function chatLabel(agrNo: string, name: string | null): string {
 }
 
 /**
+ * «B-4676 (Название чата)» — номер договора + название чата / имя клиента в
+ * скобках, чтобы бухгалтер сразу узнал чат, а не только номер договора (запрос
+ * QA: «в сообщении указан только номер договора, без названия чата»). Если
+ * название пустое или совпадает с кодом — показываем только код, без пустых
+ * скобок и дублирования. Общий помощник для всех разбивок нарушений/штрафов.
+ */
+function codeWithName(code: string, name: string | null | undefined): string {
+  const n = name?.trim();
+  return n && n !== code ? `${code} (${n})` : code;
+}
+
+/**
  * Maps the worst severity in a violation group to the action label shown in
  * the message: Грубое → Строгий выговор, Критичное → Выговор, else Предупреждение.
  */
@@ -423,7 +435,7 @@ export function buildReportMessage(
       lines.push(row.accountant);
       for (const item of row.violations) {
         // Номер договора + НАЗВАНИЕ чата, чтобы бухгалтер сразу узнал чат.
-        const label = item.name ? `${item.code} (${item.name})` : item.code;
+        const label = codeWithName(item.code, item.name);
         lines.push(`- ${label} — ${item.type} — ${dailyFineLabel(item.fine)}`);
         // Комментарий Маргариты — отдельной строкой под нарушением, если есть.
         if (item.note) lines.push(`  💬 ${item.note}`);
@@ -714,13 +726,15 @@ export function buildMonthlyFinesMessage(
   const narusheniya = groupNarusheniya(withAcc, { grossPrior });
   const byAcc = new Map<
     string,
-    { items: { code: string; reason: string; fine: number }[]; total: number }
+    { items: { code: string; name: string | null; reason: string; fine: number }[]; total: number }
   >();
   for (const n of narusheniya) {
     const acc = n.accountant;
     const entry = byAcc.get(acc) ?? { items: [], total: 0 };
     entry.items.push({
       code: n.chat_agr_no?.trim() || "-",
+      // Название чата / имя клиента рядом с номером договора (запрос QA).
+      name: n.client?.trim() || null,
       reason: n.types.join(", ") || "-",
       fine: n.fine,
     });
@@ -743,7 +757,7 @@ export function buildMonthlyFinesMessage(
       lines.push(`— ${acc}:`);
       for (const item of items) {
         const money = item.fine > 0 ? `${fmtDram(item.fine)} др` : "предупреждение";
-        lines.push(`  ▸ ${item.code} — ${item.reason} — ${money}`);
+        lines.push(`  ▸ ${codeWithName(item.code, item.name)} — ${item.reason} — ${money}`);
       }
       lines.push(`  Итого: ${fmtDram(total)} др`);
     }
@@ -802,13 +816,15 @@ export function buildWeeklyFinesBreakdown(
   const narusheniya = groupNarusheniya(withAcc, { grossPrior });
   const byAcc = new Map<
     string,
-    { items: { code: string; reason: string; fine: number }[]; total: number }
+    { items: { code: string; name: string | null; reason: string; fine: number }[]; total: number }
   >();
   for (const n of narusheniya) {
     const acc = n.accountant;
     const entry = byAcc.get(acc) ?? { items: [], total: 0 };
     entry.items.push({
       code: n.chat_agr_no?.trim() || "-",
+      // Название чата / имя клиента рядом с номером договора (запрос QA).
+      name: n.client?.trim() || null,
       reason: n.types.join(", ") || "-",
       fine: n.fine,
     });
@@ -828,7 +844,7 @@ export function buildWeeklyFinesBreakdown(
     lines.push(`— ${acc}:`);
     for (const item of items) {
       const money = item.fine > 0 ? `${fmtDram(item.fine)} др` : "предупреждение";
-      lines.push(`  ▸ ${item.code} — ${item.reason} — ${money}`);
+      lines.push(`  ▸ ${codeWithName(item.code, item.name)} — ${item.reason} — ${money}`);
     }
     lines.push(`  Итого: ${fmtDram(total)} др`);
   }
