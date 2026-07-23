@@ -287,6 +287,27 @@ test("monthly fines message: per-person blocks with chat—problem—price and t
   assert.match(msg, /Без нарушений: ✅ Գայանե/);
 });
 
+test("monthly fines message: показывает название чата рядом с номером договора", () => {
+  // Запрос QA: в строке должно быть не только «B-4676», но и название чата, чтобы
+  // бухгалтер сразу узнал, о каком чате речь.
+  const msg = buildMonthlyFinesMessage(
+    [
+      viol({
+        id: "1",
+        accountant: "Լիլիթ",
+        chat_agr_no: "B-4676",
+        client: "ООО Ромашка",
+        violation_type: "Незакрытый запрос клиента, ощущения незавершенной работы",
+      }),
+    ],
+    { monthFrom: "2026-07-01", monthTo: "2026-07-31" }
+  );
+  assert.match(
+    msg,
+    /▸ B-4676 \(ООО Ромашка\) — Незакрытый запрос клиента, ощущения незавершенной работы — предупреждение/
+  );
+});
+
 test("monthly fines message: manual sanction wins and clean month is celebrated", () => {
   const withManual = buildMonthlyFinesMessage(
     [viol({ id: "1", accountant: "Նաիրա", chat_agr_no: "B-1", violation_type: "Долгий ответ", sanction: 5000 })],
@@ -402,6 +423,25 @@ test("weekly fines breakdown: 2 проблемы в одном чате = ОДН
   assert.match(msg, /▸ B-4783 — Отсутствие письменной фиксации договоренностей — предупреждение/);
   assert.match(msg, /▸ B-4282 — Нет расс\. по первичной документации — 1 000 др/);
   assert.match(msg, /Итого: 1 000 др/);
+});
+
+test("weekly fines breakdown: показывает название чата рядом с номером договора", () => {
+  const msg = buildWeeklyFinesBreakdown(
+    [
+      viol({
+        id: "1",
+        accountant: "Դավիթ",
+        chat_agr_no: "B-4676",
+        client: "ООО Ромашка",
+        violation_type: "Незакрытый запрос клиента, ощущения незавершенной работы",
+      }),
+    ],
+    { weekFrom: "2026-07-06", weekTo: "2026-07-08" }
+  );
+  assert.match(
+    msg,
+    /▸ B-4676 \(ООО Ромашка\) — Незакрытый запрос клиента, ощущения незавершенной работы — предупреждение/
+  );
 });
 
 test("weekly fines breakdown: пусто, если нарушений нет", () => {
