@@ -24,7 +24,7 @@
 //   NOTIFICATIONS_SEND_ENABLED                            — "1"/"true" to allow live sends
 // ---------------------------------------------------------------------------
 import { getServiceClient, isSupabaseConfigured } from "../src/lib/supabase/server";
-import { postTelegramMessage } from "../src/lib/telegram-core";
+import { postTelegramMessage, postTelegramDocumentByUrl } from "../src/lib/telegram-core";
 import { telegramChatId } from "../src/lib/chat-list";
 import { sendDecision, type PlannedStatus } from "../src/lib/notifications";
 
@@ -76,7 +76,7 @@ async function main() {
     tplIds.length
       ? db.from("mqa_notification_templates").select("id, approved").in("id", tplIds as string[])
       : Promise.resolve({ data: [] as any[] }),
-    db.from("mqa_notification_attachments").select("agr_no, period, category, file_url, marked_done").in("agr_no", agrNos),
+    db.from("mqa_notification_attachments").select("agr_no, period, category, file_url, file_name, marked_done").in("agr_no", agrNos),
   ]);
 
   const chatBy = new Map((chats ?? []).map((c) => [c.agr_no, c]));
@@ -116,29 +116,41 @@ async function main() {
       continue;
     }
 
-    // action === "send"
-    const res = await postTelegramMessage(token!, chatId!, r.rendered_text);
+    // action === "send" — send the text, then FORWARD the attached document
+    // (salary ведомость / tax report) when the accountant attached a file, so
+    // the client actually receives the promised document, not just the wording.
+    const textRes = await postTelegramMessage(token!, chatId!, r.rendered_text);
+    let ok = textRes.ok;
+    const errs: string[] = [];
+    if (!textRes.ok && textRes.error) errs.push(textRes.error);
+
+    if (att?.file_url) {
+      const docRes = await postTelegramDocumentByUrl(token!, chatId!, att.file_url, r.rendered_text);
+      ok = ok && docRes.ok;
+      if (!docRes.ok && docRes.error) errs.push(`документ: ${docRes.error}`);
+    }
+
     await db.from("mqa_sent_notifications").insert({
       agr_no: r.agr_no,
       chat_id: chatId,
       category: r.category,
       subtype: r.subtype,
       language: r.language,
-      full_text: r.rendered_text,
+      full_text: att?.file_url ? `${r.rendered_text}\n[вложение: ${att.file_name || att.file_url}]` : r.rendered_text,
       template_id: r.template_id,
       planned_id: r.id,
-      telegram_ok: res.ok,
-      telegram_error: res.error ?? null,
+      telegram_ok: ok,
+      telegram_error: errs.length ? errs.join("; ") : null,
     });
-    if (res.ok) {
+    if (ok) {
       await db
         .from("mqa_planned_notifications")
         .update({ status: "sent", sent_at: new Date().toISOString() })
         .eq("id", r.id);
       sent++;
-      console.log(`SENT  ${tag} → chat ${chatId}`);
+      console.log(`SENT  ${tag} → chat ${chatId}${att?.file_url ? " (+документ)" : ""}`);
     } else {
-      console.log(`FAIL  ${tag} → chat ${chatId}: ${res.error}`);
+      console.log(`FAIL  ${tag} → chat ${chatId}: ${errs.join("; ")}`);
     }
   }
 
