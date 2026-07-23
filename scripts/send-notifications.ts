@@ -116,18 +116,49 @@ async function main() {
       continue;
     }
 
-    // action === "send" — send the text, then FORWARD the attached document
-    // (salary ведомость / tax report) when the accountant attached a file, so
-    // the client actually receives the promised document, not just the wording.
-    const textRes = await postTelegramMessage(token!, chatId!, r.rendered_text);
-    let ok = textRes.ok;
-    const errs: string[] = [];
-    if (!textRes.ok && textRes.error) errs.push(textRes.error);
+    // action === "send".
+    // Idempotency: CLAIM the row first (atomic conditional update to 'sent').
+    // Only a row still in a sendable status is claimed, so a DB failure after a
+    // successful Telegram call, a partial text/document failure, or a concurrent
+    // cron run can never cause a DUPLICATE client message (at-most-once). A row
+    // that another run already claimed returns nothing here and is skipped.
+    const nowIso = new Date().toISOString();
+    const { data: claimed, error: claimErr } = await db
+      .from("mqa_planned_notifications")
+      .update({ status: "sent", sent_at: nowIso })
+      .eq("id", r.id)
+      .in("status", ["planned", "edited", "approved"])
+      .select("id");
+    if (claimErr) {
+      console.log(`FAIL  ${tag}: не удалось зарезервировать строку: ${claimErr.message}`);
+      continue;
+    }
+    if (!claimed || claimed.length === 0) {
+      skipped++;
+      console.log(`SKIP  ${tag}: уже обработано другим запуском`);
+      continue;
+    }
 
-    if (att?.file_url) {
-      const docRes = await postTelegramDocumentByUrl(token!, chatId!, att.file_url, r.rendered_text);
-      ok = ok && docRes.ok;
-      if (!docRes.ok && docRes.error) errs.push(`документ: ${docRes.error}`);
+    // Send WITHOUT duplicating the text. With an attached file the wording rides
+    // as the document's caption (one message); only when the text is too long
+    // for a caption (>1024) do we send the text once and the file separately.
+    const errs: string[] = [];
+    let ok = true;
+    const hasFile = !!att?.file_url;
+    const textFitsCaption = (r.rendered_text ?? "").length <= 1024;
+    if (hasFile && textFitsCaption) {
+      const docRes = await postTelegramDocumentByUrl(token!, chatId!, att!.file_url, r.rendered_text);
+      ok = docRes.ok;
+      if (!docRes.ok && docRes.error) errs.push(docRes.error);
+    } else {
+      const textRes = await postTelegramMessage(token!, chatId!, r.rendered_text);
+      ok = textRes.ok;
+      if (!textRes.ok && textRes.error) errs.push(textRes.error);
+      if (hasFile) {
+        const docRes = await postTelegramDocumentByUrl(token!, chatId!, att!.file_url);
+        ok = ok && docRes.ok;
+        if (!docRes.ok && docRes.error) errs.push(`документ: ${docRes.error}`);
+      }
     }
 
     await db.from("mqa_sent_notifications").insert({
@@ -136,21 +167,20 @@ async function main() {
       category: r.category,
       subtype: r.subtype,
       language: r.language,
-      full_text: att?.file_url ? `${r.rendered_text}\n[вложение: ${att.file_name || att.file_url}]` : r.rendered_text,
+      full_text: hasFile ? `${r.rendered_text}\n[вложение: ${att!.file_name || att!.file_url}]` : r.rendered_text,
       template_id: r.template_id,
       planned_id: r.id,
       telegram_ok: ok,
       telegram_error: errs.length ? errs.join("; ") : null,
     });
     if (ok) {
-      await db
-        .from("mqa_planned_notifications")
-        .update({ status: "sent", sent_at: new Date().toISOString() })
-        .eq("id", r.id);
       sent++;
-      console.log(`SENT  ${tag} → chat ${chatId}${att?.file_url ? " (+документ)" : ""}`);
+      console.log(`SENT  ${tag} → chat ${chatId}${hasFile ? " (+документ)" : ""}`);
     } else {
-      console.log(`FAIL  ${tag} → chat ${chatId}: ${errs.join("; ")}`);
+      // The row is already claimed as 'sent' (at-most-once); the failure is
+      // recorded in mqa_sent_notifications for manual follow-up. We deliberately
+      // do NOT auto-retry, to avoid sending the client a duplicate.
+      console.log(`FAIL  ${tag} → chat ${chatId}: ${errs.join("; ")} (залогировано, без авто-повтора)`);
     }
   }
 

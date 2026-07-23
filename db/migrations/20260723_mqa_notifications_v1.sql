@@ -363,6 +363,12 @@ $fn$;
 comment on function public.mqa_plan_notifications(date) is
   'Build/refresh the rolling 30-day planned-notification chain: one planned row per Active chat per category for the current cycle. Idempotent; only rewrites untouched planned rows. Scheduled daily via pg_cron (mqa_plan_notifications_daily).';
 
+-- A newly created function is EXECUTE-able by PUBLIC by default. This one is
+-- SECURITY DEFINER and does bulk RLS-bypassing writes over every active chat, so
+-- lock it down: only the owner / pg_cron (which runs as the table owner) may
+-- call it. No anon/authenticated access.
+revoke all on function public.mqa_plan_notifications(date) from public;
+
 -- Schedule: every day at 03:00 UTC = 07:00 Yerevan (before the workday), so the
 -- chain is fresh when accountants open the platform.
 select cron.schedule(
