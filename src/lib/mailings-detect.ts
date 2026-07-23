@@ -62,6 +62,19 @@ const KW = {
   salary_en: /\b(salary|salaries|payroll|wage|wages|pay\s?slip)\b/i,
   primary_en: /\b(primary\s+document|invoice|act\s+of\s+(?:completed|work)|acts?\s+of|contract|cmr|customs|waybill|consignment|shipping\s+document)\b/i,
   debts_en: /\b(debt|debts|overdue|outstanding\s+(?:balance|amount|payment)|payment\s+reminder|arrears)\b/i,
+  // --- Chinese (中文) — the firm serves Chinese-speaking clients and every
+  // standard рассылка (document/payroll request, service-payment reminder, tax
+  // notification) also goes out in Chinese; none of these were detected before.
+  // Chinese has no word boundaries or spaces, so patterns are plain substring
+  // matches and negation uses the 未/没/尚未 prefixes (see NEG_ZH). Bare 税
+  // (tax) and 报表 (report) are DELIBERATELY excluded — they appear in the
+  // service-payment template («税务优化», «提交报表») and would misfire as a tax
+  // mailing; specific compounds (税款/报税/申报/增值税…) are used instead.
+  taxes_zh: /(税款|报税|纳税|增值税|申报|完税|税单|所得税|社会保险费|印花税|营业税)/,
+  salary_zh: /(工资|薪资|薪酬|工资表|工资单|工资核算|工资计算|发放工资)/,
+  primary_zh:
+    /(发票|合同|报关|清关|进出口|进口|出口|单据|凭证|服务确认单|提单|运单|海关|商品文件|随附单据|税号|HS编码)/i,
+  debts_zh: /(欠款|欠费|债务|逾期|拖欠|催款|催缴|催收|欠账|尾款)/,
 } as const;
 
 // English completion / request verb fragments.
@@ -74,8 +87,11 @@ const NEG_EN = /\b(not|no|haven'?t|hasn'?t|didn'?t|did\s+not|won'?t|never)\s+(?:
 // English notification / mailing stem — «we remind / notify / inform you …»,
 // «this is a reminder», «notice about taxes». Mirrors NOTIFY_RU / NOTIFY_HY so a
 // tax/salary рассылка written in English is detected the same way.
+// NB: matches the VERB inform/informing/informed/informs but NOT the bare noun
+// «information» — the doc-request template «please provide the following
+// information» otherwise tripped a notification-done on «Payroll information».
 const NOTIFY_EN =
-  /\b(remind(?:er|ing|s|ed)?|notif(?:y|ies|ied|ication)|inform(?:ing|ed|ation)?|notice|please\s+be\s+(?:informed|advised)|we\s+are\s+writing\s+to)\b/i;
+  /\b(remind(?:er|ing|s|ed)?|notif(?:y|ies|ied|ication)|inform(?:ing|ed|s)?|notice|please\s+be\s+(?:informed|advised)|we\s+are\s+writing\s+to)\b/i;
 
 // --- Negation detectors ------------------------------------------------------
 // "не <опц. 1-2 слова> <глагол-выполнения>" — a completion that did NOT happen.
@@ -92,10 +108,15 @@ const NEG_HY =
 // Explicit forms for "отправил/..." so the done side never matches the
 // imperative REQUEST "отправьте". "сделал/готово/оформил/провёл" added so
 // plain «Зарплата — сделано» is recognized.
+// «готов» is anchored to a word start ((?<![Cyrillic])готов) so it fires on
+// «готово/готов/готова» but NOT on «ПОДготовки/ПОДготовлен» (preparation) — the
+// owner's doc-request template opens with «Для своевременной и корректной
+// ПОДГОТОВКИ отчётности просим предоставить …», which otherwise tripped the
+// done stem and mislabeled a REQUEST as «Отправил»/«Получил».
 const DONE_TAX_RU =
-  /(отправ|подал|подан|сдан|направил|загрузил|выгрузил|сдала|отправила|отчита|задеклар|сдела|оформ|готов)/i;
+  /(отправ|подал|подан|сдан|направил|загрузил|выгрузил|сдала|отправила|отчита|задеклар|сдела|оформ|(?<![а-яёА-ЯЁ])готов)/i;
 const DONE_RECV_RU =
-  /(получ|пришл|прислал|подпис|сдал|предоставил|скинул|сбросил|прислала|получила|пришла|передал|отправил|отправила|отправлен|отправлена|отправили|выслал|переслал|сдела|сделан|готов|выполн|оформ|провед|провёл|провел)/i;
+  /(получ|пришл|прислал|подпис|сдал|предоставил|скинул|сбросил|прислала|получила|пришла|передал|отправил|отправила|отправлен|отправлена|отправили|выслал|переслал|сдела|сделан|(?<![а-яёА-ЯЁ])готов|выполн|оформ|провед|провёл|провел)/i;
 // + «просим/просят/предоставьт» — штатный шаблон-запрос документов до 28 числа
 // («Просим вас предоставить следующую информацию…: инвойс, акт, счёт-фактура,
 // данные для расчёта заработной платы»). Раньше «просим»/«предоставьте» не
@@ -192,7 +213,29 @@ const MAILING_RU =
   /(рассыл|разосл|разошл|уведомл|уведомил|уведомля|напоминани|напоминаем|напоминаю|напомнил|напомин|информир|информацион|оповещ|извещ|оповестил|известил)/i;
 const MAILING_HY = /(տեղեկացն|տեղեկացր|հիշեցն|ծանուց|իրազեկ)/iu;
 const MAILING_EN =
-  /\b(mailing|newsletter|notification|notify|notice|remind(?:er|ing|s|ed)?|inform(?:ing|ed|ation)?)\b/i;
+  /\b(mailing|newsletter|notification|notify|notice|remind(?:er|ing|s|ed)?|inform(?:ing|ed|s)?)\b/i;
+
+// --- Chinese (中文) markers ---------------------------------------------------
+// No spaces/word-boundaries in Chinese: all substring matches. 已… = completed
+// (submitted/received); 请…/烦请/敬请 = request; 通知/提醒/温馨提示 = notify/mailing.
+// DONE_TAX_ZH — the accountant submitted/filed (taxes are *sent*).
+const DONE_TAX_ZH = /(已(?:提交|申报|报送|上报|提报|递交|发送|完成|办理)|申报完成|提交完毕|已在银行(?:开具|列出|办理))/;
+// DONE_RECV_ZH — received/obtained/prepared (salary sheets, primary docs).
+const DONE_RECV_ZH = /(已(?:收到|接收|取得|收讫|上传|发送|寄出|提供|整理|准备)|收到了|均已收到|已发放)/;
+// REQ_ZH — please provide / send / submit (document & payroll requests).
+const REQ_ZH = /(请(?:提供|发送|提交|分享|上传|尽快|协助|配合|补充|于)|烦请|敬请|请您|需要您?提供|麻烦提供)/;
+// NOTIFY_ZH / MAILING_ZH — notification / reminder wording (the soft catch-all).
+const NOTIFY_ZH = /(通知|提醒|温馨提示|谨此(?:通知|提醒)|特此(?:通知|告知)|告知|敬请知悉|现(?:通知|告知))/;
+const MAILING_ZH = /(通知|提醒|温馨提示|告知|提示|通告|公告|函告)/;
+// SVC_PAY_ZH — pay-for-accounting-services reminder (debts:req). Mirrors the
+// Chinese «请于每月5日前支付会计服务费用» / «会计服务费» / «付款用途：会计服务费» /
+// «收款方» template; NB `.` here does not cross line breaks by default, which is
+// fine — the markers sit within one clause.
+const SVC_PAY_ZH =
+  /(支付会计服务|会计服务费|缴纳.{0,6}服务费|支付.{0,8}服务费用?|请.{0,8}(?:支付|缴纳).{0,6}(?:服务|费用)|付款用途|收款方|账户号码.{0,24}(?:converse|business\s*tech))/i;
+// NEG_ZH — negated completion: 未/没(有)/尚未/无法/还未 + a done/paid verb → NOT done.
+const NEG_ZH =
+  /(?:未|没有|没|尚未|无法|还未|均未|暂未)[^。！？，、\s]{0,4}?(?:提交|申报|报送|收到|接收|发送|寄出|支付|缴纳|付款|完成|提供|办理|发放)/;
 
 const RULES: Rule[] = [
   // --- main_taxes (Russian) -------------------------------------------------
@@ -362,6 +405,32 @@ const RULES: Rule[] = [
   { category: "debts", type: "call", all: [KW.debts_en, CALL_EN] },
   { category: "debts", type: "req", all: [KW.debts_en, /\b(wrote|reminded|messaged|reminder|notified|sent\s+a\s+reminder)\b/i] },
 
+  // --- main_taxes (Chinese) — taxes are *sent* ------------------------------
+  { category: "main_taxes", type: "done", all: [KW.taxes_zh, DONE_TAX_ZH], none: [NEG_ZH, SVC_PAY_ZH] },
+  { category: "main_taxes", type: "done", all: [KW.taxes_zh, NOTIFY_ZH], none: [NEG_ZH, SVC_PAY_ZH] },
+  { category: "main_taxes", type: "neg", all: [KW.taxes_zh, NEG_ZH] },
+  // --- salary (Chinese) -----------------------------------------------------
+  { category: "salary", type: "done", all: [KW.salary_zh, DONE_RECV_ZH], none: [NEG_ZH] },
+  { category: "salary", type: "done", all: [KW.salary_zh, NOTIFY_ZH], none: [NEG_ZH] },
+  { category: "salary", type: "req", all: [KW.salary_zh, REQ_ZH] },
+  { category: "salary", type: "neg", all: [KW.salary_zh, NEG_ZH] },
+  // --- primary_docs (Chinese) -----------------------------------------------
+  { category: "primary_docs", type: "done", all: [KW.primary_zh, DONE_RECV_ZH], none: [NEG_ZH] },
+  { category: "primary_docs", type: "req", all: [KW.primary_zh, REQ_ZH] },
+  { category: "primary_docs", type: "neg", all: [KW.primary_zh, NEG_ZH] },
+  // --- debts (Chinese) ------------------------------------------------------
+  {
+    category: "debts",
+    type: "paid",
+    all: [KW.debts_zh, /(已(?:付清|结清|支付|缴清|缴纳|还清)|付清了|无欠款|已无欠款|(?:欠款|债务)已(?:还清|清偿|结清))/],
+    none: [NEG_ZH],
+  },
+  { category: "debts", type: "call", all: [KW.debts_zh, /(电话|致电|通话|来电|去电|打.{0,2}电话)/] },
+  { category: "debts", type: "req", all: [KW.debts_zh, /(通知|提醒|催款|催缴|催收|请.{0,4}(?:支付|付款|缴纳|结清|还款))/] },
+  // Service-payment reminder (支付会计服务费用) has NO «欠款/债务» word, so it stands
+  // alone as a debts:req signal — mirrors the RU/HY/EN SVC_PAY_REMINDER rule.
+  { category: "debts", type: "req", all: [SVC_PAY_ZH] },
+
   // --- v12: SOFT catch-all — a category keyword + a generic mailing word is ---
   // enough to identify the рассылка, so no type is ever missed for lack of a
   // specific verb. Sent categories (taxes/salary) → done, guarded by the scoped
@@ -383,6 +452,11 @@ const RULES: Rule[] = [
   { category: "salary", type: "done", all: [KW.salary_en, MAILING_EN], none: [NEG_EN] },
   { category: "primary_docs", type: "req", all: [KW.primary_en, MAILING_EN] },
   { category: "debts", type: "req", all: [KW.debts_en, MAILING_EN] },
+  // Chinese:
+  { category: "main_taxes", type: "done", all: [KW.taxes_zh, MAILING_ZH], none: [NEG_ZH, SVC_PAY_ZH] },
+  { category: "salary", type: "done", all: [KW.salary_zh, MAILING_ZH], none: [NEG_ZH] },
+  { category: "primary_docs", type: "req", all: [KW.primary_zh, MAILING_ZH], none: [NEG_ZH] },
+  { category: "debts", type: "req", all: [KW.debts_zh, MAILING_ZH] },
 ];
 
 /**
