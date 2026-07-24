@@ -8,6 +8,12 @@
 export interface TelegramResult {
   ok: boolean;
   error?: string;
+  // true when we never got a response from Telegram (fetch threw — timeout /
+  // network) so delivery is UNKNOWN. false (or absent) means Telegram returned a
+  // response, so on !ok the message was definitively NOT delivered. The
+  // notification sender uses this to decide whether a failed send is safe to
+  // retry (definitive) or must not be re-sent (ambiguous).
+  ambiguous?: boolean;
 }
 
 /** Send a plain-text message to a chat. Plain text — no parse_mode, so nothing
@@ -29,11 +35,45 @@ export async function postTelegramMessage(
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}` };
+      // A 5xx may have been processed server-side before erroring → ambiguous
+      // (delivery unknown). 4xx / 429 are definitive "not delivered".
+      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: res.status >= 500 };
     }
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? "Сетевая ошибка" };
+    return { ok: false, error: e?.message ?? "Сетевая ошибка", ambiguous: true };
+  }
+}
+
+/** Send a document to a chat by URL — Telegram fetches the file itself. Used to
+ * forward the accountant's attached monthly document (salary ведомость / tax
+ * report) to the client. The caption is capped at Telegram's 1024-char limit;
+ * the caller logs exactly the capped text that was sent. */
+export async function postTelegramDocumentByUrl(
+  token: string,
+  chatId: string,
+  fileUrl: string,
+  caption?: string
+): Promise<TelegramResult> {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        document: fileUrl,
+        ...(caption ? { caption } : {}),
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      // A 5xx may have been processed server-side before erroring → ambiguous
+      // (delivery unknown). 4xx / 429 are definitive "not delivered".
+      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: res.status >= 500 };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? "Сетевая ошибка", ambiguous: true };
   }
 }
 
@@ -60,10 +100,12 @@ export async function postTelegramDocument(
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}` };
+      // A 5xx may have been processed server-side before erroring → ambiguous
+      // (delivery unknown). 4xx / 429 are definitive "not delivered".
+      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: res.status >= 500 };
     }
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? "Сетевая ошибка" };
+    return { ok: false, error: e?.message ?? "Сетевая ошибка", ambiguous: true };
   }
 }
