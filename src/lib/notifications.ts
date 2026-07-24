@@ -138,6 +138,26 @@ export function capCaption(text: string): string {
   return text.length > TELEGRAM_CAPTION_LIMIT ? text.slice(0, TELEGRAM_CAPTION_LIMIT) : text;
 }
 
+/**
+ * Parse the services-debt amount from the free-text mqa_chats.debts field —
+ * the SPEC that the SQL planner mirrors. Returns the first signed integer
+ * (thousands spaces removed), or null for non-numeric ("Нет долга"/blank). A
+ * NEGATIVE value (credit / overpaid) is preserved as negative so the planner
+ * skips it — a debt reminder is only planned when the amount is > 0.
+ */
+export function parseDebtAmount(debts: string | null | undefined): number | null {
+  const m = (debts ?? "").match(/-?[0-9][0-9 ]*/);
+  if (!m) return null;
+  const n = Number(m[0].replace(/\s/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Does the client actually owe (a positive services debt)? */
+export function owesServices(debts: string | null | undefined): boolean {
+  const n = parseDebtAmount(debts);
+  return n != null && n > 0;
+}
+
 /** Build the template id used as the catalog primary key. */
 export function templateId(
   category: Category,
@@ -148,15 +168,31 @@ export function templateId(
 }
 
 /** Replace the supported {placeholders} in a template body. Unknown
- * placeholders are left untouched so a typo is visible rather than silent. */
+ * placeholders are left untouched so a typo is visible rather than silent. Kept
+ * in parity with the SQL planner (mqa_plan_notifications). {company} is the
+ * client name; {amount} the real services debt; {month} the docs reporting
+ * month; {hvhh} the tax id. */
 export function renderTemplate(
   body: string,
-  vars: { client?: string; contract?: string; period?: string; dueDay?: number | string }
+  vars: {
+    client?: string;
+    company?: string;
+    contract?: string;
+    period?: string;
+    month?: string;
+    amount?: string | number;
+    hvhh?: string;
+    dueDay?: number | string;
+  }
 ): string {
   return body
-    .replaceAll("{client}", vars.client ?? "")
+    .replaceAll("{client}", vars.client ?? vars.company ?? "")
+    .replaceAll("{company}", vars.company ?? "")
     .replaceAll("{contract}", vars.contract ?? "")
     .replaceAll("{period}", vars.period ?? "")
+    .replaceAll("{month}", vars.month ?? "")
+    .replaceAll("{amount}", vars.amount == null ? "" : String(vars.amount))
+    .replaceAll("{hvhh}", vars.hvhh ?? "")
     .replaceAll("{due_day}", vars.dueDay == null ? "" : String(vars.dueDay));
 }
 

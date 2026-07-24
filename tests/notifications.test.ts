@@ -14,6 +14,8 @@ import {
   sendDecision,
   planDelivery,
   capCaption,
+  parseDebtAmount,
+  owesServices,
   TELEGRAM_CAPTION_LIMIT,
   WILL_SEND_WARNING,
 } from "../src/lib/notifications.ts";
@@ -52,6 +54,14 @@ test("renderTemplate substitutes supported placeholders and leaves unknowns", ()
   assert.equal(out, "Клиент ООО Ромашка, договор B-3302, до 10 числа. {unknown}");
 });
 
+test("renderTemplate fills company/amount/month/hvhh and {client} falls back to {company}", () => {
+  const out = renderTemplate(
+    "{company} (ИНН {hvhh}), за {month}. Сумма: {amount} драм. Привет, {client}!",
+    { company: "BLUE PEAK DIGITAL LLC", hvhh: "00545384", month: "июня", amount: 24000 }
+  );
+  assert.equal(out, "BLUE PEAK DIGITAL LLC (ИНН 00545384), за июня. Сумма: 24000 драм. Привет, BLUE PEAK DIGITAL LLC!");
+});
+
 test("scheduledDateFor uses this month when the due day is ahead, else next", () => {
   const ref = new Date(Date.UTC(2026, 6, 3)); // 2026-07-03
   // due day 10 is still ahead in July
@@ -87,6 +97,20 @@ test("pickTemplate falls back to Russian and skips inactive", () => {
 
 test("templateId shape matches the catalog primary key", () => {
   assert.equal(templateId("salary", "done", "ru"), "salary:done:ru");
+});
+
+test("parseDebtAmount / owesServices: positive owes; negative & non-numeric do NOT", () => {
+  assert.equal(parseDebtAmount("24000"), 24000);
+  assert.equal(parseDebtAmount("24 000"), 24000);
+  assert.equal(parseDebtAmount("Нет долга"), null);
+  assert.equal(parseDebtAmount(""), null);
+  assert.equal(parseDebtAmount(null), null);
+  // a negative debt (credit / overpaid) must stay negative, NOT flip positive
+  assert.equal(parseDebtAmount("-5000"), -5000);
+  assert.equal(owesServices("24000"), true);
+  assert.equal(owesServices("-5000"), false); // no reminder for a credit
+  assert.equal(owesServices("0"), false);
+  assert.equal(owesServices("Нет долга"), false);
 });
 
 test("the WILL-be-sent warning is explicit (and states no cancel)", () => {
