@@ -118,3 +118,8 @@ services:
       # sent templates are approved). Leave unset for dry-run.
       - key: NOTIFICATIONS_SEND_ENABLED
         sync: false
+      # TEST mode: while set, EVERY notification goes to this one chat instead of
+      # the real client chats (bypasses the approved/attachment gate — no real
+      # client is contacted). Unset it to deliver to real clients.
+      - key: NOTIFICATIONS_TEST_CHAT_ID
+        sync: false

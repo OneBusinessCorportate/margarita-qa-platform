@@ -12,6 +12,7 @@ import {
   pickTemplate,
   templateId,
   sendDecision,
+  planDelivery,
   capCaption,
   TELEGRAM_CAPTION_LIMIT,
   WILL_SEND_WARNING,
@@ -129,4 +130,24 @@ test("capCaption truncates to the Telegram caption limit, so the log == what was
   const long = "x".repeat(TELEGRAM_CAPTION_LIMIT + 50);
   assert.equal(capCaption(long).length, TELEGRAM_CAPTION_LIMIT);
   assert.equal(capCaption("короткий"), "короткий");
+});
+
+test("planDelivery: test-chat mode redirects EVERY sendable row to the test chat, bypassing gates", () => {
+  const base = { ...OK, clientChatId: "-100client", testChatId: "-100test" };
+  // unapproved + manual-without-file would be skipped in production, but in test
+  // mode they still go — to the TEST chat.
+  const p = planDelivery({ ...base, templateApproved: false, mode: "manual", requiresAttachment: true, hasAttachmentOrDone: false });
+  assert.equal(p.action, "send");
+  assert.equal(p.chatId, "-100test");
+  // a non-sendable status is still not sent
+  assert.equal(planDelivery({ ...base, status: "sent" }).action, "skip");
+});
+
+test("planDelivery: production mode (no test chat) uses the full gate + client chat", () => {
+  const base = { ...OK, clientChatId: "-100client", testChatId: null };
+  const ok = planDelivery(base);
+  assert.equal(ok.action, "send");
+  assert.equal(ok.chatId, "-100client");
+  assert.equal(planDelivery({ ...base, templateApproved: false }).action, "skip");
+  assert.equal(planDelivery({ ...base, sendEnabled: false }).action, "dry-run");
 });

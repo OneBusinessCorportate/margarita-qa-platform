@@ -99,6 +99,35 @@ export function sendDecision(i: SendDecisionInput): SendDecision {
   return { action: "send", reason: "ok" };
 }
 
+/**
+ * Where a due notification should actually go, folding in the TEST-CHAT
+ * override. When a test chat id is configured, EVERY sendable notification is
+ * delivered to that one chat instead of the real client chats — bypassing the
+ * approved/attachment/chat-active gates, because no real client is contacted.
+ * This is the "send all to the test chat until we allow real clients" mode. With
+ * no test chat set, the full production gate (sendDecision) applies and the
+ * destination is the client's own chat.
+ */
+export interface DeliveryInput extends SendDecisionInput {
+  clientChatId: string | null;
+  testChatId: string | null;
+}
+
+export interface DeliveryPlan {
+  action: "send" | "dry-run" | "skip";
+  chatId: string | null;
+  reason: string;
+}
+
+export function planDelivery(i: DeliveryInput): DeliveryPlan {
+  if (i.testChatId) {
+    if (!isSendable(i.status)) return { action: "skip", chatId: null, reason: `status ${i.status} is not sendable` };
+    return { action: "send", chatId: i.testChatId, reason: "test-chat override (all sends redirected)" };
+  }
+  const d = sendDecision({ ...i, chatId: i.clientChatId });
+  return { action: d.action, chatId: d.action === "skip" ? null : i.clientChatId, reason: d.reason };
+}
+
 /** Telegram caption hard limit (chars). A document's caption is capped here, so
  * the sender logs exactly the capped text that the client actually received. */
 export const TELEGRAM_CAPTION_LIMIT = 1024;
