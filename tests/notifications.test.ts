@@ -16,6 +16,9 @@ import {
   capCaption,
   parseDebtAmount,
   owesServices,
+  categoryLabel,
+  formatTestMessage,
+  buildTestDailyReport,
   TELEGRAM_CAPTION_LIMIT,
   WILL_SEND_WARNING,
 } from "../src/lib/notifications.ts";
@@ -171,6 +174,32 @@ test("planDelivery: test-chat mode STILL honours dry-run (never actually sends)"
   const p = planDelivery({ ...OK, clientChatId: "-100client", testChatId: "-100test", sendEnabled: false });
   assert.equal(p.action, "dry-run");
   assert.equal(p.chatId, "-100test");
+});
+
+test("categoryLabel maps known categories and falls back to the raw key", () => {
+  assert.equal(categoryLabel("debts"), "Оплата услуг");
+  assert.equal(categoryLabel("salary"), "Зарплата");
+  assert.equal(categoryLabel("main_taxes"), "Налоги");
+  assert.equal(categoryLabel("primary_docs"), "Первичные документы");
+  assert.equal(categoryLabel("unknown_cat"), "unknown_cat");
+});
+
+test("formatTestMessage prefixes the company/contract/category so the test chat is readable", () => {
+  const out = formatTestMessage({ company: "BLUE PEAK DIGITAL LLC", agrNo: "B-4219", category: "debts", body: "текст" });
+  assert.equal(out, "🏢 BLUE PEAK DIGITAL LLC · B-4219 · Оплата услуг\n\nтекст");
+});
+
+test("buildTestDailyReport lists what is due by company, and is null when nothing is due", () => {
+  assert.equal(buildTestDailyReport("2026-07-24", []), null);
+  const r = buildTestDailyReport("2026-07-24", [
+    { company: "Ромашка", agrNo: "B-1", category: "debts" },
+    { company: "Ромашка", agrNo: "B-1", category: "salary" },
+    { company: "Лютик", agrNo: "B-2", category: "primary_docs" },
+  ]);
+  assert.match(r!, /Рассылка за 2026-07-24/);
+  assert.match(r!, /3 уведомл\. по 2 комп\./); // 3 items, 2 distinct contracts
+  assert.match(r!, /Ромашка \(B-1\) — Оплата услуг/);
+  assert.match(r!, /Лютик \(B-2\) — Первичные документы/);
 });
 
 test("planDelivery: production mode (no test chat) uses the full gate + client chat", () => {

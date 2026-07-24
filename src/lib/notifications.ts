@@ -49,6 +49,52 @@ export const NOTIFICATION_PLAN: readonly NotificationPlanItem[] = [
 export const NOTIFICATION_LANGUAGES: readonly NotificationLanguage[] = ["ru", "hy", "en", "zh"];
 export const DEFAULT_LANGUAGE: NotificationLanguage = "ru";
 
+/** Human category labels (ru) for the test-chat header / daily report. */
+export const NOTIFICATION_CATEGORY_LABEL: Readonly<Record<string, string>> = {
+  debts: "Оплата услуг",
+  salary: "Зарплата",
+  main_taxes: "Налоги",
+  primary_docs: "Первичные документы",
+};
+
+export function categoryLabel(category: string): string {
+  return NOTIFICATION_CATEGORY_LABEL[category] ?? category;
+}
+
+/**
+ * In test-chat mode every notification lands in ONE chat, so we can no longer
+ * tell which client each is for. Prefix each message with the company it is
+ * really addressed to (name + contract + category). Test-chat only — a real
+ * client never sees this header (production sends the body verbatim).
+ */
+export function formatTestMessage(i: {
+  company: string;
+  agrNo: string;
+  category: string;
+  body: string;
+}): string {
+  return `🏢 ${i.company} · ${i.agrNo} · ${categoryLabel(i.category)}\n\n${i.body}`;
+}
+
+/**
+ * The daily test-chat digest: a short "what will go out today, by company"
+ * report, sent once before the individual messages. Returns null when nothing
+ * is due (so the bot stays silent on empty days — "send a report … if there is
+ * some"). `date` is the run date (YYYY-MM-DD).
+ */
+export function buildTestDailyReport(
+  date: string,
+  items: readonly { company: string; agrNo: string; category: string }[]
+): string | null {
+  if (items.length === 0) return null;
+  const companies = new Set(items.map((x) => x.agrNo));
+  const lines = items.map((x) => `• ${x.company} (${x.agrNo}) — ${categoryLabel(x.category)}`);
+  return (
+    `📋 Рассылка за ${date}\n${items.length} уведомл. по ${companies.size} комп.:\n\n` +
+    lines.join("\n")
+  );
+}
+
 /** Prominent, human-visible warning shown everywhere a planned message can go
  * out. Deliberately explicit (pt.3: "a clear 'this message WILL be sent'
  * warning everywhere it can go out"). */
