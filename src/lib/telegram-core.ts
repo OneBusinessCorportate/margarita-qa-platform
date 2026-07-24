@@ -8,6 +8,12 @@
 export interface TelegramResult {
   ok: boolean;
   error?: string;
+  // true when we never got a response from Telegram (fetch threw — timeout /
+  // network) so delivery is UNKNOWN. false (or absent) means Telegram returned a
+  // response, so on !ok the message was definitively NOT delivered. The
+  // notification sender uses this to decide whether a failed send is safe to
+  // retry (definitive) or must not be re-sent (ambiguous).
+  ambiguous?: boolean;
 }
 
 /** Send a plain-text message to a chat. Plain text — no parse_mode, so nothing
@@ -29,11 +35,11 @@ export async function postTelegramMessage(
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}` };
+      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: false };
     }
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? "Сетевая ошибка" };
+    return { ok: false, error: e?.message ?? "Сетевая ошибка", ambiguous: true };
   }
 }
 
@@ -59,11 +65,11 @@ export async function postTelegramDocumentByUrl(
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}` };
+      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: false };
     }
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? "Сетевая ошибка" };
+    return { ok: false, error: e?.message ?? "Сетевая ошибка", ambiguous: true };
   }
 }
 
@@ -90,10 +96,10 @@ export async function postTelegramDocument(
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}` };
+      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: false };
     }
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? "Сетевая ошибка" };
+    return { ok: false, error: e?.message ?? "Сетевая ошибка", ambiguous: true };
   }
 }

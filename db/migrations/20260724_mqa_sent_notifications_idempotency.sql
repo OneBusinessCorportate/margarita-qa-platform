@@ -113,6 +113,36 @@ begin
 end;
 $$;
 
+-- Record an AMBIGUOUS failure (a network error / timeout — Telegram may or may
+-- not have delivered): KEEP the reservation so the next run never re-sends
+-- (at-most-once), stamp the error, and log it for a human to review. This is the
+-- only genuinely unavoidable case.
+create or replace function public.mqa_hold_notification_send(
+  p_planned_id  bigint,
+  p_agr_no      text,
+  p_chat_id     text,
+  p_category    text,
+  p_subtype     text,
+  p_language    text,
+  p_full_text   text,
+  p_template_id text,
+  p_error       text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.mqa_notification_send_attempts set error = p_error where planned_id = p_planned_id;
+  insert into public.mqa_sent_notifications
+    (agr_no, chat_id, category, subtype, language, full_text, template_id, planned_id, telegram_ok, telegram_error)
+  values
+    (p_agr_no, p_chat_id, p_category, p_subtype, p_language, p_full_text, p_template_id, p_planned_id, false,
+     'AMBIGUOUS (not retried): ' || coalesce(p_error, ''));
+end;
+$$;
+
 -- Record a DEFINITIVE failure (Telegram returned an error → NOT delivered):
 -- delete the reservation so the next run may safely retry, and log the failure
 -- for visibility.
@@ -144,9 +174,11 @@ $$;
 revoke all on function public.mqa_reserve_notification_send(bigint) from public;
 revoke all on function public.mqa_finalize_notification_sent(bigint, text, text, text, text, text, text, text) from public;
 revoke all on function public.mqa_fail_notification_send(bigint, text, text, text, text, text, text, text, text) from public;
+revoke all on function public.mqa_hold_notification_send(bigint, text, text, text, text, text, text, text, text) from public;
 grant execute on function public.mqa_reserve_notification_send(bigint) to service_role;
 grant execute on function public.mqa_finalize_notification_sent(bigint, text, text, text, text, text, text, text) to service_role;
 grant execute on function public.mqa_fail_notification_send(bigint, text, text, text, text, text, text, text, text) to service_role;
+grant execute on function public.mqa_hold_notification_send(bigint, text, text, text, text, text, text, text, text) to service_role;
 
 -- Single-run lease (OPTIMISATION only — correctness is the per-row reservation
 -- above). Owned by a token so only the holder can release it.

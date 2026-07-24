@@ -166,9 +166,18 @@ async function main() {
         });
         if (finErr) console.log(`WARN  ${tag} → chat ${dest}: доставлено, но финализация не записана: ${finErr.message}`);
         sent++; console.log(`SENT  ${tag} → chat ${dest}${fileForSend ? " (+документ)" : ""}`);
+      } else if (res.ambiguous) {
+        // Ambiguous (network error/timeout — Telegram may have delivered): KEEP
+        // the reservation so we NEVER re-send (at-most-once); log for review.
+        await db.rpc("mqa_hold_notification_send", {
+          p_planned_id: r.id, p_agr_no: r.agr_no, p_chat_id: dest, p_category: r.category,
+          p_subtype: r.subtype, p_language: r.language, p_full_text: logText, p_template_id: r.template_id,
+          p_error: res.error ?? null,
+        });
+        failed++; console.log(`HOLD  ${tag} → chat ${dest}: ${res.error} (неоднозначно, без повтора — проверить вручную)`);
       } else {
-        // Definitive failure (Telegram said no → NOT delivered): drop the
-        // reservation so the next run may safely retry; log the failure.
+        // Definitive failure (Telegram returned an error → NOT delivered): drop
+        // the reservation so the next run may safely retry; log the failure.
         await db.rpc("mqa_fail_notification_send", {
           p_planned_id: r.id, p_agr_no: r.agr_no, p_chat_id: dest, p_category: r.category,
           p_subtype: r.subtype, p_language: r.language, p_full_text: logText, p_template_id: r.template_id,
