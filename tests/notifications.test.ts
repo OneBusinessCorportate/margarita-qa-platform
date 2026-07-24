@@ -11,8 +11,22 @@ import {
   isSendable,
   pickTemplate,
   templateId,
+  sendDecision,
+  capCaption,
+  TELEGRAM_CAPTION_LIMIT,
   WILL_SEND_WARNING,
 } from "../src/lib/notifications.ts";
+
+const OK = {
+  status: "planned" as const,
+  mode: "auto" as const,
+  requiresAttachment: false,
+  templateApproved: true,
+  hasAttachmentOrDone: false,
+  chatActive: true,
+  chatId: "-100123",
+  sendEnabled: true,
+};
 
 test("plan covers every category exactly once with a matching mode", () => {
   const cats = NOTIFICATION_PLAN.map((p) => p.category).sort();
@@ -51,10 +65,10 @@ test("planPeriodOf reuses the mailing-cycle rollover (28th → next month)", () 
   assert.equal(planPeriodOf(new Date(Date.UTC(2026, 6, 10))), "202607");
 });
 
-test("isSendable: planned/edited/approved send; cancelled/sent/skipped do not", () => {
+test("isSendable: only planned/edited send (no approve/cancel step)", () => {
   assert.equal(isSendable("planned"), true);
   assert.equal(isSendable("edited"), true);
-  assert.equal(isSendable("approved"), true);
+  assert.equal(isSendable("approved"), false);
   assert.equal(isSendable("cancelled"), false);
   assert.equal(isSendable("sent"), false);
   assert.equal(isSendable("skipped"), false);
@@ -74,6 +88,45 @@ test("templateId shape matches the catalog primary key", () => {
   assert.equal(templateId("salary", "done", "ru"), "salary:done:ru");
 });
 
-test("the WILL-be-sent warning is explicit", () => {
+test("the WILL-be-sent warning is explicit (and states no cancel)", () => {
   assert.match(WILL_SEND_WARNING, /БУДЕТ отправлено/);
+  assert.match(WILL_SEND_WARNING, /Отменить/);
+});
+
+test("sendDecision: happy path sends", () => {
+  assert.equal(sendDecision(OK).action, "send");
+});
+
+test("sendDecision: gated OFF → dry-run, not send", () => {
+  assert.equal(sendDecision({ ...OK, sendEnabled: false }).action, "dry-run");
+});
+
+test("sendDecision: unapproved wording is skipped even when send is enabled", () => {
+  const d = sendDecision({ ...OK, templateApproved: false });
+  assert.equal(d.action, "skip");
+  assert.match(d.reason, /not approved/);
+});
+
+test("sendDecision: manual without attachment is skipped; with a file/mark it sends", () => {
+  assert.equal(
+    sendDecision({ ...OK, mode: "manual", requiresAttachment: true, hasAttachmentOrDone: false }).action,
+    "skip"
+  );
+  assert.equal(
+    sendDecision({ ...OK, mode: "manual", requiresAttachment: true, hasAttachmentOrDone: true }).action,
+    "send"
+  );
+});
+
+test("sendDecision: inactive chat / missing id / non-sendable status are skipped", () => {
+  assert.equal(sendDecision({ ...OK, chatActive: false }).action, "skip");
+  assert.equal(sendDecision({ ...OK, chatId: null }).action, "skip");
+  assert.equal(sendDecision({ ...OK, status: "sent" }).action, "skip");
+  assert.equal(sendDecision({ ...OK, status: "approved" }).action, "skip");
+});
+
+test("capCaption truncates to the Telegram caption limit, so the log == what was sent", () => {
+  const long = "x".repeat(TELEGRAM_CAPTION_LIMIT + 50);
+  assert.equal(capCaption(long).length, TELEGRAM_CAPTION_LIMIT);
+  assert.equal(capCaption("короткий"), "короткий");
 });

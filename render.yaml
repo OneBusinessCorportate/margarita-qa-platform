@@ -90,3 +90,31 @@ services:
       # the report goes to TELEGRAM_CHAT_ID (the shared report chat).
       - key: MARGARITA_QA_TELEGRAM_CHAT_ID
         sync: false
+
+  # --- Templated CLIENT notifications — the bot sender -----------------------
+  # Sends the due planned notifications (mqa_planned_notifications) to CLIENT
+  # chats and logs each send (mqa_sent_notifications). GATED OFF by default: a
+  # row is delivered only when its template is approved AND
+  # NOTIFICATIONS_SEND_ENABLED=1. Until then this cron is a safe dry-run.
+  # Single Render instance (not parallel) — the sender's idempotency assumes it.
+  - type: cron
+    name: margarita-send-notifications
+    runtime: node
+    region: frankfurt
+    plan: starter
+    # 06:00 UTC = 10:00 Yerevan — after the 07:00 planning cron, start of the
+    # workday, so the accountant had the morning to edit / attach.
+    schedule: "0 6 * * *"
+    buildCommand: npm install --include=dev
+    startCommand: npm run send:notifications
+    envVars:
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # Live client sending is OFF until this is explicitly "1"/"true" (and the
+      # sent templates are approved). Leave unset for dry-run.
+      - key: NOTIFICATIONS_SEND_ENABLED
+        sync: false

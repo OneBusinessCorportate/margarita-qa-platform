@@ -53,14 +53,58 @@ export const DEFAULT_LANGUAGE: NotificationLanguage = "ru";
  * out. Deliberately explicit (pt.3: "a clear 'this message WILL be sent'
  * warning everywhere it can go out"). */
 export const WILL_SEND_WARNING =
-  "⚠️ Это сообщение БУДЕТ отправлено клиенту ботом автоматически. " +
-  "Отредактируйте или отмените его, если нужно — иначе оно уйдёт по расписанию.";
+  "⚠️ Это сообщение БУДЕТ отправлено клиенту ботом автоматически в назначенное " +
+  "время. Отменить отправку нельзя — но текст можно отредактировать в любой " +
+  "момент до отправки.";
 
-/** Statuses whose planned notification will still be sent by the bot. An
- * untouched 'planned' row, an 'edited' one, and an explicitly 'approved' one
- * all send; 'cancelled'/'sent'/'skipped' do not. */
+/** Statuses whose planned notification will still be sent by the bot: a
+ * 'planned' or 'edited' row. There is no cancel and no 'approved' lock step
+ * (owner decision, kk 0036) — the bot always sends; only editing is possible
+ * before send. 'cancelled'/'sent'/'skipped' never send. */
 export function isSendable(status: PlannedStatus): boolean {
-  return status === "planned" || status === "edited" || status === "approved";
+  return status === "planned" || status === "edited";
+}
+
+/**
+ * Decide what the bot should do with one due planned notification. Pure so the
+ * gate is tested and identical wherever it runs.
+ *   send    — deliver + log now
+ *   dry-run — everything valid but live sending is gated OFF (log-only)
+ *   skip    — a precondition is missing (not sendable / not approved / no file …)
+ */
+export interface SendDecisionInput {
+  status: PlannedStatus;
+  mode: NotificationMode;
+  requiresAttachment: boolean;
+  templateApproved: boolean;
+  hasAttachmentOrDone: boolean;
+  chatActive: boolean;
+  chatId: string | null;
+  sendEnabled: boolean;
+}
+
+export interface SendDecision {
+  action: "send" | "dry-run" | "skip";
+  reason: string;
+}
+
+export function sendDecision(i: SendDecisionInput): SendDecision {
+  if (!isSendable(i.status)) return { action: "skip", reason: `status ${i.status} is not sendable` };
+  if (!i.chatActive) return { action: "skip", reason: "chat is inactive" };
+  if (!i.chatId) return { action: "skip", reason: "no telegram chat id on chat_link" };
+  if (!i.templateApproved) return { action: "skip", reason: "template wording not approved by owner yet" };
+  if (i.mode === "manual" && i.requiresAttachment && !i.hasAttachmentOrDone)
+    return { action: "skip", reason: "manual notification has no attached file / mark-done" };
+  if (!i.sendEnabled) return { action: "dry-run", reason: "NOTIFICATIONS_SEND_ENABLED is off" };
+  return { action: "send", reason: "ok" };
+}
+
+/** Telegram caption hard limit (chars). A document's caption is capped here, so
+ * the sender logs exactly the capped text that the client actually received. */
+export const TELEGRAM_CAPTION_LIMIT = 1024;
+
+export function capCaption(text: string): string {
+  return text.length > TELEGRAM_CAPTION_LIMIT ? text.slice(0, TELEGRAM_CAPTION_LIMIT) : text;
 }
 
 /** Build the template id used as the catalog primary key. */
