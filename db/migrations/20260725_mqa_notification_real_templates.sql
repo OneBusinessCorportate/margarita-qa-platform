@@ -187,7 +187,11 @@ begin
     from mqa_chats where status = 'Active'
   loop
     v_company := coalesce(nullif(btrim(v_chat.name_agr),''), v_chat.chat_name, v_chat.agr_no);
-    v_amount  := nullif(regexp_replace(coalesce(v_chat.debts,''), '[^0-9]', '', 'g'), '');
+    -- Parse the FIRST signed integer, preserving a leading minus (a negative
+    -- debt = credit/overpaid → must NOT become a positive "you owe" amount), and
+    -- dropping thousands spaces. "Нет долга"/blank → null.
+    v_amount := regexp_replace(coalesce((regexp_match(coalesce(v_chat.debts,''), '-?[0-9][0-9 ]*'))[1], ''), '\s', '', 'g');
+    v_amount := nullif(v_amount, '');
     foreach spec slice 1 in array plan_spec loop
       v_cat := spec[1]; v_sub := spec[2]; v_due := spec[3]::int; v_lang := v_chat.language;
 

@@ -14,6 +14,8 @@ import {
   sendDecision,
   planDelivery,
   capCaption,
+  parseDebtAmount,
+  owesServices,
   TELEGRAM_CAPTION_LIMIT,
   WILL_SEND_WARNING,
 } from "../src/lib/notifications.ts";
@@ -95,6 +97,20 @@ test("pickTemplate falls back to Russian and skips inactive", () => {
 
 test("templateId shape matches the catalog primary key", () => {
   assert.equal(templateId("salary", "done", "ru"), "salary:done:ru");
+});
+
+test("parseDebtAmount / owesServices: positive owes; negative & non-numeric do NOT", () => {
+  assert.equal(parseDebtAmount("24000"), 24000);
+  assert.equal(parseDebtAmount("24 000"), 24000);
+  assert.equal(parseDebtAmount("Нет долга"), null);
+  assert.equal(parseDebtAmount(""), null);
+  assert.equal(parseDebtAmount(null), null);
+  // a negative debt (credit / overpaid) must stay negative, NOT flip positive
+  assert.equal(parseDebtAmount("-5000"), -5000);
+  assert.equal(owesServices("24000"), true);
+  assert.equal(owesServices("-5000"), false); // no reminder for a credit
+  assert.equal(owesServices("0"), false);
+  assert.equal(owesServices("Нет долга"), false);
 });
 
 test("the WILL-be-sent warning is explicit (and states no cancel)", () => {
