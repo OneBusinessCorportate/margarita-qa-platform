@@ -30,6 +30,7 @@
 // Env: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN,
 //      NOTIFICATIONS_SEND_ENABLED, NOTIFICATIONS_TEST_CHAT_ID.
 // ---------------------------------------------------------------------------
+import { randomUUID } from "node:crypto";
 import { getServiceClient, isSupabaseConfigured } from "../src/lib/supabase/server";
 import { postTelegramMessage, postTelegramDocumentByUrl } from "../src/lib/telegram-core";
 import { telegramChatId } from "../src/lib/chat-list";
@@ -59,7 +60,12 @@ async function main() {
   const live = !dryRun && (testChatId ? true : sendEnabled());
 
   // Single-run lease: bail out if another run holds it (no concurrent delivery).
-  const { data: gotLock, error: lockErr } = await db.rpc("mqa_try_acquire_send_lock", { p_ttl_seconds: 900 });
+  // The lease is owned by this token, so we only ever release our own.
+  const lockToken = randomUUID();
+  const { data: gotLock, error: lockErr } = await db.rpc("mqa_try_acquire_send_lock", {
+    p_token: lockToken,
+    p_ttl_seconds: 900,
+  });
   if (lockErr) throw new Error(`lease: ${lockErr.message}`);
   if (!gotLock) {
     console.log("Другой запуск отправителя ещё выполняется — выходим.");
@@ -161,7 +167,7 @@ async function main() {
         (testChatId ? ` — ТЕСТ-режим: всё уходит в чат ${testChatId}` : live ? "" : " — живая отправка ВЫКЛючена")
     );
   } finally {
-    await db.rpc("mqa_release_send_lock");
+    await db.rpc("mqa_release_send_lock", { p_token: lockToken });
   }
 }
 

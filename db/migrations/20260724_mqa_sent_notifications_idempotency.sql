@@ -77,19 +77,25 @@ end;
 $$;
 
 revoke all on function public.mqa_record_notification_sent(bigint, text, text, text, text, text, text, text, boolean, text) from public;
+grant execute on function public.mqa_record_notification_sent(bigint, text, text, text, text, text, text, text, boolean, text) to service_role;
 
 -- Single-run lease lock ------------------------------------------------------
 -- Belt-and-suspenders against overlapping sender runs (the Render cron is a
 -- single instance, but this makes concurrent delivery impossible even if it is
 -- ever invoked twice): a run acquires the lease only if it is free or the prior
--- lease has expired (crash-safe). Prevents two runs from both delivering.
+-- lease has expired (crash-safe). The lease is OWNED by a token the acquirer
+-- generates, so a run can only release ITS OWN lease — a late-finishing run
+-- whose lease already expired and was re-acquired by another run cannot clear
+-- the new holder's lease.
 create table if not exists public.mqa_send_run_lock (
-  id        integer primary key default 1 check (id = 1),
-  locked_at timestamptz
+  id         integer primary key default 1 check (id = 1),
+  locked_at  timestamptz,
+  lock_token text
 );
-insert into public.mqa_send_run_lock (id, locked_at) values (1, null) on conflict (id) do nothing;
+insert into public.mqa_send_run_lock (id, locked_at, lock_token) values (1, null, null) on conflict (id) do nothing;
+alter table public.mqa_send_run_lock add column if not exists lock_token text;
 
-create or replace function public.mqa_try_acquire_send_lock(p_ttl_seconds integer default 900)
+create or replace function public.mqa_try_acquire_send_lock(p_token text, p_ttl_seconds integer default 900)
 returns boolean
 language plpgsql
 security definer
@@ -99,7 +105,7 @@ declare
   v_got boolean;
 begin
   update public.mqa_send_run_lock
-     set locked_at = now()
+     set locked_at = now(), lock_token = p_token
    where id = 1
      and (locked_at is null or now() - locked_at > make_interval(secs => p_ttl_seconds))
   returning true into v_got;
@@ -107,16 +113,21 @@ begin
 end;
 $$;
 
-create or replace function public.mqa_release_send_lock()
+create or replace function public.mqa_release_send_lock(p_token text)
 returns void
 language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
 begin
-  update public.mqa_send_run_lock set locked_at = null where id = 1;
+  -- Only the current holder may release — matching lock_token.
+  update public.mqa_send_run_lock
+     set locked_at = null, lock_token = null
+   where id = 1 and lock_token = p_token;
 end;
 $$;
 
-revoke all on function public.mqa_try_acquire_send_lock(integer) from public;
-revoke all on function public.mqa_release_send_lock() from public;
+revoke all on function public.mqa_try_acquire_send_lock(text, integer) from public;
+revoke all on function public.mqa_release_send_lock(text) from public;
+grant execute on function public.mqa_try_acquire_send_lock(text, integer) to service_role;
+grant execute on function public.mqa_release_send_lock(text) to service_role;
