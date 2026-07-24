@@ -52,6 +52,14 @@ test("renderTemplate substitutes supported placeholders and leaves unknowns", ()
   assert.equal(out, "Клиент ООО Ромашка, договор B-3302, до 10 числа. {unknown}");
 });
 
+test("renderTemplate fills company/amount/month/hvhh and {client} falls back to {company}", () => {
+  const out = renderTemplate(
+    "{company} (ИНН {hvhh}), за {month}. Сумма: {amount} драм. Привет, {client}!",
+    { company: "BLUE PEAK DIGITAL LLC", hvhh: "00545384", month: "июня", amount: 24000 }
+  );
+  assert.equal(out, "BLUE PEAK DIGITAL LLC (ИНН 00545384), за июня. Сумма: 24000 драм. Привет, BLUE PEAK DIGITAL LLC!");
+});
+
 test("scheduledDateFor uses this month when the due day is ahead, else next", () => {
   const ref = new Date(Date.UTC(2026, 6, 3)); // 2026-07-03
   // due day 10 is still ahead in July

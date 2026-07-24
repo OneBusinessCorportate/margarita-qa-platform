@@ -148,15 +148,31 @@ export function templateId(
 }
 
 /** Replace the supported {placeholders} in a template body. Unknown
- * placeholders are left untouched so a typo is visible rather than silent. */
+ * placeholders are left untouched so a typo is visible rather than silent. Kept
+ * in parity with the SQL planner (mqa_plan_notifications). {company} is the
+ * client name; {amount} the real services debt; {month} the docs reporting
+ * month; {hvhh} the tax id. */
 export function renderTemplate(
   body: string,
-  vars: { client?: string; contract?: string; period?: string; dueDay?: number | string }
+  vars: {
+    client?: string;
+    company?: string;
+    contract?: string;
+    period?: string;
+    month?: string;
+    amount?: string | number;
+    hvhh?: string;
+    dueDay?: number | string;
+  }
 ): string {
   return body
-    .replaceAll("{client}", vars.client ?? "")
+    .replaceAll("{client}", vars.client ?? vars.company ?? "")
+    .replaceAll("{company}", vars.company ?? "")
     .replaceAll("{contract}", vars.contract ?? "")
     .replaceAll("{period}", vars.period ?? "")
+    .replaceAll("{month}", vars.month ?? "")
+    .replaceAll("{amount}", vars.amount == null ? "" : String(vars.amount))
+    .replaceAll("{hvhh}", vars.hvhh ?? "")
     .replaceAll("{due_day}", vars.dueDay == null ? "" : String(vars.dueDay));
 }
 
