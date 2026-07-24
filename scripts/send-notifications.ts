@@ -58,6 +58,13 @@ async function main() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const testChatId = (process.env.NOTIFICATIONS_TEST_CHAT_ID || "").trim() || null;
   const live = !dryRun && (testChatId ? true : sendEnabled());
+  // In TEST mode, cap how many previews go out per run (so the single test chat
+  // is not flooded), and ignore the scheduled-date filter so a manually
+  // triggered run always has something to send. Default 25; set
+  // NOTIFICATIONS_TEST_LIMIT to control (e.g. 7).
+  const testLimit = testChatId
+    ? Math.max(0, Number.parseInt(process.env.NOTIFICATIONS_TEST_LIMIT || "", 10) || 25)
+    : Infinity;
 
   // Single-run lease: bail out if another run holds it (no concurrent delivery).
   // The lease is owned by this token, so we only ever release our own.
@@ -73,11 +80,15 @@ async function main() {
   }
 
   try {
-    const { data: planned, error } = await db
+    let query = db
       .from("mqa_planned_notifications")
       .select("*")
-      .lte("scheduled_date", refDate)
-      .in("status", ["planned", "edited"] satisfies PlannedStatus[]);
+      .in("status", ["planned", "edited"] satisfies PlannedStatus[])
+      .order("scheduled_date", { ascending: true });
+    // Production sends only what is due; TEST mode previews the plan regardless
+    // of date (capped by testLimit) so a triggered run always sends something.
+    if (!testChatId) query = query.lte("scheduled_date", refDate);
+    const { data: planned, error } = await query;
     if (error) throw new Error(`read planned: ${error.message}`);
     const rows = planned ?? [];
     if (rows.length === 0) {
@@ -101,6 +112,11 @@ async function main() {
     let sent = 0, skipped = 0, dry = 0, failed = 0;
 
     for (const r of rows) {
+      // TEST mode: stop once we've previewed the per-run cap (default/limit).
+      if (testChatId && sent >= testLimit) {
+        console.log(`Достигнут лимит тест-режима (${testLimit}) — остановка.`);
+        break;
+      }
       const tag = `${r.agr_no}/${r.category}/${r.subtype} (${r.mode})`;
       const chat = chatBy.get(r.agr_no);
       const clientChatId = telegramChatId(chat?.chat_link);
