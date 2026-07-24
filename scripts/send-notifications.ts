@@ -36,7 +36,7 @@ import { randomUUID } from "node:crypto";
 import { getServiceClient, isSupabaseConfigured } from "../src/lib/supabase/server";
 import { postTelegramMessage, postTelegramDocumentByUrl } from "../src/lib/telegram-core";
 import { telegramChatId } from "../src/lib/chat-list";
-import { planDelivery, capCaption, type PlannedStatus } from "../src/lib/notifications";
+import { planDelivery, capCaption, formatTestMessage, buildTestDailyReport, type PlannedStatus } from "../src/lib/notifications";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -60,10 +60,15 @@ async function main() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const testChatId = (process.env.NOTIFICATIONS_TEST_CHAT_ID || "").trim() || null;
   const live = !dryRun && (testChatId ? true : sendEnabled());
-  // In TEST mode, cap how many previews go out per run (so the single test chat
-  // is not flooded), and ignore the scheduled-date filter so a manually
-  // triggered run always has something to send. Default 25; set
-  // NOTIFICATIONS_TEST_LIMIT to control (e.g. 7).
+  // TEST preview: ignore the scheduled-date filter so a manual run always shows
+  // something (for a one-off demo). By DEFAULT test mode is date-driven like
+  // production — the daily cron sends only what is actually DUE that day, per
+  // company, and stays silent on empty days ("send a report … if there is some").
+  const preview =
+    process.argv.includes("--preview") ||
+    /^(1|true|yes)$/i.test((process.env.NOTIFICATIONS_TEST_PREVIEW || "").trim());
+  // In TEST mode, cap how many messages go out per run so the single test chat
+  // is not flooded. Default 25; set NOTIFICATIONS_TEST_LIMIT to control (e.g. 7).
   const testLimit = testChatId
     ? Math.max(0, Number.parseInt(process.env.NOTIFICATIONS_TEST_LIMIT || "", 10) || 25)
     : Infinity;
@@ -87,9 +92,10 @@ async function main() {
       .select("*")
       .in("status", ["planned", "edited"] satisfies PlannedStatus[])
       .order("scheduled_date", { ascending: true });
-    // Production sends only what is due; TEST mode previews the plan regardless
-    // of date (capped by testLimit) so a triggered run always sends something.
-    if (!testChatId) query = query.lte("scheduled_date", refDate);
+    // Both production and (default) test mode send only what is DUE (scheduled
+    // on/before today). Only an explicit --preview / NOTIFICATIONS_TEST_PREVIEW
+    // run ignores the date, to demo the plan on a day nothing is due.
+    if (!(testChatId && preview)) query = query.lte("scheduled_date", refDate);
     const { data: planned, error } = await query;
     if (error) throw new Error(`read planned: ${error.message}`);
     const rows = planned ?? [];
@@ -101,7 +107,7 @@ async function main() {
     const agrNos = [...new Set(rows.map((r) => r.agr_no))];
     const tplIds = [...new Set(rows.map((r) => r.template_id).filter(Boolean))] as string[];
     const [chatsRes, tplsRes, attsRes] = await Promise.all([
-      db.from("mqa_chats").select("agr_no, chat_link, status").in("agr_no", agrNos),
+      db.from("mqa_chats").select("agr_no, chat_link, status, name_agr").in("agr_no", agrNos),
       tplIds.length
         ? db.from("mqa_notification_templates").select("id, approved").in("id", tplIds)
         : Promise.resolve({ data: [] as any[], error: null }),
@@ -119,12 +125,68 @@ async function main() {
 
     let sent = 0, skipped = 0, dry = 0, failed = 0;
 
-    for (const r of rows) {
-      // TEST mode: stop once we've previewed the per-run cap (default/limit).
-      if (testChatId && sent >= testLimit) {
-        console.log(`Достигнут лимит тест-режима (${testLimit}) — остановка.`);
-        break;
+    // ---- TEST-CHAT MODE ---------------------------------------------------
+    // Everything lands in ONE test chat. Compute the EXACT set that will be
+    // delivered (fresh = not already shown, sendable, capped by testLimit)
+    // FIRST, so the daily report lists precisely what is sent — no divergence.
+    // Never touches the production plan / reservation / journal.
+    if (testChatId) {
+      const ids = rows.map((r) => r.id);
+      const { data: seenRows, error: seenErr } = ids.length
+        ? await db.from("mqa_test_send_log").select("planned_id").in("planned_id", ids)
+        : { data: [] as { planned_id: string }[], error: null };
+      if (seenErr) throw new Error(`read test log: ${seenErr.message}`);
+      const seenSet = new Set((seenRows ?? []).map((s) => s.planned_id));
+
+      const toSend: { r: any; company: string; dest: string; text: string; file: string | null }[] = [];
+      for (const r of rows) {
+        if (toSend.length >= testLimit) break;
+        const tag = `${r.agr_no}/${r.category}/${r.subtype} (${r.mode})`;
+        if (seenSet.has(r.id)) { skipped++; console.log(`SKIP  ${tag}: уже показано в тест-чате`); continue; }
+        const chat = chatBy.get(r.agr_no);
+        const company = (chat?.name_agr || "").trim() || chat?.chat_link || r.agr_no;
+        const att = attBy.get(`${r.agr_no}|${r.period}|${r.category}`);
+        const clientChatId = telegramChatId(chat?.chat_link);
+        const plan = planDelivery({
+          status: r.status, mode: r.mode, requiresAttachment: r.requires_attachment,
+          templateApproved: r.template_id ? tplApproved.get(r.template_id) ?? false : false,
+          hasAttachmentOrDone: !!att && (!!att.file_url || att.marked_done === true),
+          chatActive: (chat?.status ?? "Inactive") === "Active",
+          chatId: clientChatId, sendEnabled: live, clientChatId, testChatId,
+        });
+        if (plan.action === "skip") { skipped++; console.log(`SKIP  ${tag}: ${plan.reason}`); continue; }
+        const messageText = r.accompanying_text ? `${r.rendered_text}\n\n${r.accompanying_text}` : r.rendered_text;
+        const file = r.mode === "manual" && r.requires_attachment && isHttpUrl(att?.file_url) ? (att!.file_url as string) : null;
+        // Company header so the reviewer sees which client each message is for.
+        const text = formatTestMessage({ company, agrNo: r.agr_no, category: r.category, body: messageText });
+        if (plan.action === "dry-run") { dry++; console.log(`DRY   ${tag} → chat ${plan.chatId}`); continue; }
+        toSend.push({ r, company, dest: plan.chatId!, text, file });
       }
+
+      // Daily report of EXACTLY what will be sent (null / silent if nothing).
+      const report = buildTestDailyReport(refDate, toSend.map((x) => ({ company: x.company, agrNo: x.r.agr_no, category: x.r.category })));
+      if (report) {
+        const res = await postTelegramMessage(token!, testChatId, report);
+        if (!res.ok) console.log(`WARN  отчёт дня не отправлен: ${res.error}`);
+      }
+      for (const x of toSend) {
+        const tag = `${x.r.agr_no}/${x.r.category}/${x.r.subtype}`;
+        const res = await (x.file
+          ? postTelegramDocumentByUrl(token!, x.dest, x.file, capCaption(x.text))
+          : postTelegramMessage(token!, x.dest, x.text));
+        if (res.ok) {
+          const { error: upErr } = await db.from("mqa_test_send_log").upsert({ planned_id: x.r.id, chat_id: x.dest }, { onConflict: "planned_id" });
+          sent++;
+          if (upErr) console.log(`WARN  ${tag}: доставлено в тест-чат, но не записано (${upErr.message})`);
+          else console.log(`TEST  ${tag} → chat ${x.dest}${x.file ? " (+документ)" : ""}`);
+        } else { failed++; console.log(`FAIL  ${tag} → chat ${x.dest}: ${res.error}`); }
+      }
+      console.log(`Готово (${refDate}) — ТЕСТ-режим (чат ${testChatId}): отправлено ${sent}, пропущено ${skipped}, ошибок ${failed}, dry-run ${dry}`);
+      return;
+    }
+
+    // ---- PRODUCTION -------------------------------------------------------
+    for (const r of rows) {
       const tag = `${r.agr_no}/${r.category}/${r.subtype} (${r.mode})`;
       const chat = chatBy.get(r.agr_no);
       const clientChatId = telegramChatId(chat?.chat_link);
@@ -165,24 +227,6 @@ async function main() {
       const doSend = () => (fileForSend
         ? postTelegramDocumentByUrl(token!, dest, fileForSend, sentText)
         : postTelegramMessage(token!, dest, sentText));
-
-      // TEST mode: preview only. Dedup in a SEPARATE log; NEVER touch the
-      // production plan / reservation / journal (so going live still sends to
-      // real clients).
-      if (testChatId) {
-        const { data: seen, error: seenErr } = await db
-          .from("mqa_test_send_log").select("planned_id").eq("planned_id", r.id).limit(1);
-        if (seenErr) { console.log(`FAIL  ${tag}: тест-журнал недоступен: ${seenErr.message}`); failed++; continue; }
-        if (seen && seen.length > 0) { skipped++; console.log(`SKIP  ${tag}: уже показано в тест-чате`); continue; }
-        const res = await doSend();
-        if (res.ok) {
-          const { error: upErr } = await db.from("mqa_test_send_log").upsert({ planned_id: r.id, chat_id: dest }, { onConflict: "planned_id" });
-          sent++;
-          if (upErr) console.log(`WARN  ${tag} → chat ${dest}: доставлено в тест-чат, но не записано (${upErr.message}) — может повториться в след. запуске`);
-          else console.log(`TEST  ${tag} → chat ${dest}${fileForSend ? " (+документ)" : ""}`);
-        } else { failed++; console.log(`FAIL  ${tag} → chat ${dest}: ${res.error}`); }
-        continue;
-      }
 
       // PRODUCTION: reserve BEFORE sending (outbox) so a crash after delivery
       // can never cause a re-send.
@@ -235,7 +279,7 @@ async function main() {
 
     console.log(
       `Готово (${refDate}): отправлено ${sent}, пропущено ${skipped}, ошибок ${failed}, dry-run ${dry}` +
-        (testChatId ? ` — ТЕСТ-режим: всё уходит в чат ${testChatId}` : live ? "" : " — живая отправка ВЫКЛючена")
+        (live ? "" : " — живая отправка ВЫКЛючена")
     );
   } finally {
     await db.rpc("mqa_release_send_lock", { p_token: lockToken });
