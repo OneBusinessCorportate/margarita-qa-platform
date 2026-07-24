@@ -131,3 +131,16 @@ revoke all on function public.mqa_try_acquire_send_lock(text, integer) from publ
 revoke all on function public.mqa_release_send_lock(text) from public;
 grant execute on function public.mqa_try_acquire_send_lock(text, integer) to service_role;
 grant execute on function public.mqa_release_send_lock(text) to service_role;
+
+-- Test-mode preview log ------------------------------------------------------
+-- When NOTIFICATIONS_TEST_CHAT_ID is set, the sender redirects everything to the
+-- test chat WITHOUT touching the production plan/journal (so a preview never
+-- marks a real client notification as delivered and never closes it). This
+-- separate table dedups test previews (one per planned row) so the test chat is
+-- not re-spammed on every daily run. It is NEVER read by the production sender.
+create table if not exists public.mqa_test_send_log (
+  planned_id bigint primary key,
+  chat_id    text,
+  sent_at    timestamptz not null default now()
+);
+alter table public.mqa_test_send_log enable row level security;

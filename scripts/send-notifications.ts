@@ -106,15 +106,24 @@ async function main() {
       const clientChatId = telegramChatId(chat?.chat_link);
       const att = attBy.get(`${r.agr_no}|${r.period}|${r.category}`);
 
-      // A prior run already delivered this row (success in the journal) but may
-      // have died before flipping the status — reconcile, never re-send.
-      const { data: prior, error: priorErr } = await db
-        .from("mqa_sent_notifications").select("id").eq("planned_id", r.id).eq("telegram_ok", true).limit(1);
-      if (priorErr) { console.log(`FAIL  ${tag}: журнал недоступен: ${priorErr.message}`); failed++; continue; }
-      if (prior && prior.length > 0) {
-        await db.from("mqa_planned_notifications").update({ status: "sent", sent_at: new Date().toISOString() })
-          .eq("id", r.id).in("status", ["planned", "edited"]);
-        skipped++; console.log(`SKIP  ${tag}: уже доставлено ранее, статус синхронизирован`); continue;
+      // Dedup pre-check. Test mode uses its OWN log (a preview must not touch the
+      // production plan/journal); production uses the delivery journal.
+      if (testChatId) {
+        const { data: seen, error: seenErr } = await db
+          .from("mqa_test_send_log").select("planned_id").eq("planned_id", r.id).limit(1);
+        if (seenErr) { console.log(`FAIL  ${tag}: тест-журнал недоступен: ${seenErr.message}`); failed++; continue; }
+        if (seen && seen.length > 0) { skipped++; console.log(`SKIP  ${tag}: уже показано в тест-чате`); continue; }
+      } else {
+        // A prior run already delivered this row (success in the journal) but may
+        // have died before flipping the status — reconcile, never re-send.
+        const { data: prior, error: priorErr } = await db
+          .from("mqa_sent_notifications").select("id").eq("planned_id", r.id).eq("telegram_ok", true).limit(1);
+        if (priorErr) { console.log(`FAIL  ${tag}: журнал недоступен: ${priorErr.message}`); failed++; continue; }
+        if (prior && prior.length > 0) {
+          await db.from("mqa_planned_notifications").update({ status: "sent", sent_at: new Date().toISOString() })
+            .eq("id", r.id).in("status", ["planned", "edited"]);
+          skipped++; console.log(`SKIP  ${tag}: уже доставлено ранее, статус синхронизирован`); continue;
+        }
       }
 
       const plan = planDelivery({
@@ -146,7 +155,19 @@ async function main() {
         ? await postTelegramDocumentByUrl(token!, dest, fileForSend, sentText)
         : await postTelegramMessage(token!, dest, sentText);
 
-      // Atomic: journal + (on success) mark 'sent' in one transaction.
+      if (testChatId) {
+        // Preview only: record in the SEPARATE test log; NEVER touch the
+        // production plan or journal (so going live still sends to real clients).
+        if (res.ok) {
+          await db.from("mqa_test_send_log").upsert({ planned_id: r.id, chat_id: dest }, { onConflict: "planned_id" });
+          sent++; console.log(`TEST  ${tag} → chat ${dest}${fileForSend ? " (+документ)" : ""}`);
+        } else {
+          failed++; console.log(`FAIL  ${tag} → chat ${dest}: ${res.error}`);
+        }
+        continue;
+      }
+
+      // Production: atomic journal + (on success) mark 'sent' in one transaction.
       const { data: outcome, error: recErr } = await db.rpc("mqa_record_notification_sent", {
         p_planned_id: r.id, p_agr_no: r.agr_no, p_chat_id: dest, p_category: r.category,
         p_subtype: r.subtype, p_language: r.language, p_full_text: logText,
@@ -157,7 +178,7 @@ async function main() {
         if (!res.ok) failed++;
         continue;
       }
-      if (outcome === "recorded") { sent++; console.log(`SENT  ${tag} → chat ${dest}${fileForSend ? " (+документ)" : ""}${testChatId ? " [TEST]" : ""}`); }
+      if (outcome === "recorded") { sent++; console.log(`SENT  ${tag} → chat ${dest}${fileForSend ? " (+документ)" : ""}`); }
       else if (outcome === "duplicate") { dup++; console.log(`DUP   ${tag} → chat ${dest}: успех уже записан ранее`); }
       else { failed++; console.log(`FAIL  ${tag} → chat ${dest}: ${res.error} (в журнале, будет повтор)`); }
     }

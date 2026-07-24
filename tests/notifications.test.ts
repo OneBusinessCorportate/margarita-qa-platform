@@ -143,6 +143,12 @@ test("planDelivery: test-chat mode redirects EVERY sendable row to the test chat
   assert.equal(planDelivery({ ...base, status: "sent" }).action, "skip");
 });
 
+test("planDelivery: test-chat mode STILL honours dry-run (never actually sends)", () => {
+  const p = planDelivery({ ...OK, clientChatId: "-100client", testChatId: "-100test", sendEnabled: false });
+  assert.equal(p.action, "dry-run");
+  assert.equal(p.chatId, "-100test");
+});
+
 test("planDelivery: production mode (no test chat) uses the full gate + client chat", () => {
   const base = { ...OK, clientChatId: "-100client", testChatId: null };
   const ok = planDelivery(base);

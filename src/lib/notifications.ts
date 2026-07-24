@@ -122,6 +122,8 @@ export interface DeliveryPlan {
 export function planDelivery(i: DeliveryInput): DeliveryPlan {
   if (i.testChatId) {
     if (!isSendable(i.status)) return { action: "skip", chatId: null, reason: `status ${i.status} is not sendable` };
+    // Test mode still honours dry-run: a dry-run must never actually send.
+    if (!i.sendEnabled) return { action: "dry-run", chatId: i.testChatId, reason: "test-chat, dry-run" };
     return { action: "send", chatId: i.testChatId, reason: "test-chat override (all sends redirected)" };
   }
   const d = sendDecision({ ...i, chatId: i.clientChatId });
