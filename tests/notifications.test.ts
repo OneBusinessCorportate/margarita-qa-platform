@@ -191,15 +191,17 @@ test("formatTestMessage prefixes the company/contract/category so the test chat 
 
 test("buildTestDailyReport lists what is due by company, and is null when nothing is due", () => {
   assert.equal(buildTestDailyReport("2026-07-24", []), null);
+  // One company (Ромашка) holds TWO contracts (B-1, B-2) → still ONE company.
   const r = buildTestDailyReport("2026-07-24", [
     { company: "Ромашка", agrNo: "B-1", category: "debts" },
-    { company: "Ромашка", agrNo: "B-1", category: "salary" },
-    { company: "Лютик", agrNo: "B-2", category: "primary_docs" },
+    { company: "Ромашка", agrNo: "B-2", category: "salary" },
+    { company: "Лютик", agrNo: "B-3", category: "primary_docs" },
   ]);
   assert.match(r!, /Рассылка за 2026-07-24/);
-  assert.match(r!, /3 уведомл\. по 2 комп\./); // 3 items, 2 distinct contracts
+  assert.match(r!, /3 уведомл\. по 2 комп\./); // 3 items, 2 distinct COMPANIES (not 3 contracts)
   assert.match(r!, /Ромашка \(B-1\) — Оплата услуг/);
-  assert.match(r!, /Лютик \(B-2\) — Первичные документы/);
+  assert.match(r!, /Ромашка \(B-2\) — Зарплата/);
+  assert.match(r!, /Лютик \(B-3\) — Первичные документы/);
 });
 
 test("planDelivery: production mode (no test chat) uses the full gate + client chat", () => {

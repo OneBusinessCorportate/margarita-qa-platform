@@ -87,7 +87,9 @@ export function buildTestDailyReport(
   items: readonly { company: string; agrNo: string; category: string }[]
 ): string | null {
   if (items.length === 0) return null;
-  const companies = new Set(items.map((x) => x.agrNo));
+  // Count distinct COMPANIES (by name) — one company may hold several contracts
+  // (agrNo), so the contract count would overstate "компаний".
+  const companies = new Set(items.map((x) => x.company));
   const lines = items.map((x) => `• ${x.company} (${x.agrNo}) — ${categoryLabel(x.category)}`);
   return (
     `📋 Рассылка за ${date}\n${items.length} уведомл. по ${companies.size} комп.:\n\n` +
