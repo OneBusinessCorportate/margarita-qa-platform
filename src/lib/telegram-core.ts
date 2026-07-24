@@ -35,7 +35,9 @@ export async function postTelegramMessage(
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: false };
+      // A 5xx may have been processed server-side before erroring → ambiguous
+      // (delivery unknown). 4xx / 429 are definitive "not delivered".
+      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: res.status >= 500 };
     }
     return { ok: true };
   } catch (e: any) {
@@ -65,7 +67,9 @@ export async function postTelegramDocumentByUrl(
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: false };
+      // A 5xx may have been processed server-side before erroring → ambiguous
+      // (delivery unknown). 4xx / 429 are definitive "not delivered".
+      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: res.status >= 500 };
     }
     return { ok: true };
   } catch (e: any) {
@@ -96,7 +100,9 @@ export async function postTelegramDocument(
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: false };
+      // A 5xx may have been processed server-side before erroring → ambiguous
+      // (delivery unknown). 4xx / 429 are definitive "not delivered".
+      return { ok: false, error: `Telegram API ${res.status}: ${body.slice(0, 200)}`, ambiguous: res.status >= 500 };
     }
     return { ok: true };
   } catch (e: any) {

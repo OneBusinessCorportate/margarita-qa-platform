@@ -146,7 +146,13 @@ async function main() {
 
       const dest = plan.chatId!;
       const messageText = r.accompanying_text ? `${r.rendered_text}\n\n${r.accompanying_text}` : r.rendered_text;
-      const fileForSend = isHttpUrl(att?.file_url) ? (att!.file_url as string) : null;
+      // Only MANUAL notification types carry a document (salary ведомость / tax
+      // report). An AUTO type is text-only — never attach a file to it even if an
+      // attachment row happens to exist for that (contract, period, category).
+      const fileForSend =
+        r.mode === "manual" && r.requires_attachment && isHttpUrl(att?.file_url)
+          ? (att!.file_url as string)
+          : null;
       // full_text logs EXACTLY what was sent to the client (the caption for a
       // document send, capped like Telegram caps it). The attachment itself is
       // recorded separately in mqa_notification_attachments.
