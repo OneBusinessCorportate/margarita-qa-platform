@@ -160,8 +160,10 @@ async function main() {
         if (seen && seen.length > 0) { skipped++; console.log(`SKIP  ${tag}: уже показано в тест-чате`); continue; }
         const res = await doSend();
         if (res.ok) {
-          await db.from("mqa_test_send_log").upsert({ planned_id: r.id, chat_id: dest }, { onConflict: "planned_id" });
-          sent++; console.log(`TEST  ${tag} → chat ${dest}${fileForSend ? " (+документ)" : ""}`);
+          const { error: upErr } = await db.from("mqa_test_send_log").upsert({ planned_id: r.id, chat_id: dest }, { onConflict: "planned_id" });
+          sent++;
+          if (upErr) console.log(`WARN  ${tag} → chat ${dest}: доставлено в тест-чат, но не записано (${upErr.message}) — может повториться в след. запуске`);
+          else console.log(`TEST  ${tag} → chat ${dest}${fileForSend ? " (+документ)" : ""}`);
         } else { failed++; console.log(`FAIL  ${tag} → chat ${dest}: ${res.error}`); }
         continue;
       }
@@ -180,26 +182,38 @@ async function main() {
           p_planned_id: r.id, p_agr_no: r.agr_no, p_chat_id: dest, p_category: r.category,
           p_subtype: r.subtype, p_language: r.language, p_full_text: logText, p_template_id: r.template_id,
         });
-        if (finErr) console.log(`WARN  ${tag} → chat ${dest}: доставлено, но финализация не записана: ${finErr.message}`);
-        sent++; console.log(`SENT  ${tag} → chat ${dest}${fileForSend ? " (+документ)" : ""}`);
+        sent++;
+        // If finalize failed, the message WAS delivered; the reservation stays
+        // (outcome null), so the next run treats it as already-attempted and
+        // never re-sends (at-most-once) — only the journal/plan-status may lag.
+        if (finErr) console.log(`WARN  ${tag} → chat ${dest}: доставлено, но финализация не записана (${finErr.message}); повтор НЕ будет`);
+        else console.log(`SENT  ${tag} → chat ${dest}${fileForSend ? " (+документ)" : ""}`);
       } else if (res.ambiguous) {
         // Ambiguous (network error/timeout — Telegram may have delivered): KEEP
-        // the reservation so we NEVER re-send (at-most-once); log for review.
-        await db.rpc("mqa_hold_notification_send", {
+        // the reservation (outcome='held') so we NEVER re-send (at-most-once).
+        const { error: holdErr } = await db.rpc("mqa_hold_notification_send", {
           p_planned_id: r.id, p_agr_no: r.agr_no, p_chat_id: dest, p_category: r.category,
           p_subtype: r.subtype, p_language: r.language, p_full_text: logText, p_template_id: r.template_id,
           p_error: res.error ?? null,
         });
-        failed++; console.log(`HOLD  ${tag} → chat ${dest}: ${res.error} (неоднозначно, без повтора — проверить вручную)`);
+        failed++;
+        // Whether or not the hold write succeeded, the reservation stays (null or
+        // 'held'), so the next run treats it as already-attempted and never
+        // re-sends. Only the audit row may be missing if holdErr.
+        console.log(`HOLD  ${tag} → chat ${dest}: ${res.error} (неоднозначно, без повтора — проверить вручную)` +
+          (holdErr ? ` [аудит не записан: ${holdErr.message}]` : ""));
       } else {
-        // Definitive failure (Telegram returned an error → NOT delivered): drop
-        // the reservation so the next run may safely retry; log the failure.
-        await db.rpc("mqa_fail_notification_send", {
+        // Definitive failure (Telegram returned an error → NOT delivered): mark
+        // 'failed' so a later run re-arms and retries. Retry is guaranteed ONLY
+        // if this write succeeds; if it fails the row stays reserved (at-most-once).
+        const { error: failErr } = await db.rpc("mqa_fail_notification_send", {
           p_planned_id: r.id, p_agr_no: r.agr_no, p_chat_id: dest, p_category: r.category,
           p_subtype: r.subtype, p_language: r.language, p_full_text: logText, p_template_id: r.template_id,
           p_error: res.error ?? null,
         });
-        failed++; console.log(`FAIL  ${tag} → chat ${dest}: ${res.error} (не доставлено, будет повтор)`);
+        failed++;
+        if (failErr) console.log(`FAIL  ${tag} → chat ${dest}: ${res.error} [не записано: ${failErr.message}; авто-повтор НЕ гарантирован — проверить вручную]`);
+        else console.log(`FAIL  ${tag} → chat ${dest}: ${res.error} (не доставлено, будет повтор)`);
       }
     }
 

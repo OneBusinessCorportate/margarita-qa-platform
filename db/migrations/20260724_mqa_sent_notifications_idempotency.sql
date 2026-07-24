@@ -37,20 +37,30 @@ create unique index if not exists mqa_sent_notifications_one_success
   on public.mqa_sent_notifications (planned_id)
   where telegram_ok and planned_id is not null;
 
--- Reservation ledger: one attempt row per planned notification.
+-- Reservation ledger: one attempt row per planned notification, with an
+-- explicit outcome state machine:
+--   null        — reserved / in-flight (or the process crashed mid-attempt)
+--   'delivered' — sent + logged
+--   'failed'    — Telegram DEFINITIVELY rejected (not delivered) → retryable
+--   'held'      — ambiguous (network/timeout) → NOT retried (at-most-once)
 create table if not exists public.mqa_notification_send_attempts (
   planned_id   bigint primary key,
+  outcome      text,
   delivered    boolean not null default false,
   attempted_at timestamptz not null default now(),
   finalized_at timestamptz,
   error        text
 );
+alter table public.mqa_notification_send_attempts add column if not exists outcome text;
 alter table public.mqa_notification_send_attempts enable row level security;
 
--- Reserve a send BEFORE calling Telegram.
---   'reserved'          — we claimed it; proceed to send (first attempt).
+-- Reserve a send BEFORE calling Telegram. The reservation IS the arbiter — its
+-- outcome column decides what a later run does, so no post-send DB failure can
+-- silently cause a duplicate.
+--   'reserved'          — proceed to send (first attempt, or a retry of a
+--                          previously DEFINITIVE failure, reset here atomically).
 --   'already_delivered' — a prior attempt delivered; plan reconciled; skip.
---   'already_attempted' — reserved by another run / ambiguous prior attempt; skip.
+--   'already_attempted' — held (ambiguous) or in-flight/crashed → skip (no re-send).
 create or replace function public.mqa_reserve_notification_send(p_planned_id bigint)
 returns text
 language plpgsql
@@ -58,8 +68,8 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_id        bigint;
-  v_delivered boolean;
+  v_id      bigint;
+  v_outcome text;
 begin
   insert into public.mqa_notification_send_attempts (planned_id)
   values (p_planned_id)
@@ -70,12 +80,24 @@ begin
     return 'reserved';
   end if;
 
-  select delivered into v_delivered from public.mqa_notification_send_attempts where planned_id = p_planned_id;
-  if coalesce(v_delivered, false) then
+  -- Lock the existing row so a retry-reset can't race a concurrent run.
+  select outcome into v_outcome
+  from public.mqa_notification_send_attempts
+  where planned_id = p_planned_id
+  for update;
+
+  if v_outcome = 'delivered' then
     update public.mqa_planned_notifications set status = 'sent', sent_at = now()
      where id = p_planned_id and status in ('planned', 'edited');
     return 'already_delivered';
+  elsif v_outcome = 'failed' then
+    -- DEFINITIVE prior failure (not delivered) → safe to retry: re-arm the row.
+    update public.mqa_notification_send_attempts
+       set outcome = null, error = null, attempted_at = now(), finalized_at = null
+     where planned_id = p_planned_id;
+    return 'reserved';
   end if;
+  -- 'held' (ambiguous) or null (in-flight / crashed) → never re-send.
   return 'already_attempted';
 end;
 $$;
@@ -99,7 +121,7 @@ set search_path = public, pg_temp
 as $$
 begin
   update public.mqa_notification_send_attempts
-     set delivered = true, finalized_at = now(), error = null
+     set outcome = 'delivered', delivered = true, finalized_at = now(), error = null
    where planned_id = p_planned_id;
 
   insert into public.mqa_sent_notifications
@@ -134,7 +156,7 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  update public.mqa_notification_send_attempts set error = p_error where planned_id = p_planned_id;
+  update public.mqa_notification_send_attempts set outcome = 'held', error = p_error where planned_id = p_planned_id;
   insert into public.mqa_sent_notifications
     (agr_no, chat_id, category, subtype, language, full_text, template_id, planned_id, telegram_ok, telegram_error)
   values
@@ -143,9 +165,10 @@ begin
 end;
 $$;
 
--- Record a DEFINITIVE failure (Telegram returned an error → NOT delivered):
--- delete the reservation so the next run may safely retry, and log the failure
--- for visibility.
+-- Record a DEFINITIVE failure (Telegram returned an error → NOT delivered): mark
+-- the reservation 'failed' (kept, NOT deleted) so a later run's reserve re-arms
+-- and safely retries it; log the failure. If this write itself fails the row
+-- stays reserved/in-flight (null) → treated as at-most-once, never a duplicate.
 create or replace function public.mqa_fail_notification_send(
   p_planned_id  bigint,
   p_agr_no      text,
@@ -163,7 +186,7 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  delete from public.mqa_notification_send_attempts where planned_id = p_planned_id;
+  update public.mqa_notification_send_attempts set outcome = 'failed', error = p_error where planned_id = p_planned_id;
   insert into public.mqa_sent_notifications
     (agr_no, chat_id, category, subtype, language, full_text, template_id, planned_id, telegram_ok, telegram_error)
   values
