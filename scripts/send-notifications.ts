@@ -21,11 +21,13 @@
 // approved=true AND NOTIFICATIONS_SEND_ENABLED=1 (manual types also need a
 // file/mark). Otherwise a safe dry-run.
 //
-// Reliability: a single-run LEASE LOCK (mqa_try_acquire_send_lock) prevents
-// overlapping runs from both delivering. A successful delivery is recorded and
-// the plan flipped to 'sent' ATOMICALLY (mqa_record_notification_sent) — never a
-// send without a log, never 'sent' without a log. A prior success is detected
-// and NOT re-sent. Failures are logged and retried next run.
+// Reliability (outbox): reserve BEFORE sending (mqa_reserve_notification_send),
+// then send, then record atomically — success via mqa_finalize_notification_sent
+// (journal + plan→sent), definitive failure via mqa_fail_notification_send
+// (reservation kept as 'failed' → a later run re-arms and retries), ambiguous
+// network failure via mqa_hold_notification_send (kept as 'held' → never
+// re-sent). A single-run lease is an optimisation only. full_text logs EXACTLY
+// the text sent to the client.
 //
 // Env: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN,
 //      NOTIFICATIONS_SEND_ENABLED, NOTIFICATIONS_TEST_CHAT_ID.
@@ -98,13 +100,19 @@ async function main() {
 
     const agrNos = [...new Set(rows.map((r) => r.agr_no))];
     const tplIds = [...new Set(rows.map((r) => r.template_id).filter(Boolean))] as string[];
-    const [{ data: chats }, { data: tpls }, { data: atts }] = await Promise.all([
+    const [chatsRes, tplsRes, attsRes] = await Promise.all([
       db.from("mqa_chats").select("agr_no, chat_link, status").in("agr_no", agrNos),
       tplIds.length
         ? db.from("mqa_notification_templates").select("id, approved").in("id", tplIds)
-        : Promise.resolve({ data: [] as any[] }),
+        : Promise.resolve({ data: [] as any[], error: null }),
       db.from("mqa_notification_attachments").select("agr_no, period, category, file_url, file_name, marked_done").in("agr_no", agrNos),
     ]);
+    // Fail LOUDLY on any read error — never treat a failed read as
+    // inactive/unapproved/no-attachment and silently skip urgent notifications.
+    if (chatsRes.error) throw new Error(`read chats: ${chatsRes.error.message}`);
+    if (tplsRes.error) throw new Error(`read templates: ${tplsRes.error.message}`);
+    if (attsRes.error) throw new Error(`read attachments: ${attsRes.error.message}`);
+    const chats = chatsRes.data, tpls = tplsRes.data, atts = attsRes.data;
     const chatBy = new Map((chats ?? []).map((c) => [c.agr_no, c]));
     const tplApproved = new Map((tpls ?? []).map((t) => [t.id, !!t.approved]));
     const attBy = new Map((atts ?? []).map((a) => [`${a.agr_no}|${a.period}|${a.category}`, a]));
@@ -139,8 +147,10 @@ async function main() {
       const dest = plan.chatId!;
       const messageText = r.accompanying_text ? `${r.rendered_text}\n\n${r.accompanying_text}` : r.rendered_text;
       const fileForSend = isHttpUrl(att?.file_url) ? (att!.file_url as string) : null;
+      // full_text logs EXACTLY what was sent to the client (the caption for a
+      // document send, capped like Telegram caps it). The attachment itself is
+      // recorded separately in mqa_notification_attachments.
       const sentText = fileForSend ? capCaption(messageText) : messageText;
-      const logText = fileForSend ? `${sentText}\n[вложение: ${att!.file_name || att!.file_url}]` : sentText;
 
       if (plan.action === "dry-run") {
         dry++; console.log(`DRY   ${tag} → chat ${dest}: ${plan.reason}\n      ${sentText}`); continue;
@@ -180,7 +190,7 @@ async function main() {
         // Atomic: attempt→delivered, clean journal row, plan→sent.
         const { error: finErr } = await db.rpc("mqa_finalize_notification_sent", {
           p_planned_id: r.id, p_agr_no: r.agr_no, p_chat_id: dest, p_category: r.category,
-          p_subtype: r.subtype, p_language: r.language, p_full_text: logText, p_template_id: r.template_id,
+          p_subtype: r.subtype, p_language: r.language, p_full_text: sentText, p_template_id: r.template_id,
         });
         sent++;
         // If finalize failed, the message WAS delivered; the reservation stays
@@ -193,7 +203,7 @@ async function main() {
         // the reservation (outcome='held') so we NEVER re-send (at-most-once).
         const { error: holdErr } = await db.rpc("mqa_hold_notification_send", {
           p_planned_id: r.id, p_agr_no: r.agr_no, p_chat_id: dest, p_category: r.category,
-          p_subtype: r.subtype, p_language: r.language, p_full_text: logText, p_template_id: r.template_id,
+          p_subtype: r.subtype, p_language: r.language, p_full_text: sentText, p_template_id: r.template_id,
           p_error: res.error ?? null,
         });
         failed++;
@@ -208,7 +218,7 @@ async function main() {
         // if this write succeeds; if it fails the row stays reserved (at-most-once).
         const { error: failErr } = await db.rpc("mqa_fail_notification_send", {
           p_planned_id: r.id, p_agr_no: r.agr_no, p_chat_id: dest, p_category: r.category,
-          p_subtype: r.subtype, p_language: r.language, p_full_text: logText, p_template_id: r.template_id,
+          p_subtype: r.subtype, p_language: r.language, p_full_text: sentText, p_template_id: r.template_id,
           p_error: res.error ?? null,
         });
         failed++;
